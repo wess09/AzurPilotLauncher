@@ -34,8 +34,8 @@ use crate::{
     launcher_control::start_launcher_control_stream,
     notify::{start_notify_stream, NotificationClickHandler},
     setup::{
-        cleanup_runtime_for_rebuild, get_deploy_config, rebuild_venv_and_sync_dependencies,
-        setup_alas_repo, setup_environment, SplashUpdate,
+        get_deploy_config, rebuild_venv_and_sync_dependencies, setup_alas_repo, setup_environment,
+        SplashUpdate,
     },
 };
 use anyhow::{anyhow, bail, Context, Result};
@@ -176,14 +176,14 @@ fn tray_icon_for_platform() -> Image<'static> {
     })
 }
 
-fn begin_startup_cleanup(
+fn begin_startup_shutdown(
     app_handle: tauri::AppHandle,
     allow_exit: Arc<AtomicBool>,
     setup_cancel_requested: Arc<AtomicBool>,
     setup_running: Arc<AtomicBool>,
-    startup_cleanup_started: Arc<AtomicBool>,
+    startup_shutdown_started: Arc<AtomicBool>,
 ) {
-    if startup_cleanup_started
+    if startup_shutdown_started
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
@@ -191,23 +191,7 @@ fn begin_startup_cleanup(
     }
 
     setup_cancel_requested.store(true, Ordering::SeqCst);
-    if let Some(splash) = app_handle.get_webview_window("splash") {
-        update_splash(
-            &splash,
-            &SplashUpdate::loading(
-                t!("dialog.cleaning_env"),
-                t!("dialog.cleaning_env_detail"),
-                99,
-            )
-            .with_subtitle(t!("dialog.cleaning_wait")),
-        );
-    }
-
-    app_handle
-        .dialog()
-        .message(t!("dialog.cleaning_message"))
-        .title(t!("dialog.cleaning_env"))
-        .show(|_| {});
+    info!("Startup cancellation requested; preserving repository and runtime for diagnostics");
 
     thread::spawn(move || {
         let started_at = Instant::now();
@@ -217,28 +201,7 @@ fn begin_startup_cleanup(
         }
 
         if setup_running.load(Ordering::SeqCst) {
-            warn!("Setup thread did not stop before startup cleanup timeout");
-        }
-
-        match cleanup_runtime_for_rebuild() {
-            Ok(()) => {
-                info!("Startup cleanup finished; runtime will be rebuilt on next launch");
-            }
-            Err(e) => {
-                error!("Startup cleanup failed: {:?}", e);
-                if let Some(splash) = app_handle.get_webview_window("splash") {
-                    update_splash(
-                        &splash,
-                        &SplashUpdate::error(
-                            t!("dialog.cleanup_failed"),
-                            t!("dialog.cleanup_failed_detail", error = format!("{e:#}")),
-                            99,
-                        ),
-                    );
-                }
-                startup_cleanup_started.store(false, Ordering::SeqCst);
-                return;
-            }
+            warn!("Setup thread did not stop before startup shutdown timeout");
         }
 
         allow_exit.store(true, Ordering::SeqCst);
@@ -1839,7 +1802,7 @@ fn main() -> Result<()> {
     let setup_cancel_requested = Arc::new(AtomicBool::new(false));
     let setup_running = Arc::new(AtomicBool::new(false));
     let setup_completed = Arc::new(AtomicBool::new(false));
-    let startup_cleanup_started = Arc::new(AtomicBool::new(false));
+    let startup_shutdown_started = Arc::new(AtomicBool::new(false));
     let recreating_main_window = Arc::new(AtomicBool::new(false));
 
     let allow_exit_for_setup = allow_exit.clone();
@@ -2253,15 +2216,15 @@ fn main() -> Result<()> {
                 }
                 tauri::RunEvent::ExitRequested { api, .. } => {
                     if !setup_completed.load(Ordering::SeqCst)
-                        && !startup_cleanup_started.load(Ordering::SeqCst)
+                        && !startup_shutdown_started.load(Ordering::SeqCst)
                     {
                         api.prevent_exit();
-                        begin_startup_cleanup(
+                        begin_startup_shutdown(
                             app_handle.clone(),
                             allow_exit.clone(),
                             setup_cancel_requested.clone(),
                             setup_running.clone(),
-                            startup_cleanup_started.clone(),
+                            startup_shutdown_started.clone(),
                         );
                         return;
                     }
@@ -2302,12 +2265,12 @@ fn main() -> Result<()> {
 
                     if label == "splash" && !setup_completed.load(Ordering::SeqCst) {
                         api.prevent_close();
-                        begin_startup_cleanup(
+                        begin_startup_shutdown(
                             app_handle.clone(),
                             allow_exit.clone(),
                             setup_cancel_requested.clone(),
                             setup_running.clone(),
-                            startup_cleanup_started.clone(),
+                            startup_shutdown_started.clone(),
                         );
                         return;
                     }

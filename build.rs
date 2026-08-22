@@ -9,7 +9,12 @@ const DEFAULT_LAUNCHER_UPDATE_URL: &str =
     "https://ap-launcher-update.nanoda.work/updata/stable.json";
 
 fn main() {
-    let windows = tauri_build::WindowsAttributes::new().app_manifest(
+    let execution_level = if env::var("PROFILE").as_deref() == Ok("release") {
+        "requireAdministrator"
+    } else {
+        "asInvoker"
+    };
+    let app_manifest = format!(
         r#"
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <dependency>
@@ -27,13 +32,14 @@ fn main() {
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+        <requestedExecutionLevel level="{execution_level}" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>
 </assembly>
-"#,
+"#
     );
+    let windows = tauri_build::WindowsAttributes::new().app_manifest(app_manifest);
     let attrs = tauri_build::Attributes::new().windows_attributes(windows);
     tauri_build::try_build(attrs).expect("failed to run tauri build script");
 
