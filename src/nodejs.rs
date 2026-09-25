@@ -734,6 +734,7 @@ fn extract_nodejs_zip(
     Ok(())
 }
 
+#[cfg(windows)]
 /// 官方 zip 的内容位于带版本号的顶层目录下；摊平后 node.exe 落在 target 根。
 fn flatten_single_child_directory(target: &Path) -> Result<()> {
     let mut entries = fs::read_dir(target)
