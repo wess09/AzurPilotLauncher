@@ -93,8 +93,10 @@ describe("launcher actions", () => {
       screen.getByRole("button", { name: /Starting/ }).hasAttribute("disabled"),
     ).toBe(false);
     expect(
-      screen.queryByRole("button", { name: /Repair environment/ }),
-    ).toBeNull();
+      screen
+        .getByRole("button", { name: /Repair environment/ })
+        .hasAttribute("disabled"),
+    ).toBe(true);
     expect(screen.getByText(/Click to cancel/)).toBeTruthy();
   });
   it("offers an explicit update and blocks launch and repair", async () => {

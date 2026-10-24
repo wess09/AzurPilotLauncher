@@ -278,13 +278,39 @@ export function App() {
         </section>
         {idle || launching ? (
           <div className={styles.idleBar}>
-            {launching && (
-              <span className={styles.launchHint} aria-hidden="true">
-                <Info16Regular fontSize={14} />
-                {t("click_cancel_hint")}
-              </span>
-            )}
-            <Button
+            <div className={styles.secondaryActions}>
+              {!connection && (
+                <Button
+                  appearance="transparent"
+                  size="small"
+                  icon={<Wrench16Regular />}
+                  onClick={() => setDialog("repair")}
+                  disabled={pending || !state?.can_repair}
+                  title={
+                    state?.backend_running ? t("repair_disabled") : t("repair")
+                  }
+                >
+                  {t("repair")}
+                </Button>
+              )}
+              <Button
+                appearance="transparent"
+                size="small"
+                icon={<ArrowDownload16Regular />}
+                onClick={() => void act("download_today_launcher_log")}
+                disabled={pending}
+              >
+                {t("export_log")}
+              </Button>
+            </div>
+            <div className={styles.launchStack}>
+              {launching && (
+                <span className={styles.launchHint} aria-hidden="true">
+                  <Info16Regular fontSize={14} />
+                  {t("click_cancel_hint")}
+                </span>
+              )}
+              <Button
               appearance="primary"
               size="large"
               className={`${styles.primary} ${launching ? styles.launchingButton : ""}`}
@@ -323,6 +349,7 @@ export function App() {
                 t(mainLabel)
               )}
             </Button>
+            </div>
           </div>
         ) : (
           <div className={styles.bottomStack}>

@@ -264,12 +264,17 @@ body {
 }
 .idleBar {
   display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
   align-items: flex-end;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 16px;
   /* 抵消 main 的 56px 右内边距，使按钮距窗口右/下边缘对称 24px。 */
   margin-right: -32px;
+}
+.launchStack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
 }
 /* 空闲态主按钮是画面焦点，图标比面板态更大。 */
 .idleBar .primary svg {
