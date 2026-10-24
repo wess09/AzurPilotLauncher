@@ -1,12 +1,22 @@
 # 更新日志
 
+## 3.0.0 - 2026-10-25
+
+- 全新主界面：三平台统一无边框窗口与自定义标题栏（Logo、版本号、窗口控制按钮、设置入口），内嵌 MiSans 字体并优先于系统字体，界面语言支持在设置中切换（简体中文/繁體中文/日本語/English）并同步启动器自身消息。
+- 主面板极简化：空闲与任务执行状态仅保留右下角大按钮，启动/重试按钮内嵌进度填充与当前步骤名（不展示原始 git/uv 输出）；移除状态行、版本行、提示文字与通知条。
+- 任务取消重构：新增 `launcher_cancel` 命令，任务执行中点击两次大按钮即可取消且不退出启动器；取消阶段按钮显示"正在取消"。
+- 错误报告改为 PCL 风格弹窗：deploy 层错误按命令执行/代码更新/合并/依赖同步分类（结构化错误码经 stderr 标记与进程退出码传递），弹窗按类型展示标题、原始错误日志、"下载错误日志"（整个 log 目录顶层打包为 zip，另存对话框默认定位系统下载文件夹，完成后在文件管理器中定位）与求助提示。
+- 新增设置面板（SQLite 存储于系统数据目录）：开机自启（Windows）、启动启动器时直接启动服务、托盘化时保留 WebView 不释放内存（Windows）；非 Windows 平台相关开关自动禁用并标注。
+- 错误弹窗按钮不再折行；界面语言、设置项变更即时生效并持久化。
+
 ## 2.3.0 - 2026-10-24
 
 - 内嵌 uv 由 0.11.32 升级至 0.13.5：新版证书库移除受泄露影响的 eMudhra/emSign 根证书，并拒绝含被泄露 eMudhra 中间 CA 私钥的证书链，同步更新捆绑 pip/certifi 的证书数据。
 - 发行产物统一改名为 AzurPilot：Windows 为 `AzurPilot.exe`，Linux 归档内为 `AzurPilot`，macOS 为 `AzurPilot.app/Contents/MacOS/AzurPilot`。
 - Cargo 包名由 `alas-launcher` 改为 `azurpilot`，构建产物为 `target/release/azurpilot[.exe]`；安装脚本、打包脚本、更新载荷名与文档同步更新。
 - 应用标识由 `moe.taiho.alas-launcher` 改为 `moe.taiho.azurpilot`，Windows 通知 AUMID 同步改为 `moe.taiho.azurpilot.notification*`。
-- `ALAS_LAUNCHER_PID`、`ALAS_LAUNCHER_JOB_BREAKAWAY` 等与 ALAS 后端配合的跨仓库环境变量保持不变；已安装的旧版本经自更新升级时只替换文件内容、文件名不变。
+- 启动器内部函数、JS 全局变量、CSS 类名、DOM 标识和测试环境变量统一使用 `azurpilot` / `AZURPILOT`；构建变量改为 `AZURPILOT_BOOTSTRAP_UV` 和 `AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64`，CI 兼容读取旧证书 Secret。
+- 后端环境协议同时设置 `AP_LAUNCHER_PID`、`AP_LAUNCHER_JOB_BREAKAWAY`、`AP_WEBUI_TRUST_SECRET` 及对应的 `ALAS_` 别名；独立模拟器清除任一归属标记后均不参与兜底清理。已安装的旧版本经自更新升级时只替换文件内容、文件名不变。
 
 ## 2.2.5 - 2026-10-19
 

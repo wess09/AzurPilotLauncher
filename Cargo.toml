@@ -1,6 +1,6 @@
 [package]
 name = "azurpilot"
-version = "2.3.0"
+version = "3.0.0"
 description = "AzurPilot launcher built with Tauri"
 authors = ["Jianfeng Zhang <swordfeng123@gmail.com>"]
 edition = "2021"
