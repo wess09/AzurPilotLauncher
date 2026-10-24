@@ -651,7 +651,10 @@ fn download_log_archive(app_handle: tauri::AppHandle) -> std::result::Result<usi
     Ok(count)
 }
 
-/// 递归打包 log 目录下全部文件为 zip（保留相对路径），返回文件数。
+/// 打包 log 目录顶层全部文件为 zip（不含子目录），返回文件数。
+///
+/// 子目录（error 崩溃转储等）可能含数千文件，全量打包会卡死 UI 线程，
+/// 因此只收顶层文件。
 ///
 /// # Errors
 /// 目录遍历、文件读取或 zip 写入失败时返回 io 错误。
@@ -664,25 +667,17 @@ fn pack_log_directory(
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
     let mut count = 0usize;
-    let mut stack = vec![(log_dir.to_path_buf(), String::new())];
-    while let Some((dir, prefix)) = stack.pop() {
-        for entry in fs::read_dir(&dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            let name = if prefix.is_empty() {
-                entry.file_name().to_string_lossy().to_string()
-            } else {
-                format!("{prefix}/{}", entry.file_name().to_string_lossy())
-            };
-            if path.is_dir() {
-                stack.push((path, name));
-            } else {
-                zip.start_file(name.clone(), options.clone())?;
-                let mut source = fs::File::open(&path)?;
-                std::io::copy(&mut source, &mut zip)?;
-                count += 1;
-            }
+    for entry in fs::read_dir(log_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
         }
+        let name = entry.file_name().to_string_lossy().to_string();
+        zip.start_file(name, options.clone())?;
+        let mut source = fs::File::open(&path)?;
+        std::io::copy(&mut source, &mut zip)?;
+        count += 1;
     }
     zip.finish()?;
     Ok(count)
