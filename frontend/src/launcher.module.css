@@ -243,9 +243,14 @@ body {
   gap: 4px;
 }
 .primary {
+  flex-shrink: 0;
+}
+/* 主按钮是所有状态的视觉焦点；双类选择器压过 Fluent 运行时注入的
+   同优先级原子样式（border-radius/font-size 等）。 */
+.idleBar .primary,
+.panel .primary {
   min-width: 280px;
   height: 56px;
-  flex-shrink: 0;
   font-size: 18px;
   border-radius: 8px;
 }
@@ -406,9 +411,6 @@ body {
   .panel {
     padding: 24px;
   }
-  .primary {
-    min-width: 176px;
-  }
   .actions {
     gap: 12px;
   }
@@ -426,10 +428,6 @@ body {
   .actions {
     align-items: stretch;
     flex-direction: column-reverse;
-  }
-  .primary {
-    width: 100%;
-    min-width: 0;
   }
   .panel {
     padding: 20px 16px;
