@@ -192,42 +192,6 @@ body {
   display: flex;
   flex-direction: column;
 }
-.statusRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.indicator {
-  width: 8px;
-  height: 8px;
-  background: var(--accent);
-  border-radius: 50%;
-  flex-shrink: 0;
-  animation: breathe 2.4s ease-in-out infinite;
-}
-.indicator.failed {
-  background: var(--critical);
-  animation: none;
-}
-@keyframes breathe {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
-}
-.status {
-  font-size: 16px;
-  font-weight: 600;
-}
-.version {
-  margin-left: auto;
-  color: var(--text-3);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
 .taskDetail {
   font-size: 14px;
   line-height: 1.7;
@@ -448,9 +412,6 @@ body {
   .panel {
     padding: 20px 16px;
   }
-  .version {
-    font-size: 11px;
-  }
   .description {
     font-size: 13px;
   }
@@ -459,12 +420,6 @@ body {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .indicator {
-    animation: none;
-  }
-  .chevron {
-    transition: none;
-  }
   .background {
     visibility: hidden;
   }

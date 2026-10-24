@@ -387,17 +387,6 @@ export function App() {
         ) : (
           <div className={styles.bottomStack}>
           <section className={styles.panel} aria-label={t("status")}>
-            <div className={styles.statusRow}>
-              <span
-                className={`${styles.indicator} ${phase === "error" || error ? styles.failed : ""}`}
-              />
-              <span className={styles.status} role="status">
-                {connection ? t("connection_title") : t(phase)}
-              </span>
-              <span className={styles.version}>
-                {t("version")} {context.version}
-              </span>
-            </div>
             {state?.update_version && (
               <p className={styles.taskDetail}>
                 {t("update_hint", { version: state.update_version })}
