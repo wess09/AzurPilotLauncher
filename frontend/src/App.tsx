@@ -13,6 +13,7 @@ import {
   DismissRegular,
   ErrorCircle16Regular,
   FullScreenMaximizeRegular,
+  Info16Regular,
   Open16Filled,
   Play16Filled,
   Stop16Regular,
@@ -279,6 +280,7 @@ export function App() {
           <div className={styles.idleBar}>
             {launching && (
               <span className={styles.launchHint} aria-hidden="true">
+                <Info16Regular fontSize={14} />
                 {t("click_cancel_hint")}
               </span>
             )}
