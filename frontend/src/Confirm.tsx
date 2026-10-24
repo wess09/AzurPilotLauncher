@@ -1,6 +1,16 @@
-import { useEffect, useRef } from "react";
+import {
+  Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+} from "@fluentui/react-components";
 import styles from "./launcher.module.css";
 
+// Fluent ContentDialog 形态：父组件按状态条件挂载，open 恒为 true；
+// Escape 触发的 onOpenChange 与 backdrop 一样只在非 pending 时回调取消。
 export function Confirm({
   title,
   body,
@@ -18,36 +28,33 @@ export function Confirm({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const dialog = ref.current!;
-    dialog.showModal();
-    return () => dialog.close();
-  }, []);
   return (
-    <dialog
-      ref={ref}
-      className={styles.dialog}
+    <Dialog
+      open
+      modalType="alert"
       aria-labelledby="confirm-title"
-      onCancel={(e) => {
-        e.preventDefault();
-        if (!pending) onCancel();
+      onOpenChange={(_event, data) => {
+        if (!data.open && !pending) onCancel();
       }}
     >
-      <h2 id="confirm-title">{title}</h2>
-      <p>{body}</p>
-      <div className={styles.dialogActions}>
-        <button autoFocus onClick={onCancel} disabled={pending}>
-          {cancel}
-        </button>
-        <button
-          className={styles.primary}
-          onClick={onConfirm}
-          disabled={pending}
-        >
-          {confirm}
-        </button>
-      </div>
-    </dialog>
+      <DialogSurface className={styles.dialog} aria-labelledby="confirm-title">
+        <DialogBody>
+          <DialogTitle id="confirm-title">{title}</DialogTitle>
+          <DialogContent>{body}</DialogContent>
+          <DialogActions>
+            <Button onClick={onCancel} disabled={pending} autoFocus>
+              {cancel}
+            </Button>
+            <Button
+              appearance="primary"
+              onClick={onConfirm}
+              disabled={pending}
+            >
+              {confirm}
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
   );
 }

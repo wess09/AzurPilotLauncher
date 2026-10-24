@@ -76,8 +76,11 @@ if (preview && scenario) {
     };
 }
 let previewListener: ((state: Snapshot) => void) | undefined;
-export async function command<T = void>(name: string): Promise<T> {
-  if (!preview) return invoke<T>(name);
+export async function command<T = void>(
+  name: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  if (!preview) return invoke<T>(name, args);
   if (name === "launcher_context")
     return {
       locale: new URLSearchParams(location.search).get("lang") ?? "zh-CN",
@@ -147,3 +150,14 @@ export async function subscribe(
   };
 }
 export const getContext = () => command<Context>("launcher_context");
+// 日志归档打包进度（done/total 字节）；preview 模拟无此事件。
+export async function subscribeLogArchiveProgress(
+  callback: (progress: { done: number; total: number }) => void,
+): Promise<() => void> {
+  if (preview) return () => {};
+  const unlisten = await listen<{ done: number; total: number }>(
+    "launcher://log-archive-progress",
+    (e) => callback(e.payload),
+  );
+  return () => unlisten();
+}

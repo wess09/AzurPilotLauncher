@@ -406,6 +406,13 @@ body {
 .errorDialog {
   max-width: min(640px, calc(100vw - 32px));
 }
+.packProgress {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-2);
+}
 .connection {
   padding-top: 104px;
 }

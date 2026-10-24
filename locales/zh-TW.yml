@@ -255,6 +255,7 @@ launcher:
   cancelling: "正在取消"
   error: "操作未完成"
   launch_failed: "啟動失敗"
+  packing_log: "正在打包日誌"
   download_error_log: "下載錯誤日誌"
   err_command: "命令執行失敗"
   err_git_fetch: "代碼更新失敗"

@@ -255,6 +255,7 @@ launcher:
   cancelling: "Cancelling"
   error: "Something went wrong"
   launch_failed: "Launch failed"
+  packing_log: "Packing logs"
   download_error_log: "Download error log"
   err_command: "Command failed"
   err_git_fetch: "Code update failed"

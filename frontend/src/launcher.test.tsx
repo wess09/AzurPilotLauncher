@@ -40,6 +40,7 @@ const ready = (): Snapshot => ({
 vi.mock("./bridge", () => ({
   native: false,
   command: bridge.command,
+  subscribeLogArchiveProgress: async () => () => {},
   getContext: async () => ({
     locale: "en",
     version: "2.2.5",

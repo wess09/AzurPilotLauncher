@@ -537,11 +537,13 @@ export function App() {
           title={errorTitle}
           log={shownError}
           downloadLabel={t("download_error_log")}
-          savedLabel={t("log_saved")}
+          packingLabel={t("packing_log")}
           closeLabel={t("close")}
           onDownload={async () => {
             try {
-              await command("download_log_archive");
+              const target = await command<string | null>("prompt_log_archive_path");
+              if (!target) return false;
+              await command("download_log_archive", { target });
               return true;
             } catch (e) {
               setNotice(`${t("action_failed")} ${String(e)}`);
