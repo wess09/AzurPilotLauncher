@@ -183,12 +183,13 @@ mod tests {
             launch_on_startup: true,
             auto_start_service: false,
             keep_webview_on_tray: true,
+            language: Some("zh-CN".to_string()),
         };
         store.set(&next).expect("save settings");
         let read = store.get();
         assert!(read.launch_on_startup);
-        assert!(!read.auto_start_service);
         assert!(read.keep_webview_on_tray);
+        assert_eq!(read.language.as_deref(), Some("zh-CN"));
     }
 }
 

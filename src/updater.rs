@@ -1361,7 +1361,6 @@ fn path_to_wide(path: &Path) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(windows)]
     use crate::TAURI_CONFIG_SOURCE;
     use crate::{
         cargo_toml_section, cargo_toml_value, time_bomb_config, truncate_log_file,

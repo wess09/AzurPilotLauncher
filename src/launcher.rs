@@ -6,14 +6,17 @@ use crate::tray_icon_for_platform;
 use crate::{
     backend::{ManagedBackend, WebuiLaunchConfig},
     initialize_logging,
-    launcher_control::start_launcher_control_stream,
-    notify::{start_notify_stream, NotificationClickHandler},
+    launcher_control::{start_launcher_channel, ChannelHandler, LauncherChannel},
+    notify::NotificationClickHandler,
     preview_crash_arg_present, preview_no_update_arg_present,
     progress::{self, SplashUpdate},
     setup::{self, get_deploy_config, setup_azurpilot_repo, setup_environment},
-    start_minimized_arg_present, time_bomb_expiration_message, updater, window_util,
+    start_minimized_arg_present, time_bomb_expiration_message, updater,
     windows::*,
 };
+// window_util 仅在 Windows 控制台探测中使用；拆出按平台导入避免 Linux 告警。
+#[cfg(windows)]
+use crate::window_util;
 use anyhow::{bail, Context, Result};
 use rust_i18n::t;
 use serde::Serialize;
@@ -229,8 +232,27 @@ impl Model {
 
 struct Session {
     task: u64,
-    stop: Arc<AtomicBool>,
     streams: Vec<thread::JoinHandle<()>>,
+    channel: Arc<LauncherChannel>,
+}
+
+struct NativeChannelHandler {
+    app: tauri::AppHandle,
+    on_click: NotificationClickHandler,
+}
+
+impl ChannelHandler for NativeChannelHandler {
+    fn autostart(&self, enabled: Option<bool>) -> Result<serde_json::Value> {
+        let state = match enabled {
+            Some(enabled) => crate::autostart::set_enabled(enabled)?,
+            None => crate::autostart::query()?,
+        };
+        Ok(serde_json::json!({"supported":state.supported,"enabled":state.enabled}))
+    }
+
+    fn notification(&self, data: serde_json::Value) -> Result<()> {
+        crate::notify::display(&self.app, data, &self.on_click)
+    }
 }
 
 pub(crate) struct Launcher {
@@ -495,14 +517,15 @@ impl Launcher {
                 }
             })
         };
-        let streams = vec![
-            start_notify_stream(self.app.clone(), self.port, stop.clone(), on_click),
-            start_launcher_control_stream(self.port, stop.clone()),
-        ];
+        let handler = Arc::new(NativeChannelHandler { app: self.app.clone(), on_click });
+        let (channel, worker) = start_launcher_channel(
+            self.port, crate::launcher_trust_secret().to_owned(), stop.clone(), handler,
+        );
+        let streams = vec![worker];
         *self.session.lock().unwrap() = Some(Session {
             task,
-            stop: stop.clone(),
             streams,
+            channel,
         });
         let controller = self.clone();
         thread::spawn(move || {
@@ -558,7 +581,7 @@ impl Launcher {
     fn stop_backend(&self) -> Result<()> {
         let session = self.session.lock().unwrap().take();
         if let Some(session) = &session {
-            session.stop.store(true, Ordering::SeqCst);
+            session.channel.close();
         }
         let result = if let Some((_, mut backend)) = self.backend.lock().unwrap().take() {
             backend.terminate().map(|_| ())
@@ -606,6 +629,11 @@ impl Launcher {
             return;
         }
         restore_main_window_from_any_thread(self.app.clone(), self.port, self.recreate.clone());
+    }
+
+    pub(crate) fn webui_url(&self) -> String {
+        let channel = self.session.lock().unwrap().as_ref().map(|session| session.channel.clone());
+        crate::webui_navigate_url(self.port, channel)
     }
 
     pub(crate) fn request_close(self: &Arc<Self>) {
