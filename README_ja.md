@@ -253,7 +253,7 @@
 ```mermaid
 graph TD
     subgraph Shell ["ランチャーシェル (Tauri 2 · Rust)"]
-        Splash["スプラッシュ画面 alas-splash://<br/>(グラス調プログレスバー / エラーページ alas-error://)"]
+        Splash["スプラッシュ画面 React launcher<br/>(グラス調プログレスバー / エラーページ React connection error)"]
         Setup["環境構築 setup.rs<br/>(Python / uv / adb / git の導入と移行)"]
         Tray["システム統合<br/>(システムトレイ / ネイティブ通知 / カスタムタイトルバー)"]
         Backend["バックエンド管理 backend.rs<br/>(ポートクリーンアップ / プロセス回収)"]
@@ -342,7 +342,7 @@ graph TD
         <img src="https://img.shields.io/badge/ステップ-02-indigo?style=flat-square" alt="Step 2"><br>
         <h4>解凍して起動</h4>
       </div>
-      Windows は <code>alas-launcher.exe</code> を実行（管理者権限が必要）。macOS は <code>AzurPilot.app</code> を開く。Linux は <code>alas-launcher</code> を実行します。
+      Windows は <code>AzurPilot.exe</code> を実行（管理者権限が必要）。macOS は <code>AzurPilot.app</code> を開く。Linux は <code>AzurPilot</code> を実行します。
     </td>
     <td width="25%" valign="top">
       <div align="center">
@@ -405,9 +405,9 @@ AzurPilot ルートディレクトリ
 * Linux:   AzurLaneAutoScript
 
 AzurPilot ランチャー
-* Windows: AzurLaneAutoScript/alas-launcher.exe
-* macOS:   AzurPilot.app/Contents/MacOS/alas-launcher
-* Linux:   AzurLaneAutoScript/alas-launcher
+* Windows: AzurLaneAutoScript/AzurPilot.exe
+* macOS:   AzurPilot.app/Contents/MacOS/AzurPilot
+* Linux:   AzurLaneAutoScript/AzurPilot
 
 Python / uv
 * 全システム共通: .venv
@@ -563,3 +563,19 @@ Adb
 <div align="center">
   <sub>AzurPilot Launcher はオープンソースライセンスに基づきコミュニティによってメンテナンスされています。問題があれば <a href="https://github.com/wess09/AzurPilotLauncher/issues">Issue</a> または <a href="https://github.com/wess09/AzurPilotLauncher/pulls">Pull Request</a> をお気軽にどうぞ。</sub>
 </div>
+
+## 起動と開発
+
+起動するとホームが表示されます。「起動」を押すと環境を準備して WebUI を開きます。修復前にサービスを停止してください。修復は .venv を再構築し、設定とログを保持します。ランチャー更新はクリックして実行します。
+
+開発には Node.js 24 が必要です。
+
+```bash
+npm --prefix frontend ci
+cargo tauri dev
+npm --prefix frontend test
+npm --prefix frontend run build
+cargo build --locked --release --features custom-protocol
+```
+
+[React launcher architecture and IPC](docs/launcher-ui.md)

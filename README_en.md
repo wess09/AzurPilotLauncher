@@ -253,7 +253,7 @@ The project follows a cleanly decoupled layered design with well-defined respons
 ```mermaid
 graph TD
     subgraph Shell ["Launcher Shell (Tauri 2 · Rust)"]
-        Splash["Splash Screen alas-splash://<br/>(Glass Progress Bar / Error Page alas-error://)"]
+        Splash["Splash Screen React launcher<br/>(Glass Progress Bar / Error Page React connection error)"]
         Setup["Environment Setup setup.rs<br/>(Python / uv / adb / git Install & Migration)"]
         Tray["System Integration<br/>(Tray / Native Notifications / Custom Titlebar)"]
         Backend["Backend Manager backend.rs<br/>(Port Cleanup / Process Reclaim)"]
@@ -342,7 +342,7 @@ graph TD
         <img src="https://img.shields.io/badge/Step-02-indigo?style=flat-square" alt="Step 2"><br>
         <h4>Extract &amp; Launch</h4>
       </div>
-      Run <code>alas-launcher.exe</code> on Windows (administrator required); open <code>AzurPilot.app</code> on macOS; run <code>alas-launcher</code> on Linux.
+      Run <code>AzurPilot.exe</code> on Windows (administrator required); open <code>AzurPilot.app</code> on macOS; run <code>AzurPilot</code> on Linux.
     </td>
     <td width="25%" valign="top">
       <div align="center">
@@ -405,9 +405,9 @@ AzurPilot root directory
 * Linux:   AzurLaneAutoScript
 
 AzurPilot launcher
-* Windows: AzurLaneAutoScript/alas-launcher.exe
-* macOS:   AzurPilot.app/Contents/MacOS/alas-launcher
-* Linux:   AzurLaneAutoScript/alas-launcher
+* Windows: AzurLaneAutoScript/AzurPilot.exe
+* macOS:   AzurPilot.app/Contents/MacOS/AzurPilot
+* Linux:   AzurLaneAutoScript/AzurPilot
 
 Python / uv
 * All systems: .venv
@@ -563,3 +563,19 @@ This project is open-sourced under the [GNU General Public License v3.0 (GPL-3.0
 <div align="center">
   <sub>AzurPilot Launcher is open-source and community-driven. For any issues, feel free to open an <a href="https://github.com/wess09/AzurPilotLauncher/issues">Issue</a> or a <a href="https://github.com/wess09/AzurPilotLauncher/pulls">Pull Request</a>.</sub>
 </div>
+
+## Launching and development
+
+The launcher opens a home page. Click Launch to prepare the environment and open WebUI. Stop the service before repairing .venv; settings and logs are preserved. Launcher updates require an explicit click.
+
+Development requires Node.js 24.
+
+```bash
+npm --prefix frontend ci
+cargo tauri dev
+npm --prefix frontend test
+npm --prefix frontend run build
+cargo build --locked --release --features custom-protocol
+```
+
+[React launcher architecture and IPC](docs/launcher-ui.md)

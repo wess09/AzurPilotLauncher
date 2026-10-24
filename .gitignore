@@ -17,3 +17,7 @@ AzurLaneAutoScript.app/
 /cf-worker/.wrangler/
 /cf-worker/dist/
 /cf-worker/public/updata/stable.json
+
+# React launcher build outputs.
+/frontend/node_modules/
+/frontend/dist/

@@ -7,7 +7,7 @@
 //! - 经 git 拉取最新仓库代码（`git_update`，最多重试 20 次）；
 //! - 按 `uv.lock` 同步 Python 依赖（`uv_sync_project`）；
 //! - 迁移与校验 `config/deploy.yaml` 部署配置（`migrate_dependency_config`）；
-//! - 清理可重建的运行时状态（`.venv`、缓存）用于故障恢复。
+//! - 用户主动修复时，仅重建 `.venv`，保留代码、配置与缓存。
 //!
 //! 阶段进度通过 [`SplashUpdate`] 回调上报启动画面；所有长时间操作均支持
 //! 经 `cancel_requested` 原子标志请求取消。
@@ -189,6 +189,18 @@ fn platform_git_config_path() -> &'static str {
 /// # Panics
 /// 两种布局都未命中时 panic——启动器必须与仓库同发行，无法继续运行。
 pub fn alas_repo_dir() -> PathBuf {
+    #[cfg(debug_assertions)]
+    if let Some(root) = std::env::var_os("AZURPILOT_REPO_DIR") {
+        let root = PathBuf::from(root)
+            .canonicalize()
+            .expect("AZURPILOT_REPO_DIR must exist");
+        assert!(
+            root.join("deploy/installer.py").is_file(),
+            "AZURPILOT_REPO_DIR must contain deploy/installer.py"
+        );
+        return root;
+    }
+
     // 优先检查常规的"同目录便携发行"布局
     let exe_folder = std::env::current_exe()
         .unwrap()
@@ -450,41 +462,38 @@ pub fn setup_alas_repo(
     Ok(())
 }
 
-/// 后端启动超时后的恢复流程：删除 `.venv` 并重建、重新同步依赖。
+/// 用户主动修复：仅删除 `.venv` 并重建工具与依赖。
 ///
-/// 与完整 setup 不同，此流程跳过 git 更新与配置迁移，只处理
-/// Python 环境，用于"依赖损坏导致后端起不来"的场景兜底。
+/// 与完整 setup 不同，此流程跳过 git 更新，迁移工具路径配置并同步
+/// Python 依赖；只在用户确认后执行。
 ///
 /// # Errors
 /// 用户取消、`.venv` 删除失败或依赖同步失败时返回 Err。
-pub fn rebuild_venv_and_sync_dependencies(
+pub fn repair_environment(
     mut status_updater: impl FnMut(SplashUpdate),
     cancel_requested: Arc<AtomicBool>,
 ) -> Result<()> {
     if cancel_requested.load(Ordering::SeqCst) {
-        bail!(t!("setup.cancel_cleaning"));
+        bail!(t!("launcher.cancelled"));
     }
 
     status_updater(
-        SplashUpdate::loading(
-            t!("setup.preparing_env"),
-            t!("setup.backend_timeout_recovery"),
-            97,
-        )
-        .with_subtitle(t!("setup.rebuilding_env", tip = get_tip())),
+        SplashUpdate::loading(t!("setup.preparing_env"), t!("launcher.repair_body"), 4)
+            .with_subtitle(t!("setup.rebuilding_env", tip = get_tip())),
     );
-    remove_venv_for_backend_recovery(&cancel_requested)?;
+    remove_venv_for_repair(&cancel_requested)?;
 
     let bootstrap_uv = bootstrap_uv_path()?;
     ensure_runtime_tools(&bootstrap_uv, &cancel_requested, &mut status_updater)?;
     if cancel_requested.load(Ordering::SeqCst) {
-        bail!(t!("setup.cancel_cleaning"));
+        bail!(t!("launcher.cancelled"));
     }
 
     status_updater(
-        SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.verifying_deps"), 97)
+        SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.verifying_deps"), 64)
             .with_subtitle(t!("setup.syncing_deps", tip = get_tip())),
     );
+    migrate_dependency_config()?;
     uv_sync_project(&mut status_updater, &bootstrap_uv, &cancel_requested)
 }
 
@@ -493,113 +502,6 @@ pub fn get_deploy_config() -> Option<JsonValue> {
     let config_content = fs::read_to_string("./config/deploy.yaml").ok()?;
     let config: JsonValue = serde_yaml::from_str(&config_content).ok()?;
     Some(config)
-}
-
-/// 清除可重建的运行时状态，让下次启动从干净状态开始。
-///
-/// 只删除 `.venv`、仓库的 `cache/` 与 uv 缓存；代码检出、`config/`
-/// 与 `log/` 均保留——依赖同步失败不应让用户付出重新克隆的代价。
-///
-/// # Errors
-/// 进程清理后目录仍无法删除时返回 Err。
-pub fn reset_venv_for_rebuild() -> Result<()> {
-    let repo_dir = alas_repo_dir();
-    kill_runtime_processes(&repo_dir);
-
-    remove_rebuildable_entry(&venv_dir())?;
-    remove_rebuildable_entry(&repo_dir.join("cache"))?;
-    clean_uv_cache()?;
-    Ok(())
-}
-
-/// 删除一个可重建的路径；路径不存在视为已清理，直接成功。
-///
-/// # Errors
-/// 删除失败（重试后仍被占用等）时返回 Err。
-fn remove_rebuildable_entry(path: &Path) -> Result<()> {
-    if !path.exists() {
-        info!("No {} to remove", path.display());
-        return Ok(());
-    }
-    info!("Removing {}", path.display());
-    remove_runtime_entry_with_retry(path).with_context(|| {
-        t!(
-            "errors.reset_venv_failed",
-            error = path.display().to_string()
-        )
-    })
-}
-
-/// 清空 uv 的全局下载缓存，释放磁盘空间。
-///
-/// # Errors
-/// 找不到 uv 引导程序或 `uv cache clean` 执行失败时返回 Err。
-fn clean_uv_cache() -> Result<()> {
-    let uv = bootstrap_uv_path()?;
-    info!("Cleaning uv cache with {}", uv.display());
-    let mut cmd = Command::new(&uv);
-    // UV_NO_PROGRESS 关闭交互式进度输出；清缓存不应受 UV_PYTHON 影响，故移除
-    cmd.args(["cache", "clean"])
-        .env("UV_NO_PROGRESS", "1")
-        .env_remove("UV_PYTHON");
-    isolate_python_child_environment(&mut cmd);
-    let status = cmd.create_no_window().status().with_context(|| {
-        t!(
-            "errors.uv_cache_cleanup_failed",
-            error = uv.display().to_string()
-        )
-    })?;
-    if !status.success() {
-        bail!(t!("errors.uv_cache_failed"));
-    }
-    Ok(())
-}
-
-/// 强制结束所有仍在使用仓库目录的运行时进程（gui.py 等）。
-///
-/// 依据进程的可执行文件路径或工作目录是否位于仓库目录内判定；
-/// 删除 `.venv` 前必须先停掉占用它的进程，否则 Windows 上文件
-/// 被锁定无法删除。
-fn kill_runtime_processes(repo_dir: &Path) {
-    let current_pid = std::process::id();
-    let sys = sysinfo::System::new_all();
-    for (pid, process) in sys.processes() {
-        if pid.as_u32() == current_pid {
-            continue;
-        }
-
-        let should_kill = process
-            .exe()
-            .map(|exe| path_is_inside(exe, repo_dir))
-            .unwrap_or(false)
-            || process
-                .cwd()
-                .map(|cwd| path_is_inside(cwd, repo_dir))
-                .unwrap_or(false);
-
-        if should_kill {
-            info!(
-                "Killing runtime process {} ({}) before cleanup",
-                pid,
-                process.name().to_string_lossy()
-            );
-            if !process.kill() {
-                warn!("Failed to kill runtime process {}", pid);
-            }
-        }
-    }
-
-    thread::sleep(Duration::from_millis(500));
-}
-
-/// 判断 path 是否位于 parent 目录之内（先规范化再比较前缀）。
-///
-/// 规范化可消除 `..`、符号链接等差异；无法规范化（已删除等）
-/// 时保守返回 false。
-fn path_is_inside(path: &Path, parent: &Path) -> bool {
-    path.canonicalize()
-        .map(|path| path.starts_with(parent))
-        .unwrap_or(false)
 }
 
 /// 递归删除目录/文件，删除前先清除只读属性。
@@ -669,14 +571,14 @@ fn remove_runtime_entry_with_retry(path: &Path) -> Result<()> {
 ///
 /// # Errors
 /// 用户取消、路径校验不通过或删除失败时返回 Err。
-fn remove_venv_for_backend_recovery(cancel_requested: &AtomicBool) -> Result<()> {
+fn remove_venv_for_repair(cancel_requested: &AtomicBool) -> Result<()> {
     let repo_dir = alas_repo_dir().canonicalize()?;
     let venv = venv_dir();
-    if !venv.exists() {
-        return Ok(());
-    }
-
-    let venv_metadata = fs::symlink_metadata(&venv)?;
+    let venv_metadata = match fs::symlink_metadata(&venv) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
     if !venv_metadata.is_dir() || is_symlink_or_reparse_point(&venv_metadata) {
         bail!(t!(
             "errors.refuse_cleanup",
@@ -693,7 +595,7 @@ fn remove_venv_for_backend_recovery(cancel_requested: &AtomicBool) -> Result<()>
         ));
     }
 
-    remove_venv_path_for_backend_recovery(&venv, cancel_requested).with_context(|| {
+    remove_venv_path_for_repair(&venv, cancel_requested).with_context(|| {
         t!(
             "errors.reset_venv_failed",
             error = venv.display().to_string()
@@ -705,18 +607,21 @@ fn remove_venv_for_backend_recovery(cancel_requested: &AtomicBool) -> Result<()>
 ///
 /// # Errors
 /// 用户取消或删除重试用尽仍失败时返回 Err。
-fn remove_venv_path_for_backend_recovery(venv: &Path, cancel_requested: &AtomicBool) -> Result<()> {
+fn remove_venv_path_for_repair(venv: &Path, cancel_requested: &AtomicBool) -> Result<()> {
     if cancel_requested.load(Ordering::SeqCst) {
-        bail!(t!("setup.cancel_cleaning"));
+        bail!(t!("launcher.cancelled"));
     }
     if !venv.exists() {
         return Ok(());
     }
 
-    info!("Removing {} after backend startup timeout", venv.display());
+    info!(
+        "Removing {} for explicit environment repair",
+        venv.display()
+    );
     remove_venv_entry_with_retry(venv, cancel_requested)?;
     if cancel_requested.load(Ordering::SeqCst) {
-        bail!(t!("setup.cancel_cleaning"));
+        bail!(t!("launcher.cancelled"));
     }
     Ok(())
 }
@@ -732,7 +637,7 @@ fn remove_venv_entry_with_retry(path: &Path, cancel_requested: &AtomicBool) -> R
     let mut last_error = None;
     for attempt in 0..CLEANUP_RETRIES {
         if cancel_requested.load(Ordering::SeqCst) {
-            bail!(t!("setup.cancel_cleaning"));
+            bail!(t!("launcher.cancelled"));
         }
 
         match remove_venv_entry(path, cancel_requested) {
@@ -767,7 +672,7 @@ fn remove_venv_entry_with_retry(path: &Path, cancel_requested: &AtomicBool) -> R
 /// 用户取消或删除失败时返回 Err。
 fn remove_venv_entry(path: &Path, cancel_requested: &AtomicBool) -> Result<()> {
     if cancel_requested.load(Ordering::SeqCst) {
-        bail!(t!("setup.cancel_cleaning"));
+        bail!(t!("launcher.cancelled"));
     }
 
     let metadata = fs::symlink_metadata(path)?;
@@ -779,7 +684,7 @@ fn remove_venv_entry(path: &Path, cancel_requested: &AtomicBool) -> Result<()> {
     if metadata.is_dir() {
         for entry in fs::read_dir(path)? {
             if cancel_requested.load(Ordering::SeqCst) {
-                bail!(t!("setup.cancel_cleaning"));
+                bail!(t!("launcher.cancelled"));
             }
             remove_venv_entry(&entry?.path(), cancel_requested)?;
         }
@@ -860,7 +765,7 @@ fn wait_for_venv_recovery_retry(delay: Duration, cancel_requested: &AtomicBool) 
     let deadline = Instant::now() + delay;
     while Instant::now() < deadline {
         if cancel_requested.load(Ordering::SeqCst) {
-            bail!(t!("setup.cancel_cleaning"));
+            bail!(t!("launcher.cancelled"));
         }
         thread::sleep(
             Duration::from_millis(50).min(deadline.saturating_duration_since(Instant::now())),
@@ -955,22 +860,19 @@ fn run_command(
 ) -> Result<()> {
     let is_deps = matches!(phase, ScriptPhase::Dependencies);
 
-    let mut child = cmd
-        .create_no_window()
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = crate::task_process::TaskChild::spawn(cmd)?;
 
     // 接收读取线程输出的通道：(是否 stderr, 行文本)
     let (tx, rx) = mpsc::channel::<(bool, String)>();
 
     // 为 stdout 启动一个读取线程
-    if let Some(stdout) = child.stdout.take() {
+    if let Some(stdout) = child.take_stdout() {
         pipe_lines(stdout, tx.clone(), false);
     }
 
     // 为 stderr 启动一个读取线程
-    if let Some(stderr) = child.stderr.take() {
+    if let Some(stderr) = child.take_stderr() {
         pipe_lines(stderr, tx.clone(), true);
     }
 
@@ -997,7 +899,7 @@ fn run_command(
             // 取消时必须先杀子进程再退出，防止 gui 安装/下载残留
             let _ = child.kill();
             let _ = child.wait();
-            bail!(t!("setup.cancel_cleaning"));
+            bail!(t!("launcher.cancelled"));
         }
         // 短超时保证无输出时的取消与进度刷新也及时响应。
         match rx.recv_timeout(UPDATE_INTERVAL) {
@@ -1087,7 +989,7 @@ fn run_command_with_retry(
 ) -> Result<()> {
     for retry in 0..=MAX_UPDATE_RETRIES {
         if cancel_requested.load(Ordering::SeqCst) {
-            bail!(t!("setup.cancel_cleaning"));
+            bail!(t!("launcher.cancelled"));
         }
 
         match run_command(
@@ -1143,12 +1045,12 @@ fn run_status_command_with_tick(
     cancel_requested: &AtomicBool,
     mut on_tick: impl FnMut(),
 ) -> Result<std::process::ExitStatus> {
-    let mut child = cmd.create_no_window().spawn()?;
+    let mut child = crate::task_process::TaskChild::spawn(cmd)?;
     loop {
         if cancel_requested.load(Ordering::SeqCst) {
             let _ = child.kill();
             let _ = child.wait();
-            bail!(t!("setup.cancel_cleaning"));
+            bail!(t!("launcher.cancelled"));
         }
 
         if let Some(status) = child.try_wait()? {
@@ -1283,7 +1185,7 @@ fn uv_sync_project(
 
     for (attempt, index) in indexes.iter().enumerate() {
         if cancel_requested.load(Ordering::SeqCst) {
-            bail!(t!("setup.cancel_cleaning"));
+            bail!(t!("launcher.cancelled"));
         }
 
         info!("Syncing dependencies with PyPI index: {index}");
@@ -2079,10 +1981,8 @@ fn uv_python_install_mirrors() -> Vec<String> {
 
 /// 确保 `.venv` 内有指定版本的自包含 Python（3.14.6）。
 ///
-/// 版本检查逻辑：`.venv` 的 Python 低于最低可复用版本时删除整个
-/// 环境重建；版本满足则直接复用；不存在则全新创建。创建过程经
-/// uv 完成（managed python），并把 uv 镜像、隔离环境、代理直连
-/// 等约束注入子进程。
+/// 缺失环境执行首次安装；现有 Python 损坏或不兼容时提示用户手动修复。
+/// 不因启动失败或取消而自动删除已有环境。
 ///
 /// # Errors
 /// 用户取消、环境删除失败或 uv 安装 Python 失败时返回 Err。
@@ -2097,25 +1997,13 @@ fn ensure_self_contained_python(
         10,
     ));
     let existing_venv_python_version = venv_python_version();
-    if let Some(version) = existing_venv_python_version
-        .filter(|version| venv_python_version_requires_rebuild(*version))
+    let venv = venv_dir();
+    if venv.exists()
+        && (existing_venv_python_version.is_none()
+            || existing_venv_python_version.is_some_and(venv_python_version_requires_rebuild)
+            || managed_python_executable().is_none())
     {
-        let venv = venv_dir();
-        info!(
-            "Removing virtual environment with Python {}.{}.{}; minimum reusable version is {}.{}.{}",
-            version.0,
-            version.1,
-            version.2,
-            MIN_REUSABLE_VENV_PYTHON_VERSION.0,
-            MIN_REUSABLE_VENV_PYTHON_VERSION.1,
-            MIN_REUSABLE_VENV_PYTHON_VERSION.2,
-        );
-        remove_runtime_entry_with_retry(&venv).with_context(|| {
-            t!(
-                "errors.reset_venv_failed",
-                error = venv.display().to_string()
-            )
-        })?;
+        bail!(t!("launcher.env_repair_required"));
     }
 
     if existing_venv_python_version.is_some_and(is_reusable_venv_python_version)
@@ -2897,7 +2785,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn backend_timeout_recovery_removes_only_venv() {
+    fn explicit_repair_removes_only_venv() {
         let temp_dir = tempfile::tempdir().expect("create temporary repository");
         let venv = temp_dir.path().join(".venv");
         let keep = temp_dir.path().join("keep.txt");
@@ -2907,21 +2795,20 @@ mod tests {
         fs::write(&keep, "keep").expect("write sibling file");
         let cancel_requested = AtomicBool::new(false);
 
-        remove_venv_path_for_backend_recovery(&venv, &cancel_requested)
-            .expect("remove temporary venv");
+        remove_venv_path_for_repair(&venv, &cancel_requested).expect("remove temporary venv");
 
         assert!(!venv.exists());
         assert_eq!(fs::read_to_string(keep).expect("read sibling file"), "keep");
     }
 
     #[test]
-    fn backend_timeout_recovery_does_not_remove_venv_after_cancellation() {
+    fn cancelled_repair_preserves_venv() {
         let temp_dir = tempfile::tempdir().expect("create temporary repository");
         let venv = temp_dir.path().join(".venv");
         fs::create_dir_all(&venv).expect("create temporary venv");
         let cancel_requested = AtomicBool::new(true);
 
-        assert!(remove_venv_path_for_backend_recovery(&venv, &cancel_requested).is_err());
+        assert!(remove_venv_path_for_repair(&venv, &cancel_requested).is_err());
         assert!(venv.exists());
     }
 

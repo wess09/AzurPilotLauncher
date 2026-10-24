@@ -1,9 +1,12 @@
 [package]
-name = "alas-launcher"
-version = "2.2.5"
+name = "azurpilot"
+version = "2.3.0"
 description = "AzurPilot launcher built with Tauri"
 authors = ["Jianfeng Zhang <swordfeng123@gmail.com>"]
 edition = "2021"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
 base64 = "0.22.1"
@@ -33,7 +36,7 @@ rust-i18n = "3"
 sys-locale = "0.3"
 tempfile = "3"
 
-[package.metadata.alas-launcher.time-bomb]
+[package.metadata.azurpilot.time-bomb]
 enabled = false
 expires-at = "2026-05-28T05:00:00+08:00"
 network-time-url = "https://www.aliyun.com"

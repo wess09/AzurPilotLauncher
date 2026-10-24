@@ -27,42 +27,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alas-launcher"
-version = "2.2.5"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "chrono",
- "command-group",
- "ctrlc",
- "dirs",
- "nix 0.30.1",
- "notify-rust",
- "openssl-probe",
- "rand 0.8.5",
- "reqwest",
- "rust-i18n",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "sys-locale",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-notification",
- "tauri-plugin-single-instance",
- "tauri-winrt-notification",
- "tempfile",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "winapi",
- "windows-registry",
-]
-
-[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -292,6 +256,42 @@ name = "autocfg"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
+
+[[package]]
+name = "azurpilot"
+version = "2.3.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "command-group",
+ "ctrlc",
+ "dirs",
+ "nix 0.30.1",
+ "notify-rust",
+ "openssl-probe",
+ "rand 0.8.5",
+ "reqwest",
+ "rust-i18n",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "sys-locale",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-notification",
+ "tauri-plugin-single-instance",
+ "tauri-winrt-notification",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "winapi",
+ "windows-registry",
+]
 
 [[package]]
 name = "backtrace"

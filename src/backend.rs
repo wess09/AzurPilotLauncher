@@ -1,7 +1,7 @@
 //! 后端进程托管模块：负责 gui.py（AzurPilot WebUI）子进程的完整生命周期。
 //! 启动前先清理占用目标端口的残留进程，再以进程组方式拉起 Python 解释器，
 //! 并注入 `ALAS_LAUNCHER_PID` 环境变量标记子进程归属，便于退出时兜底回收。
-//! main.rs 在启动流程中调用 [`ManagedBackend::new`] 拉起后端，退出时依赖
+//! main.rs 在启动流程中调用 [`ManagedBackend::new_cancellable`] 拉起后端，退出时依赖
 //! [`ManagedBackend`] 的 [`Drop`] 实现杀掉遗留子进程，防止进程泄漏。
 
 use std::{
@@ -24,8 +24,8 @@ use tracing::{info, warn};
 #[cfg(windows)]
 use crate::backend_process::BackendChild;
 use crate::setup::{alas_repo_dir, isolate_python_child_environment, venv_python};
-use crate::{launcher_trust_secret, TRUST_SECRET_ENV};
 use crate::window_util::CreateNoWindow as _;
+use crate::{launcher_trust_secret, TRUST_SECRET_ENV};
 
 /// 等待后端端口就绪的总超时时长，超时后判定启动失败并交由上层恢复。
 ///
@@ -40,7 +40,7 @@ const BACKEND_FAILURE_LOG_TAIL_BYTES: u64 = 64 * 1024;
 /// 等待后端端口就绪超时的专用错误类型。
 ///
 /// 独立成类型而非普通字符串错误，便于上层用 [`is_backend_startup_timeout`]
-/// 精确识别"启动超时"这一场景并执行针对性恢复，不会误伤其他启动错误。
+/// 精确识别启动超时，并在错误页引导用户手动修复环境。
 #[derive(Debug)]
 pub(crate) struct BackendStartupTimeout {
     /// 尚未就绪的目标端口，仅用于错误信息展示。
@@ -64,8 +64,8 @@ impl std::error::Error for BackendStartupTimeout {}
 
 /// 判断任意 `anyhow` 错误是否为本模块产生的启动超时错误。
 ///
-/// 上层捕获错误后据此决定是否走"超时恢复"分支，而非当作普通启动失败
-/// 直接向用户报错。
+/// 保留专用错误类型的回归检查；超时不再自动重建环境。
+#[cfg(test)]
 pub(crate) fn is_backend_startup_timeout(error: &anyhow::Error) -> bool {
     error.downcast_ref::<BackendStartupTimeout>().is_some()
 }
@@ -258,7 +258,11 @@ impl ManagedBackend {
     ///
     /// 仅当 `127.0.0.1:{port}` 无法解析为 `SocketAddr` 时 `unwrap` 会 panic；
     /// `u16` 端口拼上固定回环地址恒可解析，该不变量由类型系统保证。
-    pub fn new(config: &WebuiLaunchConfig) -> Result<Self> {
+    pub fn new_cancellable(
+        config: &WebuiLaunchConfig,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<Self> {
+        crate::launcher::ensure_not_cancelled(cancel)?;
         // 先写归属标记再启动：此后任何时刻，本启动器拉起的 gui.py 都能通过
         // 环境变量追溯到当前启动器实例，供 Drop 的全进程表扫描兜底回收。
         std::env::set_var("ALAS_LAUNCHER_PID", format!("{}", std::process::id()));
@@ -283,6 +287,7 @@ impl ManagedBackend {
         let start_time = std::time::Instant::now();
         // 每 100 毫秒探测一次；探测间隔同时决定了感知子进程退出的最大延迟。
         while start_time.elapsed() < BACKEND_STARTUP_TIMEOUT {
+            crate::launcher::ensure_not_cancelled(cancel)?;
             if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
                 return Ok(res);
             }
@@ -302,6 +307,13 @@ impl ManagedBackend {
             )
         })?;
         Err(BackendStartupTimeout { port: config.port }.into())
+    }
+
+    pub(crate) fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        match self.child.as_mut() {
+            Some(child) => child.try_wait(),
+            None => Ok(None),
+        }
     }
 
     /// 终止托管的 gui.py 进程组并等待其退出。
@@ -633,15 +645,21 @@ mod tests {
     #[test]
     fn failure_reason_is_extracted_from_a_real_gui_log_line() {
         // 与 rich 日志实际落盘格式一致：时间 | 级别 | 消息
-        let line = format!("2026-09-21 20:14:40.595 | ERROR | {BACKEND_FAILURE_LOG_MARKER}React 前端构建失败\r");
+        let line = format!(
+            "2026-09-21 20:14:40.595 | ERROR | {BACKEND_FAILURE_LOG_MARKER}React 前端构建失败\r"
+        );
 
-        assert_eq!(extract_failure_reason(&line).as_deref(), Some("React 前端构建失败"));
+        assert_eq!(
+            extract_failure_reason(&line).as_deref(),
+            Some("React 前端构建失败")
+        );
     }
 
     /// 多条失败记录并存时取最后一次（最新）的原因。
     #[test]
     fn failure_reason_uses_the_last_recorded_failure() {
-        let tail = format!("{BACKEND_FAILURE_LOG_MARKER}旧原因\n{BACKEND_FAILURE_LOG_MARKER}新原因\n");
+        let tail =
+            format!("{BACKEND_FAILURE_LOG_MARKER}旧原因\n{BACKEND_FAILURE_LOG_MARKER}新原因\n");
 
         assert_eq!(extract_failure_reason(&tail).as_deref(), Some("新原因"));
     }
@@ -668,7 +686,10 @@ mod tests {
         let tail = read_log_tail(&path).expect("tail");
 
         assert!(!tail.starts_with("xxxx"), "首行应从字符边界之后开始");
-        assert_eq!(extract_failure_reason(&tail).as_deref(), Some("依赖同步失败"));
+        assert_eq!(
+            extract_failure_reason(&tail).as_deref(),
+            Some("依赖同步失败")
+        );
     }
 
     /// 日志文件不存在时返回 `None` 而非报错。

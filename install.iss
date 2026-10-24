@@ -46,7 +46,7 @@ MinVersion=10.0
 ExtraDiskSpaceRequired=1510725938
 
 PrivilegesRequired=admin
-UninstallDisplayIcon={app}\alas-launcher.exe
+UninstallDisplayIcon={app}\AzurPilot.exe
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "{#ChineseMessagesFile}"
@@ -70,7 +70,7 @@ Name: "{app}\bootstrap";  Permissions: users-modify
 ; --------------------------------------------------------------------------
 [Files]
 ; 应用本体
-Source: "{#PackageRoot}\alas-launcher.exe";  DestDir: "{app}";          Flags: ignoreversion; Permissions: users-modify
+Source: "{#PackageRoot}\AzurPilot.exe";      DestDir: "{app}";          Flags: ignoreversion; Permissions: users-modify
 Source: "{#PackageRoot}\config\*";           DestDir: "{app}\config";   Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-modify
 Source: "{#PackageRoot}\deploy\*";           DestDir: "{app}\deploy";   Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-modify
 Source: "{#PackageRoot}\bootstrap\*";        DestDir: "{app}\bootstrap";  Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-modify
@@ -81,8 +81,8 @@ Source: "{#SetupRoot}\vcredist_x64.exe";               DestDir: "{tmp}"; Flags: 
 Source: "{#SetupRoot}\vcredist_x86.exe";               DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist
 
 [Icons]
-Name: "{autoprograms}\AzurPilot"; Filename: "{app}\alas-launcher.exe"; WorkingDir: "{app}"
-Name: "{autodesktop}\AzurPilot";  Filename: "{app}\alas-launcher.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\AzurPilot"; Filename: "{app}\AzurPilot.exe"; WorkingDir: "{app}"
+Name: "{autodesktop}\AzurPilot";  Filename: "{app}\AzurPilot.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 ; --------------------------------------------------------------------------
 ;  安装后执行：VC++ / WebView2 / 启动器
@@ -106,7 +106,7 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; \
   StatusMsg: "正在向明石支付800红宝石以解锁WebView2的下载带宽（可能需要几分钟）..."; \
   Flags: waituntilterminated skipifdoesntexist
 
-Filename: "{app}\alas-launcher.exe"; \
+Filename: "{app}\AzurPilot.exe"; \
   Description: "{cm:LaunchProgram,AzurPilot}"; \
   WorkingDir: "{app}"; \
   Flags: nowait postinstall skipifsilent
@@ -462,6 +462,8 @@ end;
 
 procedure StopRunningProcesses;
 begin
+  KillProcessByImageName('AzurPilot.exe');
+  // 兼容旧版本命名的安装：升级时同样要结束残留的 alas-launcher.exe。
   KillProcessByImageName('alas-launcher.exe');
   KillProcessByImageName('pythonw.exe');
   KillProcessByImageName('python.exe');

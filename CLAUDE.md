@@ -6,29 +6,21 @@
 
 ## 项目概述
 
-AzurPilot Launcher 是 [AzurPilot](https://github.com/wess09/AzurPilot) 的跨平台（Windows/macOS/Linux）桌面启动器，基于 **Tauri 2 + Rust** 构建。它通过内嵌的 `uv` 二进制文件管理独立的 Python 3.14.6 环境，处理基于 git 的更新，启动 Python WebUI 后端（`gui.py`），并提供原生 webview 壳（含启动画面、系统托盘、通知和自定义标题栏）。
+AzurPilot Launcher 是 [AzurPilot](https://github.com/wess09/AzurPilot) 的跨平台（Windows/macOS/Linux）桌面启动器，基于 **Tauri 2 + Rust** 构建。它通过内嵌的 `uv` 二进制文件管理独立的 Python 3.14.6 环境，处理基于 git 的更新，启动 Python WebUI 后端（`gui.py`），并提供原生 webview 壳（含 React 启动首页、系统托盘、通知和自定义标题栏）。
 
 ## 构建与开发命令
 
 ```bash
-# 构建（debug）
-cargo build
-
-# 构建（release — 去除符号，启用 LTO）
-cargo build --release
-
-# 开发模式运行
-cargo tauri dev
-
-# 运行全部测试
-cargo test
-
-# 运行单个测试
-cargo test test_name_here
-
-# 仅检查编译
-cargo check
+npm --prefix frontend ci
+cargo tauri dev                         # 自动启动 Vite，支持热更新
+npm --prefix frontend test
+npm --prefix frontend run build         # tsc + Vite
+cargo check --locked --all-targets
+cargo test --locked --all-targets        # Windows 需管理员终端
+cargo build --locked --release --features custom-protocol
 ```
+
+Node.js 24 是开发构建依赖；发布后首页无需 Node.js 或 Vite。直接运行 debug Cargo 产物需先执行 `npm --prefix frontend run dev`；生产 Cargo 构建必须先构建前端。`build.rs` 不自动安装 npm 依赖。
 
 构建脚本（`build.rs`）需要 `ALAS_BOOTSTRAP_UV` 环境变量指向要内嵌的 `uv` 二进制文件。本地开发不设置时使用空占位符，启动器会在运行时从 PATH 中查找 `uv` 或通过环境变量 `UV` 指定。
 
@@ -46,13 +38,13 @@ cargo check
 
 ```bash
 # 以日语界面启动
-alas-launcher --lang ja
+AzurPilot --lang ja
 
 # 以英语界面启动，跳过更新
-alas-launcher --lang en --skip-update
+AzurPilot --lang en --skip-update
 
 # 预览错误页面
-alas-launcher --preview-crash
+AzurPilot --preview-crash
 ```
 
 ## 国际化（i18n）
@@ -96,42 +88,22 @@ locales/
 
 ## 架构
 
-### 源码模块（`src/`）
+### React 界面与运行时
 
-| 模块 | 行数 | 职责 |
-|---|---|---|
-| `main.rs` | ~2140 | Tauri 应用入口、窗口管理、启动画面、系统托盘、时间炸弹、自定义标题栏注入、错误页面 |
-| `backend.rs` | ~330 | 启动/终止 `gui.py` 子进程、端口扫描与占用进程清理、后端生命周期管理 |
-| `setup.rs` | ~1460 | 环境配置：Python/uv/adb/git 安装、git 更新、uv 依赖同步、deploy.yaml 迁移、运行时清理 |
-| `notify.rs` | ~320 | SSE 通知流、平台原生桌面通知（Windows Toast / Linux notify-rust / macOS Tauri 插件） |
-| `i18n.rs` | ~55 | 国际化：系统语言检测、`--lang` 启动参数解析、locale 设置 |
-| `window_util.rs` | ~45 | Windows `CREATE_NO_WINDOW` trait，控制子进程是否创建控制台窗口 |
+详细说明见 [启动器界面与生命周期](docs/launcher-ui.md)。
 
-### 运行时流程
+- `frontend/`：React + TypeScript + Vite，CSS Modules，四种语言共用 `locales/*.yml`。
+- `launcher.rs`：统一状态、互斥任务、进度事件、托盘与每次后端会话的生命周期。
+- `updater.rs`：自动检查与显式安装分离，保留下载校验、mTLS 和平台替换。
+- `windows.rs`：WebUI 窗口、导航失败时本地 `#/connection-error` React 页面、标题栏注入。
+- `setup.rs`：首次安装、Git 更新与依赖同步；修复只重建 `.venv`，不会更新仓库或清理全局缓存。
+- `task_process.rs` / `backend_process.rs`：任务进程组及 Windows Job；`cancel.rs` 让 HTTP 等待可取消。
 
-1. `main()` 初始化日志（写入 `log/{date}_launcher.txt`），读取 `config/deploy.yaml` 获取 WebUI 配置
-2. 创建 Tauri 应用：显示 splash 窗口（`alas-splash://` 自定义协议），隐藏 main 窗口
-3. 后台线程执行 `setup_alas_repo()`：
-   - `ensure_runtime_tools()`：下载 Python 3.14.6（通过 uv managed python）、创建可重定位 `.venv`、复制 uv/adb/git 到 `.venv`；检测到 `.venv` 的 Python 低于 3.14.5 时会删除并重建整个环境
-   - `git_update()`：通过 Python 脚本调用 `deploy.git.GitManager` 拉取最新代码（带重试，最多 20 次）
-   - `uv_sync_project()`：执行 `uv sync --frozen --no-dev --no-install-project` 安装依赖
-4. `ManagedBackend::new()` 启动 `gui.py`，设置 `ALAS_LAUNCHER_PID` 环境变量，等待端口就绪（60 秒超时）
-5. 启动 SSE 通知流（`/api/notify_stream`），销毁 splash 窗口，显示 main 窗口
+普通启动先显示首页并检查启动器更新；发现新版后等待用户点击更新。无更新时点击“启动”才执行环境准备、仓库更新和后端启动。运行后首页隐藏（Linux 最小化到任务栏），WebUI 独立显示。首页提供停止服务与环境修复，运行中禁止修复。
 
-### 自定义 URI 协议
+所有操作通过 Rust 状态机校验；前端先订阅事件，再请求快照。快照有递增 `sequence` 和独立任务 `task_id`。进度在同一任务内单调，新任务从零开始；依赖子条以子任务标识重置。事件最多 10Hz，状态结束立即推送，React 使用 250ms 线性插值且支持减少动态效果。
 
-- `alas-splash://`（Windows/Android 用 `http://alas-splash.localhost/`）：内嵌启动画面 HTML/CSS/JS，进度条通过 `window.__ALAS_SPLASH_UPDATE()` 回调更新
-- `alas-error://`（Windows/Android 用 `http://alas-error.localhost/`）：后端连接失败页面，每秒自动重试连接
-
-### 启动进度
-
-`src/progress.rs` 是启动进度的唯一状态源。运行时工具、Git、uv、Node.js、自更新及退出清理均发布 `SplashUpdate`，进度保留小数精度。主条和同一任务的 uv 子条分别保存历史最高值，镜像重试或子条暂时隐藏时不会回退。每次依赖同步入口使用 `with_new_uv_task()` 分配新的 `task_id`；后端超时重建是新的子任务，子条重新开始，主条保留已达到的进度。退出清理使用 `with_terminal()` 拒绝后台迟到的普通状态；一般错误仍可恢复（例如 Node.js 安装失败后继续启动）。
-
-页面在回调挂载后调用 `splash_ready`，取得最新快照，避免加载期间遗漏状态。推送线程只保存最新待发送快照，普通更新最多每 100ms 一次，错误、清理及完成立即发送；快照带递增 `sequence`，页面拒绝乱序或重复消息。
-
-`src/splash-progress.js` 内嵌在启动页面中，使用同一个动画时钟，在 250ms 内线性插值到已确认进度；条形与装饰头通过 `transform` 更新，百分比随呈现值取整。错误/终态及减少动态偏好立即落到确认值，后台隐藏时停止动画。只有 `uv sync` 成功退出才确认子条 100%；无精确下载数据的阶段仍使用有上限的耗时估计。
-
-前端状态回归使用 Node.js 内置测试运行器：`node --test tests/splash-progress.test.cjs`；Rust 状态与进度解析回归随 `cargo test --locked --all-targets` 运行。
+关闭启动/修复窗口需确认取消任务并退出，只回收当前任务及所属子进程，不删除环境。后端超时也不自动重建，失败页提供手动重试或修复。新管理命令只允许本地首页调用，连接错误页只允许查询状态、重连、日志与返回首页。
 
 ### 自定义标题栏
 
@@ -147,7 +119,7 @@ Windows 和 Linux 移除原生窗口装饰（`set_decorations(false)`），通�
 
 ### Tauri 前端命令
 
-`save_as`、`download_today_gui_log`、`download_today_launcher_log`、`retry_backend_connection`、`window_hide`、`window_minimize`、`window_toggle_maximize`、`window_close`、`window_start_dragging`、`window_is_maximized`
+`launcher_*`（见上文 IPC 文档）、`save_as`、`download_today_gui_log`、`download_today_launcher_log`、`retry_backend_connection`、`window_hide`、`window_minimize`、`window_toggle_maximize`、`window_close`、`window_start_dragging`、`window_is_maximized`
 
 ### 端口占用清理
 
@@ -181,7 +153,7 @@ ALAS 启动模拟器时根据 `ALAS_LAUNCHER_JOB_BREAKAWAY=1` 请求脱离，并
 
 ### 时间炸弹机制
 
-`Cargo.toml` 中包含 `[package.metadata.alas-launcher.time-bomb]` 配置段。`main.rs` 通过 `include_str!("../Cargo.toml")` 在运行时解析此配置（非编译时）。当 `enabled = true` 时，启动器通过 HTTP 请求获取网络时间（`Date` 头），与过期日期比较，过期则弹窗拒绝运行。
+`Cargo.toml` 中包含 `[package.metadata.azurpilot.time-bomb]` 配置段。`main.rs` 通过 `include_str!("../Cargo.toml")` 在运行时解析此配置（非编译时）。当 `enabled = true` 时，启动器通过 HTTP 请求获取网络时间（`Date` 头），与过期日期比较，过期则弹窗拒绝运行。
 
 ### CI/CD
 
@@ -190,7 +162,7 @@ ALAS 启动模拟器时根据 `ALAS_LAUNCHER_JOB_BREAKAWAY=1` 请求脱离，并
 - 触发条件：推送 `main`、所有 PR 或手动 `workflow_dispatch`
 - 测试矩阵：`ubuntu-22.04`、`macos-latest`、`windows-latest`、`windows-11-arm`
 - 安装 Linux Tauri 系统依赖及 stable Rust，按 runner/架构缓存 Cargo 依赖；仅 `main` 保存缓存
-- 执行 `cargo check --locked --all-targets` 和 `cargo test --locked --all-targets`，覆盖启动器和示例目标
+- 使用 Node.js 24 安装、测试并构建 React 页面，再执行 `cargo check --locked --all-targets` 和 `cargo test --locked --all-targets`，覆盖启动器和示例目标
 - 额外的 `worker` 任务用临时清单执行 `bash cf-worker/deploy.sh --dry-run`，校验 Cloudflare Worker 配置保持纯静态（无 `main`）
 - 同一事件/分支的新运行取消旧运行；单个矩阵任务失败不取消其他平台，超时为 45 分钟
 - 使用 `build.rs` 的 uv/mTLS 空占位符，不需要发布密钥，也不执行打包或部署

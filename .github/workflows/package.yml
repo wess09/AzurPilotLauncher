@@ -10,6 +10,9 @@ on:
       - 'Cargo.lock'
       - 'build.rs'
       - 'src/**'
+      - 'frontend/**'
+      - 'locales/**'
+      - 'capabilities/**'
       - 'bg/**'
       - 'fonts/**'
       - 'icons/**'
@@ -25,7 +28,7 @@ on:
         type: string
 
 env:
-  UV_VERSION: "0.11.32"
+  UV_VERSION: "0.13.5"
   UV_MANAGED_PYTHON: 1
   UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci-cache/python
   UV_PYTHON: 3.14.6
@@ -53,6 +56,16 @@ jobs:
           macos: brew install rdfind
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build launcher UI
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend run build
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
@@ -129,7 +142,7 @@ jobs:
 
           lock_text = cargo_lock_path.read_text(encoding="utf-8")
           lock_updated, count = re.subn(
-              r'(?ms)(\[\[package\]\]\s+name = "alas-launcher"\s+version = ")[^"]+(")',
+              r'(?ms)(\[\[package\]\]\s+name = "azurpilot"\s+version = ")[^"]+(")',
               rf"\g<1>{version}\2",
               lock_text,
               count=1,
@@ -170,7 +183,7 @@ jobs:
           ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64: ${{ secrets.ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 }}
           REQUIRE_LAUNCHER_MTLS_IDENTITY: "1"
           LAUNCHER_UPDATE_URL: https://launcher-api.azurpilot.com/updata/stable.json
-        run: cargo build --locked --release
+        run: cargo build --locked --release --features custom-protocol
       - name: Restore bundled Git cache
         id: bundled-git-cache
         uses: actions/cache@v4
@@ -321,7 +334,7 @@ jobs:
 
             cd ${{ github.workspace }}
             mkdir -p AzurPilot.app/Contents/MacOS
-            cp target/release/alas-launcher AzurPilot.app/Contents/MacOS/
+            cp target/release/azurpilot AzurPilot.app/Contents/MacOS/AzurPilot
             mkdir -p AzurPilot.app/Contents/Resources
             cp icons/icon.icns AzurPilot.app/Contents/Resources/
             ditto package-root/AzurLaneAutoScript AzurPilot.app/Contents/AzurLaneAutoScript
@@ -366,7 +379,7 @@ jobs:
             cp -R .venv/share/git-core/templates bootstrap/git-templates
             cp .venv/bin/git bootstrap/git
             chmod +x .venv/bin/uv .venv/bin/adb .venv/bin/git
-            cp ../../target/release/alas-launcher alas-launcher
+            cp ../../target/release/azurpilot AzurPilot
             .venv/bin/python -c 'import sys; print(sys.version)'
             .venv/bin/uv --version
             .venv/bin/adb version
@@ -415,7 +428,7 @@ jobs:
             cp .venv\Scripts\Adb*.dll bootstrap\
             mkdir -ea 0 bootstrap\git
             cp -r .venv\Scripts\git\* bootstrap\git\
-            cp ..\..\target\release\alas-launcher.exe alas-launcher.exe
+            cp ..\..\target\release\azurpilot.exe AzurPilot.exe
             .venv\Scripts\python.exe -c "import sys; print(sys.version)"
             .venv\Scripts\uv.exe --version
             .venv\Scripts\adb.exe version
@@ -473,7 +486,7 @@ jobs:
               *) echo "Unsupported architecture: $arch"; exit 1 ;;
             esac
             mkdir -p launcher-updater
-            cp target/release/alas-launcher "launcher-updater/alas-launcher-linux-$arch_key"
+            cp target/release/azurpilot "launcher-updater/azurpilot-linux-$arch_key"
           macos: |
             arch=$(uname -m)
             case "$arch" in
@@ -482,14 +495,14 @@ jobs:
               *) echo "Unsupported architecture: $arch"; exit 1 ;;
             esac
             mkdir -p launcher-updater
-            cp target/release/alas-launcher "launcher-updater/alas-launcher-darwin-$arch_key"
+            cp target/release/azurpilot "launcher-updater/azurpilot-darwin-$arch_key"
           windows: |
             $arch = $env:PROCESSOR_ARCHITECTURE.ToLower()
             if ($arch -eq "amd64") { $arch = "x86_64" }
             elseif ($arch -eq "x86") { $arch = "i686" }
             elseif ($arch -eq "arm64") { $arch = "aarch64" }
             mkdir -ea 0 launcher-updater
-            cp target\release\alas-launcher.exe ("launcher-updater\\alas-launcher-windows-" + $arch + ".exe")
+            cp target\release\azurpilot.exe ("launcher-updater\\azurpilot-windows-" + $arch + ".exe")
       - name: Upload launcher updater payload
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
@@ -588,7 +601,7 @@ jobs:
           target_root.mkdir(parents=True, exist_ok=True)
 
           files = sorted(
-              p for p in source_root.glob("alas-launcher-*")
+              p for p in source_root.glob("azurpilot-*")
               if p.is_file() and p.name != "stable.json"
           )
           if not files:
@@ -602,7 +615,7 @@ jobs:
           platforms = {}
           for file_path in files:
               name = file_path.name
-              key = name[len("alas-launcher-"):]
+              key = name[len("azurpilot-"):]
               if key.endswith(".exe"):
                   key = key[:-4]
               dest_name = versioned_name(name)
@@ -632,7 +645,7 @@ jobs:
           set -eu
           version="${GITHUB_REF_NAME#v}"
           root="launcher-updater-r2"
-          for file in "${root}"/alas-launcher-*; do
+          for file in "${root}"/azurpilot-*; do
             [ -f "${file}" ] || continue
             name="$(basename "${file}")"
             aws s3 cp "${file}" "s3://${R2_BUCKET}/${R2_PREFIX}/${version}/${name}" \
@@ -651,7 +664,7 @@ jobs:
             exit 1
           fi
 
-          files=(launcher-updater-r2/alas-launcher-*)
+          files=(launcher-updater-r2/azurpilot-*)
           if [[ ! -e "${files[0]}" ]]; then
             echo "::error::launcher-updater-r2 中没有构建产物" >&2
             exit 1

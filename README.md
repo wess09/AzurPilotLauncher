@@ -253,7 +253,7 @@
 ```mermaid
 graph TD
     subgraph Shell ["启动器壳层 (Tauri 2 · Rust)"]
-        Splash["启动画面 alas-splash://<br/>(玻璃质感进度条 / 错误页 alas-error://)"]
+        Splash["启动画面 React launcher<br/>(玻璃质感进度条 / 错误页 React connection error)"]
         Setup["环境搭建 setup.rs<br/>(Python / uv / adb / git 安装与迁移)"]
         Tray["系统集成<br/>(系统托盘 / 原生通知 / 自定义标题栏)"]
         Backend["后端托管 backend.rs<br/>(端口清理 / 进程回收)"]
@@ -342,7 +342,7 @@ graph TD
         <img src="https://img.shields.io/badge/步骤-02-indigo?style=flat-square" alt="Step 2"><br>
         <h4>解压并启动</h4>
       </div>
-      Windows 运行 <code>alas-launcher.exe</code>（需管理员权限）；macOS 打开 <code>AzurPilot.app</code>；Linux 运行 <code>alas-launcher</code>。
+      Windows 运行 <code>AzurPilot.exe</code>（需管理员权限）；macOS 打开 <code>AzurPilot.app</code>；Linux 运行 <code>AzurPilot</code>。
     </td>
     <td width="25%" valign="top">
       <div align="center">
@@ -405,9 +405,9 @@ AzurPilot 根目录
 * Linux:   AzurLaneAutoScript
 
 AzurPilot 启动器
-* Windows: AzurLaneAutoScript/alas-launcher.exe
-* macOS:   AzurPilot.app/Contents/MacOS/alas-launcher
-* Linux:   AzurLaneAutoScript/alas-launcher
+* Windows: AzurLaneAutoScript/AzurPilot.exe
+* macOS:   AzurPilot.app/Contents/MacOS/AzurPilot
+* Linux:   AzurLaneAutoScript/AzurPilot
 
 Python / uv
 * 所有系统: .venv
@@ -563,3 +563,19 @@ Adb
 <div align="center">
   <sub>AzurPilot Launcher 遵守开源协议并由社区驱动维护。如遇问题欢迎提交 <a href="https://github.com/wess09/AzurPilotLauncher/issues">Issue</a> 或 <a href="https://github.com/wess09/AzurPilotLauncher/pulls">Pull Request</a>。</sub>
 </div>
+
+## 启动与开发
+
+打开启动器后先进入首页；点击“启动”才准备环境和启动 WebUI。首页提供“停止服务”和“修复环境”；修复会重建 .venv，保留配置和日志。启动器更新需点击确认。
+
+开发需要 Node.js 24。
+
+```bash
+npm --prefix frontend ci
+cargo tauri dev
+npm --prefix frontend test
+npm --prefix frontend run build
+cargo build --locked --release --features custom-protocol
+```
+
+[React launcher architecture and IPC](docs/launcher-ui.md)

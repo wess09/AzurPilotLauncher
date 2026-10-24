@@ -15,7 +15,10 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     ptr,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -41,13 +44,15 @@ use rust_i18n::t;
 use winapi::{
     shared::sddl::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1},
     um::{
-        fileapi::CreateDirectoryW, minwinbase::SECURITY_ATTRIBUTES,
-        sysinfoapi::{GetSystemDirectoryW, GetWindowsDirectoryW}, winbase::LocalFree,
+        fileapi::CreateDirectoryW,
+        minwinbase::SECURITY_ATTRIBUTES,
+        sysinfoapi::{GetSystemDirectoryW, GetWindowsDirectoryW},
+        winbase::LocalFree,
         winnt::PSECURITY_DESCRIPTOR,
     },
 };
 
-/// 前端构建所需的最低 Node.js 版本，与 frontend/package.json 的 engines 一致。
+/// Python 后端 WebUI 构建所需的最低 Node.js 版本；与启动器自身的开发依赖分开。
 /// 用作可用性判据；安装目标另见 NODEJS_LTS_VERSION。
 const NODEJS_MIN_FRONTEND_VERSION: (u32, u32, u32) = (22, 12, 0);
 #[cfg(windows)]
@@ -75,7 +80,8 @@ const NODEJS_LTS_X64_ZIP_SHA256: &str =
     "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541";
 #[cfg(windows)]
 /// ARM64 平台官方 zip 便携包的下载地址。
-const NODEJS_LTS_ARM64_ZIP_URL: &str = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-arm64.zip";
+const NODEJS_LTS_ARM64_ZIP_URL: &str =
+    "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-arm64.zip";
 #[cfg(windows)]
 /// ARM64 zip 的预期 SHA-256，与官方公布的校验值保持一致。
 const NODEJS_LTS_ARM64_ZIP_SHA256: &str =
@@ -331,13 +337,17 @@ pub fn is_nodejs_available() -> NodeJsAvailability {
 /// 当对应安装流程失败或用户请求取消时返回错误。
 pub fn install_nodejs(
     availability: &NodeJsAvailability,
-    cancel_requested: &AtomicBool,
+    cancel_requested: &Arc<AtomicBool>,
     mut status_updater: impl FnMut(SplashUpdate),
 ) -> Result<()> {
     match availability {
         NodeJsAvailability::Ready => Ok(()),
-        NodeJsAvailability::Missing => install_nodejs_system_wide(cancel_requested, &mut status_updater),
-        NodeJsAvailability::Outdated(_) => install_nodejs_portable(cancel_requested, &mut status_updater),
+        NodeJsAvailability::Missing => {
+            install_nodejs_system_wide(cancel_requested, &mut status_updater)
+        }
+        NodeJsAvailability::Outdated(_) => {
+            install_nodejs_portable(cancel_requested, &mut status_updater)
+        }
     }
 }
 
@@ -352,11 +362,11 @@ pub fn install_nodejs(
 /// 当架构不受支持、下载或校验失败、解压失败，或解压后探测不到达标
 /// 的 node.exe 时返回错误；用户请求取消时同样返回错误。
 fn install_nodejs_portable(
-    cancel_requested: &AtomicBool,
+    cancel_requested: &Arc<AtomicBool>,
     mut status_updater: impl FnMut(SplashUpdate),
 ) -> Result<()> {
     if cancel_requested.load(Ordering::SeqCst) {
-        bail!(t!("setup.cancel_cleaning"));
+        bail!(t!("launcher.cancelled"));
     }
 
     let installer = nodejs_installer_for_current_architecture()?;
@@ -364,9 +374,7 @@ fn install_nodejs_portable(
     validate_nodejs_installer_source(installer.url, installer.sha256)?;
     // 安装包落在随机受保护目录，防止被预先放置的同名文件顶替。
     let archive_directory = SecureNodeJsInstallerDir::new()?;
-    let archive_path = archive_directory
-        .path()
-        .join(NODEJS_ARCHIVE_FILE_NAME);
+    let archive_path = archive_directory.path().join(NODEJS_ARCHIVE_FILE_NAME);
 
     status_updater(SplashUpdate::loading(
         t!("setup.installing_nodejs"),
@@ -391,8 +399,7 @@ fn install_nodejs_portable(
 
     // 仅以私有目录的安装结果作为成功判据。
     let installed = target.join("node.exe");
-    if probe_node(&installed)
-        .is_some_and(|installation| meets_minimum_version(installation.parsed))
+    if probe_node(&installed).is_some_and(|installation| meets_minimum_version(installation.parsed))
     {
         return Ok(());
     }
@@ -451,11 +458,11 @@ fn nodejs_msi_installer_for_architecture(architecture: &str) -> Result<NodeJsIns
 /// 当架构不受支持、下载或校验失败、msiexec 安装失败，或安装后仍探测
 /// 不到达标运行时时返回错误；用户请求取消时同样返回错误。
 fn install_nodejs_system_wide(
-    cancel_requested: &AtomicBool,
+    cancel_requested: &Arc<AtomicBool>,
     status_updater: &mut impl FnMut(SplashUpdate),
 ) -> Result<()> {
     if cancel_requested.load(Ordering::SeqCst) {
-        bail!(t!("setup.cancel_cleaning"));
+        bail!(t!("launcher.cancelled"));
     }
 
     let installer = nodejs_msi_installer_for_current_architecture()?;
@@ -514,7 +521,7 @@ fn run_nodejs_installer(
 ) -> Result<()> {
     let mut command = Command::new(system_msiexec_path()?);
     command.args(nodejs_msi_args(installer_path));
-    let mut child = command.create_no_window().spawn()?;
+    let mut child = crate::task_process::TaskChild::spawn(&mut command)?;
     let mut wait_ticks = 0u16;
 
     // 轮询而非阻塞等待，保证取消请求能及时生效。
@@ -523,7 +530,7 @@ fn run_nodejs_installer(
             // 先杀死再回收子进程，避免遗留悬挂的 msiexec 实例。
             let _ = child.kill();
             let _ = child.wait();
-            bail!(t!("setup.cancel_cleaning"));
+            bail!(t!("launcher.cancelled"));
         }
 
         if let Some(status) = child.try_wait()? {
@@ -531,7 +538,10 @@ fn run_nodejs_installer(
             if status.success() || status.code() == Some(3010) {
                 return Ok(());
             }
-            bail!(t!("errors.nodejs_installer_exit", status = status.to_string()));
+            bail!(t!(
+                "errors.nodejs_installer_exit",
+                status = status.to_string()
+            ));
         }
 
         // 周期性刷新进度文案，让启动画面在长时间安装期间保持活跃。
@@ -562,7 +572,10 @@ fn system_msiexec_path() -> Result<PathBuf> {
     if msiexec.is_file() {
         return Ok(msiexec);
     }
-    bail!(t!("errors.msiexec_not_found", path = msiexec.display().to_string()));
+    bail!(t!(
+        "errors.msiexec_not_found",
+        path = msiexec.display().to_string()
+    ));
 }
 
 #[cfg(windows)]
@@ -596,7 +609,10 @@ fn system_powershell_path() -> Result<PathBuf> {
     if powershell.is_file() {
         return Ok(powershell);
     }
-    bail!(t!("errors.powershell_not_found", path = powershell.display().to_string()));
+    bail!(t!(
+        "errors.powershell_not_found",
+        path = powershell.display().to_string()
+    ));
 }
 
 #[cfg(windows)]
@@ -801,7 +817,7 @@ fn validate_nodejs_installer_source(url: &str, digest: &str) -> Result<()> {
 fn download_nodejs_installer(
     installer: NodeJsInstaller,
     part_path: &Path,
-    cancel_requested: &AtomicBool,
+    cancel_requested: &Arc<AtomicBool>,
     status_updater: &mut impl FnMut(SplashUpdate),
 ) -> Result<()> {
     // 慢速网络也能完整下载：连接超时 20 秒，总超时放宽到 15 分钟。
@@ -810,13 +826,12 @@ fn download_nodejs_installer(
         .timeout(Duration::from_secs(15 * 60))
         .build()
         .context("build Node.js download client")?;
-    let mut response = client
-        .get(installer.url)
-        .send()
+    let response = crate::cancel::request(client.get(installer.url), cancel_requested)
         .context("download Node.js installer")?
         .error_for_status()
         .context("Node.js installer download returned an error status")?;
     let total_bytes = response.content_length().filter(|total| *total > 0);
+    let mut response = crate::cancel::body(response, cancel_requested.clone());
     let mut destination = File::create(part_path).context("create Node.js installer part file")?;
     let mut digest = Sha256::new();
     // 流式读取并同步计算摘要，无需把整个安装包载入内存。
@@ -828,7 +843,7 @@ fn download_nodejs_installer(
     // 每读一块数据都检查取消标志，保证长时间下载可随时中断。
     loop {
         if cancel_requested.load(Ordering::SeqCst) {
-            bail!(t!("setup.cancel_cleaning"));
+            bail!(t!("launcher.cancelled"));
         }
         let read = response
             .read(&mut buffer)
@@ -843,9 +858,9 @@ fn download_nodejs_installer(
         downloaded = downloaded.saturating_add(read as u64);
         if last_reported_at.elapsed() >= Duration::from_millis(100) {
             last_reported_at = Instant::now();
-            let speed = crate::format_speed(crate::download_speed_bytes_per_second(
-                downloaded, started_at,
-            ));
+            let speed = crate::updater::format_speed(
+                crate::updater::download_speed_bytes_per_second(downloaded, started_at),
+            );
             let (progress, detail) = match total_bytes {
                 Some(total) => {
                     let fraction = downloaded.min(total) as f64 / total as f64;
@@ -853,8 +868,8 @@ fn download_nodejs_installer(
                         5.0 + 1.8 * fraction,
                         t!(
                             "launcher_update.downloading_detail",
-                            downloaded = crate::format_bytes(downloaded),
-                            total = crate::format_bytes(total),
+                            downloaded = crate::updater::format_bytes(downloaded),
+                            total = crate::updater::format_bytes(total),
                             percent = format!("{:.0}", (fraction * 100.0).floor()),
                             speed = speed
                         )
@@ -865,7 +880,7 @@ fn download_nodejs_installer(
                     5.0,
                     t!(
                         "launcher_update.downloading_detail_unknown",
-                        downloaded = crate::format_bytes(downloaded),
+                        downloaded = crate::updater::format_bytes(downloaded),
                         speed = speed
                     )
                     .to_string(),
@@ -987,7 +1002,10 @@ fn extract_nodejs_zip(
 
     let status = run_status_command(&mut command, cancel_requested)?;
     if !status.success() {
-        bail!(t!("errors.nodejs_extract_exit", status = status.to_string()));
+        bail!(t!(
+            "errors.nodejs_extract_exit",
+            status = status.to_string()
+        ));
     }
 
     // 解压后立即摊平并确认 node.exe 存在，尽早暴露不完整的归档。
@@ -995,7 +1013,10 @@ fn extract_nodejs_zip(
 
     let installed = target.join("node.exe");
     if !installed.is_file() {
-        bail!(t!("errors.nodejs_archive_incomplete", path = installed.display().to_string()));
+        bail!(t!(
+            "errors.nodejs_archive_incomplete",
+            path = installed.display().to_string()
+        ));
     }
     Ok(())
 }
@@ -1019,9 +1040,7 @@ fn flatten_single_child_directory(target: &Path) -> Result<()> {
 
     let wrapper = entries.remove(0).path();
     // 目标已存在时跳过而非覆盖，重复执行不会破坏已有文件。
-    for entry in fs::read_dir(&wrapper)
-        .with_context(|| format!("read {}", wrapper.display()))?
-    {
+    for entry in fs::read_dir(&wrapper).with_context(|| format!("read {}", wrapper.display()))? {
         let entry = entry?;
         let destination = target.join(entry.file_name());
         if destination.exists() {
@@ -1039,7 +1058,6 @@ fn flatten_single_child_directory(target: &Path) -> Result<()> {
     let _ = fs::remove_dir(&wrapper);
     Ok(())
 }
-
 
 #[cfg(windows)]
 /// 返回 Windows 目录下的 Temp 作为暂存根目录。
@@ -1158,7 +1176,6 @@ fn secure_directory_suffix() -> String {
     suffix
 }
 
-
 /// 覆盖安装器目录生命周期、来源校验、版本解析与解压摊平等关键路径。
 #[cfg(all(test, windows))]
 mod tests {
@@ -1175,7 +1192,10 @@ mod tests {
 
         drop(directory);
 
-        assert!(!path.exists(), "installer directory should be removed on drop");
+        assert!(
+            !path.exists(),
+            "installer directory should be removed on drop"
+        );
     }
 
     /// 确认来源校验同时强制 HTTPS 与 64 位十六进制摘要。
@@ -1318,5 +1338,4 @@ mod tests {
             LocalFree(descriptor);
         }
     }
-
 }

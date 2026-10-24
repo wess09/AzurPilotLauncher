@@ -74,7 +74,7 @@ https://cnb.cool/AzurPilot/AzurPilotLauncher/-/releases/download/1.0.0/<文件�
 例如：
 
 ```
-https://launcher-download.azurpilot.com/alas-launcher-windows-aarch64-2.2.5.exe
+https://launcher-download.azurpilot.com/azurpilot-windows-aarch64-2.2.5.exe
 ```
 
 Token 建议使用 **Edit Cloudflare Workers** 模板，并限制到目标账号与 `azurpilot.com` 区域。至少需要：

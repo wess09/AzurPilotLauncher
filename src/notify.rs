@@ -42,15 +42,15 @@ pub type NotificationClickHandler = Arc<dyn Fn() + Send + Sync + 'static>;
 /// Windows 按不同 AUMID 在操作中心分组并展示不同的应用显示名称，
 /// 因此三类通知各用一个 ID，让用户能一眼区分通知来源。
 #[cfg(windows)]
-const WINDOWS_APP_ID: &str = "moe.taiho.alas-launcher.notification";
+const WINDOWS_APP_ID: &str = "moe.taiho.azurpilot.notification";
 
 /// Windows Toast"更新"通知的 AUMID，更新类事件单独分组以免被普通通知淹没。
 #[cfg(windows)]
-const WINDOWS_APP_ID_UPDATE: &str = "moe.taiho.alas-launcher.notification.update";
+const WINDOWS_APP_ID_UPDATE: &str = "moe.taiho.azurpilot.notification.update";
 
 /// Windows Toast"公告"通知的 AUMID，运营公告与功能更新同样分开分组。
 #[cfg(windows)]
-const WINDOWS_APP_ID_ANNOUNCEMENT: &str = "moe.taiho.alas-launcher.notification.announcement";
+const WINDOWS_APP_ID_ANNOUNCEMENT: &str = "moe.taiho.azurpilot.notification.announcement";
 
 /// "一般"通知在操作中心里显示的应用名（随界面语言本地化）。
 fn windows_app_name() -> String {
@@ -111,12 +111,13 @@ pub fn start_notify_stream(
     port: u16,
     allow_exit: Arc<AtomicBool>,
     on_click: NotificationClickHandler,
-) {
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let url = format!("http://127.0.0.1:{port}/api/notify_stream");
         // 连接超时 5 秒并绕过系统代理：目标是本机回环地址，走代理只会添乱。
         let client = match Client::builder()
             .connect_timeout(Duration::from_secs(5))
+            .timeout(None)
             .no_proxy()
             .build()
         {
@@ -137,10 +138,15 @@ pub fn start_notify_stream(
             }
 
             if !allow_exit.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_secs(3));
+                for _ in 0..30 {
+                    if allow_exit.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
             }
         }
-    });
+    })
 }
 
 /// 建立一次 SSE 连接并阻塞读取，直到对端关闭或收到退出信号。
@@ -156,18 +162,21 @@ fn read_notify_stream(
     client: &Client,
     url: &str,
     app: &tauri::AppHandle,
-    allow_exit: &AtomicBool,
+    allow_exit: &Arc<AtomicBool>,
     on_click: &NotificationClickHandler,
 ) -> Result<()> {
     // SSE 协议要求客户端声明 Accept: text/event-stream，后端据此返回流式响应。
-    let response = client.get(url).header(ACCEPT, "text/event-stream").send()?;
+    let response = crate::cancel::request(
+        client.get(url).header(ACCEPT, "text/event-stream"),
+        allow_exit,
+    )?;
 
     if !response.status().is_success() {
         return Err(anyhow!("server returned {}", response.status()));
     }
 
     // SSE 以空行作为一条事件（message）的边界，因此逐行缓冲读取。
-    let mut reader = BufReader::new(response);
+    let mut reader = BufReader::new(crate::cancel::body(response, allow_exit.clone()));
     let mut data_lines = Vec::new();
 
     while !allow_exit.load(Ordering::SeqCst) {
@@ -181,7 +190,9 @@ fn read_notify_stream(
         let line = line.trim_end_matches(['\r', '\n']);
         if line.is_empty() {
             // 空行 = 事件结束：把积累的 data 行拼成分发一条通知。
-            dispatch_sse_data(&mut data_lines, app, on_click);
+            if !allow_exit.load(Ordering::SeqCst) {
+                dispatch_sse_data(&mut data_lines, app, on_click);
+            }
             continue;
         }
 
@@ -192,7 +203,9 @@ fn read_notify_stream(
     }
 
     // 退出前把未跟随空行的残余数据也分发一次，避免丢失最后一条通知。
-    dispatch_sse_data(&mut data_lines, app, on_click);
+    if !allow_exit.load(Ordering::SeqCst) {
+        dispatch_sse_data(&mut data_lines, app, on_click);
+    }
     Ok(())
 }
 

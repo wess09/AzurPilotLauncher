@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2.3.0 - 2026-10-24
+
+- 内嵌 uv 由 0.11.32 升级至 0.13.5：新版证书库移除受泄露影响的 eMudhra/emSign 根证书，并拒绝含被泄露 eMudhra 中间 CA 私钥的证书链，同步更新捆绑 pip/certifi 的证书数据。
+- 发行产物统一改名为 AzurPilot：Windows 为 `AzurPilot.exe`，Linux 归档内为 `AzurPilot`，macOS 为 `AzurPilot.app/Contents/MacOS/AzurPilot`。
+- Cargo 包名由 `alas-launcher` 改为 `azurpilot`，构建产物为 `target/release/azurpilot[.exe]`；安装脚本、打包脚本、更新载荷名与文档同步更新。
+- 应用标识由 `moe.taiho.alas-launcher` 改为 `moe.taiho.azurpilot`，Windows 通知 AUMID 同步改为 `moe.taiho.azurpilot.notification*`。
+- `ALAS_LAUNCHER_PID`、`ALAS_LAUNCHER_JOB_BREAKAWAY` 等与 ALAS 后端配合的跨仓库环境变量保持不变；已安装的旧版本经自更新升级时只替换文件内容、文件名不变。
+
 ## 2.2.5 - 2026-10-19
 
 - 统一启动进度状态，主进度条与 UV 子进度保留历史最高值，修复进度卡顿与回退。

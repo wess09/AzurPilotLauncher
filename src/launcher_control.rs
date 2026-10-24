@@ -41,7 +41,10 @@ struct LauncherCommand {
 /// 线程内部带 3 秒间隔的自动重连：连接异常断开时只要启动器尚未进入
 /// 退出流程（`allow_exit` 为 false）就会重新连接，保证指令通道可用。
 /// `allow_exit` 由启动器的退出流程置位，用于让此线程尽快结束。
-pub fn start_launcher_control_stream(port: u16, allow_exit: Arc<AtomicBool>) {
+pub fn start_launcher_control_stream(
+    port: u16,
+    allow_exit: Arc<AtomicBool>,
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let stream_url = format!("http://127.0.0.1:{port}/api/launcher/stream");
         let report_url = format!("http://127.0.0.1:{port}/api/launcher/report");
@@ -49,6 +52,7 @@ pub fn start_launcher_control_stream(port: u16, allow_exit: Arc<AtomicBool>) {
         // 走代理既无意义，还可能因系统代理故障而中断
         let client = match Client::builder()
             .connect_timeout(Duration::from_secs(5))
+            .timeout(None)
             .no_proxy()
             .build()
         {
@@ -68,10 +72,15 @@ pub fn start_launcher_control_stream(port: u16, allow_exit: Arc<AtomicBool>) {
 
             // 断开后稍作退避再重连；启动器已进入退出流程时立即结束循环
             if !allow_exit.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_secs(3));
+                for _ in 0..30 {
+                    if allow_exit.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
             }
         }
-    });
+    })
 }
 
 /// 建立一次 SSE 长连接并循环读取事件，直到流结束或启动器开始退出。
@@ -87,18 +96,18 @@ fn read_launcher_control_stream(
     client: &Client,
     stream_url: &str,
     report_url: &str,
-    allow_exit: &AtomicBool,
+    allow_exit: &Arc<AtomicBool>,
 ) -> Result<()> {
-    let response = client
-        .get(stream_url)
-        .header(ACCEPT, "text/event-stream")
-        .send()?;
+    let response = crate::cancel::request(
+        client.get(stream_url).header(ACCEPT, "text/event-stream"),
+        allow_exit,
+    )?;
 
     if !response.status().is_success() {
         return Err(anyhow!("server returned {}", response.status()));
     }
 
-    let mut reader = BufReader::new(response);
+    let mut reader = BufReader::new(crate::cancel::body(response, allow_exit.clone()));
     let mut data_lines = Vec::new();
 
     while !allow_exit.load(Ordering::SeqCst) {
@@ -111,7 +120,9 @@ fn read_launcher_control_stream(
         let line = line.trim_end_matches(['\r', '\n']);
         // SSE 协议：空行标志一个事件的边界，把此前累积的 data 行整体分发
         if line.is_empty() {
-            dispatch_sse_data(&mut data_lines, client, report_url);
+            if !allow_exit.load(Ordering::SeqCst) {
+                dispatch_sse_data(&mut data_lines, client, report_url);
+            }
             continue;
         }
 
@@ -121,7 +132,9 @@ fn read_launcher_control_stream(
     }
 
     // 流结束时若仍有未分发的残留事件（缺空行结尾），补一次分发避免丢失
-    dispatch_sse_data(&mut data_lines, client, report_url);
+    if !allow_exit.load(Ordering::SeqCst) {
+        dispatch_sse_data(&mut data_lines, client, report_url);
+    }
     Ok(())
 }
 
@@ -174,6 +187,7 @@ fn handle_command(client: &Client, report_url: &str, command: LauncherCommand) {
 
     if let Err(e) = client
         .post(report_url)
+        .timeout(Duration::from_secs(5))
         .header(CONTENT_TYPE, "application/json")
         .body(report.to_string())
         .send()
