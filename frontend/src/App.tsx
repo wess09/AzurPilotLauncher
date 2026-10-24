@@ -325,6 +325,7 @@ export function App() {
             </Button>
           </div>
         ) : (
+          <div className={styles.bottomStack}>
           <section className={styles.panel} aria-label={t("status")}>
             <div className={styles.statusRow}>
               <span
@@ -367,7 +368,8 @@ export function App() {
                 {notice}
               </MessageBar>
             )}
-            <div className={styles.actions}>
+          </section>
+          <div className={styles.actions}>
               <div className={styles.secondaryActions}>
                 {!connection && (
                   <Button
@@ -450,7 +452,7 @@ export function App() {
                 {active ? t(phase) : t(mainLabel)}
               </Button>
             </div>
-          </section>
+          </div>
         )}
       </main>
       {dialog && (
