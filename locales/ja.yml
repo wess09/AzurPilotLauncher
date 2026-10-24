@@ -241,9 +241,6 @@ tips:
   18: "アイアンブラッドの科学技術は世界一！"
 
 launcher:
-  tagline: "アズールレーンの自動化パートナー"
-  headline: "次の航海へ、出発しよう。"
-  description: "AzurPilot を起動して、次の航海へ。"
   home: "ランチャーホーム"
   version: "ランチャー"
   status: "ステータス"
@@ -273,6 +270,8 @@ launcher:
   repair_body: ".venv を再構築し、Python・ツール・依存関係を再インストールします。コード、設定、ログ、グローバル uv キャッシュは保持されます。完了後は手動で起動してください。"
   repair_confirm: "修復を開始"
   cancel: "キャンセル"
+  click_cancel_hint: "クリックでキャンセル"
+  press_again_cancel: "もう一度押してキャンセル"
   close_title: "タスクを中止して終了しますか？"
   close_body: "現在のタスクと関連プロセスを停止します。環境、設定、キャッシュは保持されます。"
   exit_confirm: "中止して終了"
@@ -288,7 +287,6 @@ launcher:
   minimize: "最小化"
   maximize: "最大化・元に戻す"
   close: "閉じる"
-  footer: "航海をもっとシンプルに"
   update_hint: "新しいバージョン %{version} があります。先に更新してください。"
   update_check_failed: "更新を確認できません。再試行してください。"
   start_hint: "起動すると環境を確認し、コードを更新して WebUI を開きます。"

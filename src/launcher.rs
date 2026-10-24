@@ -10,7 +10,7 @@ use crate::{
     notify::{start_notify_stream, NotificationClickHandler},
     preview_crash_arg_present, preview_no_update_arg_present,
     progress::{self, SplashUpdate},
-    setup::{self, get_deploy_config, setup_alas_repo, setup_environment},
+    setup::{self, get_deploy_config, setup_azurpilot_repo, setup_environment},
     start_minimized_arg_present, time_bomb_expiration_message, updater, window_util,
     windows::*,
 };
@@ -403,7 +403,7 @@ impl Launcher {
                         bail!(t!("launcher.cancelled"));
                     }
                 }
-                setup_alas_repo(
+                setup_azurpilot_repo(
                     |u| controller.publish(task, u),
                     cancel.clone(),
                     controller.skip_update,
@@ -616,6 +616,28 @@ impl Launcher {
         }
     }
 
+    /// 取消当前任务但保持启动器运行：置位任务取消标志并切换到 Cancelling
+    /// 阶段，任务流程在下一个取消检查点中止，随后以 `launcher.cancelled`
+    /// 错误进入错误态；启动器窗口保留，可直接重试或退出。
+    ///
+    /// # Errors
+    /// 任务处于提交（committing）阶段时返回 `launcher.busy`；其余情况返回
+    /// `Ok`，包括当前没有活动任务（幂等空操作）。
+    pub(crate) fn cancel_task(self: &Arc<Self>) -> Result<()> {
+        let mut model = self.model.lock().unwrap();
+        if model.committing {
+            bail!(t!("launcher.busy"));
+        }
+        if !model.active || model.exiting {
+            return Ok(());
+        }
+        model.cancel.store(true, Ordering::SeqCst);
+        model.view.phase = Phase::Cancelling;
+        model.touch();
+        self.changed.notify_all();
+        Ok(())
+    }
+
     pub(crate) fn exit(self: &Arc<Self>) -> Result<()> {
         {
             let mut model = self.model.lock().unwrap();
@@ -720,6 +742,7 @@ action_command!(launcher_stop, stop);
 action_command!(launcher_repair, repair);
 action_command!(launcher_install_update, install_update);
 action_command!(launcher_cancel_and_exit, exit);
+action_command!(launcher_cancel, cancel_task);
 #[tauri::command]
 fn launcher_check_update(
     window: WebviewWindow,
@@ -806,7 +829,7 @@ pub(crate) fn run() -> Result<()> {
         .invoke_handler(tauri::generate_handler![
             launcher_context, launcher_snapshot, launcher_start, launcher_stop, launcher_repair,
             launcher_check_update, launcher_install_update, launcher_open_webui, launcher_show_home,
-            launcher_cancel_and_exit, launcher_back,
+            launcher_cancel_and_exit, launcher_cancel, launcher_back,
             crate::save_as, crate::download_today_gui_log, crate::download_today_launcher_log, crate::retry_backend_connection,
             crate::window_hide, crate::window_minimize, crate::window_toggle_maximize, crate::window_close, crate::window_exit_application,
             crate::window_start_dragging, crate::window_is_maximized
@@ -859,7 +882,7 @@ pub(crate) fn run() -> Result<()> {
                 else if label == "main" {
                     #[cfg(windows)]
                     if let Some(window) = app.get_webview_window("main") {
-                        if window.eval("if (window.__ALAS_OPEN_CLOSE_PROMPT) window.__ALAS_OPEN_CLOSE_PROMPT();").is_err() { minimize_main_window_to_tray(app); }
+                        if window.eval("if (window.__AZURPILOT_OPEN_CLOSE_PROMPT) window.__AZURPILOT_OPEN_CLOSE_PROMPT();").is_err() { minimize_main_window_to_tray(app); }
                     }
                     #[cfg(not(windows))]
                     minimize_main_window_to_tray(app);

@@ -4,51 +4,69 @@
   font-weight: 100 900;
   font-display: swap;
 }
+/* WinUI 3 / Fluent 2 分层：交互控件全部来自 @fluentui/react-components，
+   这里只保留布局、Mica 底材与文字阶梯。深浅双主题跟随系统。 */
 :root {
-  font-family: MiSans, "Microsoft YaHei", "PingFang SC", sans-serif;
-  color: #f1f6fc;
-  background: #0b1421;
+  font-family:
+    MiSans, "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI",
+    "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  color: #ffffff;
   font-synthesis: none;
-  --surface: #101f30;
-  --muted: #a9bbcf;
-  --blue: #4facfe;
-  --radius: 16px;
-  --space: 8px;
+  text-rendering: optimizeLegibility;
+  --font-mono: "Cascadia Code", Consolas, "Courier New", monospace;
+  --text-1: #ffffff;
+  --text-2: #cfcfcf;
+  --text-3: #9e9e9e;
+  --accent: #4cc2ff;
+  --critical: #ff99a4;
+  --success: #6ccb5f;
+  --card: rgba(255, 255, 255, 0.05);
+  --card-stroke: rgba(255, 255, 255, 0.07);
+  --card-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  --divider: rgba(255, 255, 255, 0.083);
+  --control-hover: rgba(255, 255, 255, 0.08);
+  --control-active: rgba(255, 255, 255, 0.04);
+  --mica:
+    linear-gradient(
+      90deg,
+      rgba(20, 22, 27, 0.92) 0%,
+      rgba(20, 22, 27, 0.74) 55%,
+      rgba(20, 22, 27, 0.56) 100%
+    ),
+    linear-gradient(0deg, rgba(16, 17, 21, 0.9) 0%, rgba(16, 17, 21, 0.08) 60%);
   color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #1b1b1b;
+    --text-1: #1b1b1b;
+    --text-2: #424242;
+    --text-3: #616161;
+    --accent: #005fb8;
+    --critical: #c42b1c;
+    --success: #0f7b0f;
+    --card: rgba(252, 252, 252, 0.72);
+    --card-stroke: rgba(0, 0, 0, 0.09);
+    --card-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    --divider: rgba(0, 0, 0, 0.08);
+    --control-hover: rgba(0, 0, 0, 0.06);
+    --control-active: rgba(0, 0, 0, 0.03);
+    --mica:
+      linear-gradient(
+        90deg,
+        rgba(243, 243, 243, 0.94) 0%,
+        rgba(243, 243, 243, 0.78) 55%,
+        rgba(243, 243, 243, 0.62) 100%
+      ),
+      linear-gradient(0deg, rgba(243, 243, 243, 0.9) 0%, rgba(243, 243, 243, 0.08) 60%);
+    color-scheme: light;
+  }
 }
 * {
   box-sizing: border-box;
 }
 body {
   margin: 0;
-}
-button {
-  font: inherit;
-  cursor: pointer;
-  border: 1px solid #425469;
-  background: #213247;
-  color: #e4edf7;
-  border-radius: 8px;
-  padding: 12px 16px;
-  min-height: 44px;
-  transition:
-    transform 160ms ease-out,
-    background-color 160ms ease-out;
-}
-button:active:not(:disabled) {
-  transform: scale(0.97);
-}
-button:disabled {
-  cursor: default;
-  opacity: 0.48;
-}
-button:focus-visible,
-summary:focus-visible {
-  outline: 2px solid #8dd3ff;
-  outline-offset: 4px;
-}
-button:hover:not(:disabled) {
-  background: #304760;
 }
 .shell {
   position: relative;
@@ -57,6 +75,7 @@ button:hover:not(:disabled) {
   flex-direction: column;
   isolation: isolate;
   overflow: hidden;
+  color: var(--text-1);
 }
 .background,
 .shade {
@@ -71,87 +90,101 @@ button:hover:not(:disabled) {
 }
 .shade {
   z-index: -1;
-  background:
-    linear-gradient(90deg, rgba(5, 14, 26, 0.88), rgba(7, 18, 33, 0.42)),
-    linear-gradient(0deg, #091421 0%, rgba(9, 20, 33, 0.12) 85%);
+  background: var(--mica);
 }
 .titlebar {
-  height: 64px;
+  height: 56px;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
-  padding: 0 24px;
+  padding-left: 16px;
   user-select: none;
   -webkit-app-region: drag;
   app-region: drag;
   touch-action: none;
 }
-.wordmark {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   pointer-events: none;
 }
+.logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: block;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.wordmark {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
 .wordmark span {
-  color: var(--blue);
+  color: var(--accent);
 }
 .windowControls {
   display: flex;
-  gap: 4px;
+  height: 100%;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
-.windowControls button {
-  min-height: 32px;
-  width: 36px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  font-size: 20px;
-  color: var(--muted);
+/* 悬浮式圆角标题栏按钮：44x34、圆角 8px，悬停/红色关闭键均为圆角矩形。 */
+.captionButton {
+  width: 44px;
+  height: 34px;
+  min-width: 44px !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
 }
-.windowControls .close:hover {
-  background: #b53d48;
-  color: #fff;
+.captionButton:hover:not(:disabled) {
+  background-color: var(--control-hover) !important;
+  color: var(--text-1) !important;
+}
+.captionButton:active:not(:disabled) {
+  background-color: var(--control-active) !important;
+  color: var(--text-1) !important;
+}
+.closeButton:hover:not(:disabled) {
+  background-color: #c42b1c !important;
+  color: #fff !important;
+}
+.closeButton:active:not(:disabled) {
+  background-color: #b1261b !important;
+  color: #fff !important;
 }
 .main {
   flex: 1;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 48px 64px 24px;
+  padding: 40px 56px 24px;
   gap: 32px;
 }
 .hero {
   max-width: 640px;
 }
-.eyebrow {
-  color: #9ad7ff;
-  font-size: 14px;
-  letter-spacing: 0.2em;
-  font-weight: 600;
-  margin: 0 0 16px;
-}
 .hero h1 {
-  font-weight: 700;
-  font-size: 48px;
-  line-height: 1.2;
-  letter-spacing: -0.03em;
-  margin: 0 0 24px;
+  font-weight: 600;
+  font-size: 40px;
+  line-height: 1.22;
+  letter-spacing: -0.02em;
+  margin: 0 0 16px;
   text-wrap: balance;
 }
 .description {
-  font-size: 16px;
-  line-height: 1.8;
-  color: #c2d2e3;
-  max-width: 32em;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text-2);
+  max-width: 36em;
   margin: 0;
 }
 .panel {
-  background: rgba(13, 28, 45, 0.95);
-  border-top: 2px solid #4facfe;
-  border-radius: var(--radius);
-  padding: 24px 32px;
+  padding: 24px 28px;
 }
 .statusRow {
   display: flex;
@@ -161,12 +194,23 @@ button:hover:not(:disabled) {
 .indicator {
   width: 8px;
   height: 8px;
-  background: #68c7ff;
+  background: var(--accent);
   border-radius: 50%;
   flex-shrink: 0;
+  animation: breathe 2.4s ease-in-out infinite;
 }
 .indicator.failed {
-  background: #ff8590;
+  background: var(--critical);
+  animation: none;
+}
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 .status {
   font-size: 16px;
@@ -174,14 +218,14 @@ button:hover:not(:disabled) {
 }
 .version {
   margin-left: auto;
-  color: var(--muted);
+  color: var(--text-3);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .taskDetail {
   font-size: 14px;
   line-height: 1.7;
-  color: var(--muted);
+  color: var(--text-2);
   margin: 12px 0 0;
   overflow-wrap: anywhere;
 }
@@ -189,51 +233,93 @@ button:hover:not(:disabled) {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 24px;
+  gap: 16px;
   margin-top: 24px;
 }
 .secondaryActions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-}
-.secondaryActions button {
-  border: 0;
-  background: transparent;
-  color: #b8cbdf;
-  padding: 8px 12px;
-  font-size: 13px;
+  gap: 4px;
 }
 .primary {
-  background: #4facfe;
-  color: #081828;
-  font-weight: 700;
-  font-size: 18px;
   min-width: 208px;
-  min-height: 56px;
-  border: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
   flex-shrink: 0;
-  box-shadow: 0 2px 0 #2272b6;
 }
-.primary:hover:not(:disabled) {
-  background: #7bc4ff;
-}
-.primary:disabled {
-  opacity: 0.65;
-}
-.footer {
-  padding: 0 64px 24px;
+.idleBar {
   display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  font-size: 11px;
-  color: #9aacbf;
-  letter-spacing: 0.08em;
+  justify-content: flex-end;
+  align-items: flex-end;
+  gap: 12px;
+  /* 抵消 main 的 56px 右内边距，使按钮距窗口右/下边缘对称 24px。 */
+  margin-right: -32px;
+}
+/* 空闲态主按钮是画面焦点，明显大于面板里的同名按钮。 */
+.idleBar .primary {
+  min-width: 280px;
+  height: 56px;
+  font-size: 18px;
+  border-radius: 8px;
+}
+.idleBar .primary svg {
+  font-size: 24px;
+}
+/* 任务进行中：保持品牌蓝不落入 disabled 灰态、无描边，双击取消。 */
+.launchingButton {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--accent) !important;
+  color: #fff !important;
+  border: none !important;
+  cursor: default;
+}
+.launchingButton:hover,
+.launchingButton:active {
+  background-color: var(--accent) !important;
+  color: #fff !important;
+}
+.launchHint {
+  font-size: 12px;
+  color: var(--text-3);
+  padding-bottom: 20px;
+  user-select: none;
+}
+/* 按钮内进度填充层：文字与图标浮于其上。 */
+.launchingButton > * {
+  position: relative;
+  z-index: 1;
+}
+.launchFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 0;
+  width: 0%;
+  background: rgba(255, 255, 255, 0.22);
+  transition: width 250ms ease;
+  pointer-events: none;
+}
+.launchText {
+  display: inline-block;
+  max-width: 16em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: launchSwap 420ms ease;
+}
+@keyframes launchSwap {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .launchText {
+    animation: none;
+  }
 }
 .progressGroup {
   margin-top: 20px;
@@ -245,7 +331,7 @@ button:hover:not(:disabled) {
   justify-content: space-between;
   gap: 16px;
   font-size: 13px;
-  color: #ccdaea;
+  color: var(--text-2);
   margin-bottom: 8px;
   font-variant-numeric: tabular-nums;
 }
@@ -254,98 +340,66 @@ button:hover:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.track {
-  height: 6px;
-  background: #2a3c51;
-  border-radius: 8px;
-  overflow: hidden;
-}
-.fill {
-  width: 100%;
-  height: 100%;
-  background: var(--blue);
-  transform-origin: left;
-}
-.subProgress .track {
-  height: 3px;
-}
-.subProgress .fill {
-  background: #8ac5ed;
-}
 .subProgress .progressLabel {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-3);
 }
 .errorDetails {
   margin-top: 16px;
-  color: #ffc2c7;
-  font-size: 13px;
+  border: 1px solid var(--card-stroke);
+  border-radius: 4px;
+  overflow: hidden;
 }
-.errorDetails summary {
+.errorSummary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
   cursor: pointer;
+  color: var(--critical);
+  font-size: 14px;
+  user-select: none;
+  list-style: none;
+  transition: background-color 150ms cubic-bezier(0.8, 0, 0.2, 1);
 }
-.errorDetails pre {
-  font-family: inherit;
+.errorSummary::-webkit-details-marker {
+  display: none;
+}
+.errorSummary:hover {
+  background: var(--control-hover);
+}
+.errorSummary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.chevron {
+  margin-left: auto;
+  transition: transform 150ms cubic-bezier(0.8, 0, 0.2, 1);
+}
+.errorDetails[open] .chevron {
+  transform: rotate(180deg);
+}
+.errorLog {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
   max-height: 120px;
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  line-height: 1.6;
+  margin: 0;
+  padding: 4px 12px 12px;
   user-select: text;
 }
 .notice {
-  font-size: 13px;
-  line-height: 1.6;
-  color: #c1e3ff;
-  margin-bottom: 0;
+  margin-top: 12px;
 }
 .dialog {
-  padding: 32px;
   max-width: min(480px, calc(100vw - 32px));
-  border: 1px solid #425469;
-  border-radius: var(--radius);
-  background: #142438;
-  color: #f1f6fc;
-  box-shadow: 0 24px 80px #0008;
-}
-.dialog::backdrop {
-  background: #030a15b3;
-}
-.dialog h2 {
-  margin: 0;
-  font-size: 24px;
-}
-.dialog p {
-  line-height: 1.8;
-  font-size: 14px;
-  color: #bacbdd;
-  margin: 16px 0 24px;
-}
-.dialogActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
-.dialogActions .primary {
-  min-width: 0;
-  min-height: 44px;
-  font-size: 14px;
 }
 .connection {
-  padding-top: 112px;
-}
-.spinner {
-  height: 16px;
-  width: 16px;
-  border: 2px solid #173e60;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  padding-top: 104px;
 }
 @media (max-width: 920px) {
   .main {
@@ -353,22 +407,13 @@ button:hover:not(:disabled) {
     gap: 24px;
   }
   .hero h1 {
-    font-size: 40px;
-  }
-  .footer {
-    padding: 0 32px 20px;
+    font-size: 34px;
   }
   .panel {
     padding: 24px;
   }
   .primary {
     min-width: 176px;
-  }
-  .secondaryActions {
-    gap: 0;
-  }
-  .secondaryActions button {
-    padding: 8px;
   }
   .actions {
     gap: 12px;
@@ -379,10 +424,10 @@ button:hover:not(:disabled) {
     padding: 24px 16px;
   }
   .hero h1 {
-    font-size: 32px;
+    font-size: 28px;
   }
   .titlebar {
-    padding: 0 16px;
+    padding-left: 12px;
   }
   .actions {
     align-items: stretch;
@@ -390,34 +435,27 @@ button:hover:not(:disabled) {
   }
   .primary {
     width: 100%;
+    min-width: 0;
   }
   .panel {
     padding: 20px 16px;
-  }
-  .footer {
-    padding: 0 16px 16px;
-    font-size: 10px;
-    flex-wrap: wrap;
   }
   .version {
     font-size: 11px;
   }
   .description {
-    font-size: 14px;
+    font-size: 13px;
   }
   .connection {
     padding-top: 88px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  button {
-    transition: none;
-  }
-  button:active:not(:disabled) {
-    transform: none;
-  }
-  .spinner {
+  .indicator {
     animation: none;
+  }
+  .chevron {
+    transition: none;
   }
   .background {
     visibility: hidden;

@@ -241,9 +241,6 @@ tips:
   18: "铁血的科技世界第一！"
 
 launcher:
-  tagline: "你的碧蓝航线自动化伙伴"
-  headline: "准备好，开启下一次航行。"
-  description: "从这里启动 AzurPilot，准备运行环境，让每一次出航都更从容。"
   home: "启动器首页"
   version: "启动器"
   status: "运行状态"
@@ -273,6 +270,8 @@ launcher:
   repair_body: "将重建 .venv，重新安装 Python、基础工具和依赖。代码仓库、配置、日志和全局 uv 缓存会保留。修复完成后不会自动启动。"
   repair_confirm: "开始修复"
   cancel: "取消"
+  click_cancel_hint: "点击取消"
+  press_again_cancel: "再按一次取消"
   close_title: "取消任务并退出？"
   close_body: "将停止当前任务和相关子进程。现有环境、配置和缓存会保留，下次可继续启动或手动修复。"
   exit_confirm: "取消任务并退出"
@@ -288,7 +287,6 @@ launcher:
   minimize: "最小化"
   maximize: "最大化或还原"
   close: "关闭"
-  footer: "让出航更简单"
   update_hint: "发现新版本 %{version}，请先更新启动器。"
   update_check_failed: "无法检查启动器更新，请重新检查。"
   start_hint: "点击启动后，将检查环境、更新代码并打开 WebUI。"

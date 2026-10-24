@@ -241,9 +241,6 @@ tips:
   18: "Iron Blood's technology is the best in the world!"
 
 launcher:
-  tagline: "YOUR AZUR LANE COMPANION"
-  headline: "Ready for your next voyage."
-  description: "Launch AzurPilot, prepare your environment, and set sail with confidence."
   home: "Launcher home"
   version: "Launcher"
   status: "Status"
@@ -273,6 +270,8 @@ launcher:
   repair_body: "Rebuild .venv and reinstall Python, tools, and dependencies. Your repository, settings, logs, and global uv cache are kept. Launch manually when repair completes."
   repair_confirm: "Start repair"
   cancel: "Cancel"
+  click_cancel_hint: "Click to cancel"
+  press_again_cancel: "Click again to cancel"
   close_title: "Cancel the task and exit?"
   close_body: "Stop the current task and its child processes. Your environment, settings, and caches are kept for the next launch or manual repair."
   exit_confirm: "Cancel task and exit"
@@ -288,7 +287,6 @@ launcher:
   minimize: "Minimize"
   maximize: "Maximize or restore"
   close: "Close"
-  footer: "A smoother journey starts here"
   update_hint: "Version %{version} is available. Update the launcher to continue."
   update_check_failed: "Unable to check for updates. Please try again."
   start_hint: "Launch to prepare your environment, update the repository, and open WebUI."

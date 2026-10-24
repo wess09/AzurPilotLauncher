@@ -2,9 +2,6 @@ import dictionaries from "virtual:launcher-locales";
 
 // The four Rust YAML files remain the only production translation source.
 const keys = [
-  "tagline",
-  "headline",
-  "description",
   "home",
   "version",
   "status",
@@ -34,6 +31,8 @@ const keys = [
   "repair_body",
   "repair_confirm",
   "cancel",
+  "click_cancel_hint",
+  "press_again_cancel",
   "close_title",
   "close_body",
   "exit_confirm",
@@ -49,7 +48,6 @@ const keys = [
   "minimize",
   "maximize",
   "close",
-  "footer",
   "update_hint",
   "update_check_failed",
   "start_hint",

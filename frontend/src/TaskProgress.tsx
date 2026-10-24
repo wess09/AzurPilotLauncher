@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ProgressBar } from "@fluentui/react-components";
 import { advance, channel, target } from "./progress";
 import type { Snapshot } from "./types";
 import type { translator } from "./i18n";
@@ -68,25 +69,19 @@ export function Progress({
       document.removeEventListener("visibilitychange", settle);
     };
   }, [state.task_id, state.phase, progress, uv]);
+  // aria-valuenow 显式取整：Fluent 会透传原始值，测试与读屏期望整数百分比。
   const bar = (value: number, label: string, small = false) => (
     <div className={small ? styles.subProgress : styles.progress}>
       <div className={styles.progressLabel}>
         <span>{label}</span>
         <span>{Math.floor(value)}%</span>
       </div>
-      <div
-        className={styles.track}
-        role="progressbar"
+      <ProgressBar
+        max={100}
+        value={value}
         aria-label={label}
-        aria-valuemin={0}
-        aria-valuemax={100}
         aria-valuenow={Math.floor(value)}
-      >
-        <div
-          className={styles.fill}
-          style={{ transform: `scaleX(${value / 100})` }}
-        />
-      </div>
+      />
     </div>
   );
   return (

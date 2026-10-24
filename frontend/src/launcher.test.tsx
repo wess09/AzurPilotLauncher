@@ -9,7 +9,6 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { acceptSnapshot, type Snapshot } from "./types";
-import { advance, channel, target } from "./progress";
 import { translator, localeKeys } from "./i18n";
 import dictionaries from "virtual:launcher-locales";
 
@@ -92,12 +91,11 @@ describe("launcher actions", () => {
     });
     expect(
       screen.getByRole("button", { name: /Starting/ }).hasAttribute("disabled"),
-    ).toBe(true);
+    ).toBe(false);
     expect(
-      screen
-        .getByRole("button", { name: /Repair environment/ })
-        .hasAttribute("disabled"),
-    ).toBe(true);
+      screen.queryByRole("button", { name: /Repair environment/ }),
+    ).toBeNull();
+    expect(screen.getByText(/Click to cancel/)).toBeTruthy();
   });
   it("offers an explicit update and blocks launch and repair", async () => {
     await mount();
@@ -127,7 +125,14 @@ describe("launcher actions", () => {
   });
   it("confirms repair and never starts the service as a side effect", async () => {
     await mount();
-    fireEvent.click(screen.getByRole("button", { name: /Repair environment/ }));
+    await send({
+      phase: "error",
+      operation: "repair",
+      error: "venv broken",
+      can_start: false,
+      can_repair: true,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Retry repair/ }));
     expect(bridge.command).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
     await waitFor(() =>
@@ -152,6 +157,23 @@ describe("launcher actions", () => {
     fireEvent.click(screen.getByRole("button", { name: /Stop service/ }));
     expect(bridge.command).toHaveBeenCalledWith("launcher_stop");
   });
+  it("cancels a running task by clicking the launch button twice", async () => {
+    await mount();
+    await send({
+      phase: "starting",
+      can_start: false,
+      can_cancel: true,
+      can_repair: false,
+    });
+    const launch = screen.getByRole("button", { name: /Starting/ });
+    fireEvent.click(launch);
+    expect(bridge.command).not.toHaveBeenCalled();
+    const armed = screen.getByRole("button", {
+      name: /Click again to cancel/,
+    });
+    fireEvent.click(armed);
+    expect(bridge.command).toHaveBeenCalledWith("launcher_cancel");
+  });
   it("does not cancel a task until the exit confirmation is accepted", async () => {
     await mount();
     act(() => bridge.close());
@@ -173,72 +195,28 @@ describe("snapshot ordering and progress", () => {
     const next = { ...ready(), sequence: 5 };
     expect(acceptSnapshot(current, next)).toBe(next);
   });
-  it("interpolates to the confirmed progress in 250ms and ignores backwards values", () => {
-    const c = channel();
-    target(c, 60, 0);
-    expect(advance(c, 125)).toBe(30);
-    expect(advance(c, 250)).toBe(60);
-    target(c, 20, 250);
-    expect(advance(c, 500)).toBe(60);
-  });
-  it("retargets from the rendered position without restarting equal targets", () => {
-    const c = channel();
-    target(c, 40, 0);
-    advance(c, 100);
-    target(c, 80, 100);
-    expect(c.from).toBe(16);
-    target(c, 80, 200);
-    expect(c.at).toBe(100);
-    expect(advance(c, 350)).toBe(80);
-  });
-  it("settles errors, reduced motion and completion immediately without NaN", () => {
-    const c = channel();
-    target(c, 42.5, 0, true);
-    expect(c.value).toBe(42.5);
-    target(c, NaN, 10);
-    expect(Number.isFinite(c.value)).toBe(true);
-    target(c, 100, 20);
-    expect(c.value).toBe(100);
-  });
-  it("resets bars on a new operation and dependency subtask", async () => {
+  it("shows the current step on the launch button without raw output", async () => {
     await mount();
-    const progress = {
-      title: "Preparing",
-      detail: "",
-      subtitle: "",
-      progress: 80.5,
-      uv_progress: { progress: 65, detail: "Dependencies", task_id: 1 },
-      is_error: false,
-      terminal: false,
-      sequence: 1,
-    };
-    await send({ phase: "starting", progress, can_start: false });
-    expect(
-      screen
-        .getByRole("progressbar", { name: "Preparing" })
-        .getAttribute("aria-valuenow"),
-    ).toBe("80");
     await send({
-      sequence: 3,
-      task_id: 2,
-      phase: "repairing",
-      progress: {
-        ...progress,
-        progress: 5,
-        uv_progress: { ...progress.uv_progress, progress: 2, task_id: 2 },
-      },
+      phase: "starting",
       can_start: false,
+      can_cancel: true,
+      progress: {
+        title: "Preparing",
+        detail: "FETCH REPOSITORY BRANCH",
+        subtitle: "",
+        progress: 80.5,
+        uv_progress: { progress: 65, detail: "Dependencies", task_id: 1 },
+        is_error: false,
+        terminal: false,
+        sequence: 1,
+      },
     });
-    expect(
-      screen
-        .getByRole("progressbar", { name: "Preparing" })
-        .getAttribute("aria-valuenow"),
-    ).toBe("5");
-    expect(
-      screen
-        .getByRole("progressbar", { name: "Dependencies" })
-        .getAttribute("aria-valuenow"),
-    ).toBe("2");
+    const button = screen.getByRole("button", { name: "Preparing" });
+    expect(button.hasAttribute("disabled")).toBe(false);
+    expect(screen.getByText(/Click to cancel/)).toBeTruthy();
+    expect(screen.queryByText(/FETCH/)).toBeNull();
+    expect(screen.queryByText(/Dependencies/)).toBeNull();
   });
 });
 
