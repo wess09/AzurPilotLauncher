@@ -235,6 +235,9 @@ body {
   justify-content: space-between;
   gap: 16px;
   margin-top: 24px;
+  /* 主按钮与空闲态大按钮对齐：抵消面板 56px 右内边距到 24px，
+     左侧小按钮组仍留在 56px 文字边距上。 */
+  margin-right: -32px;
 }
 .secondaryActions {
   display: flex;
