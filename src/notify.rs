@@ -1,18 +1,7 @@
-//! 桌面通知模块：订阅后端的 SSE 通知流，并把事件转发为平台原生通知。
-//! `start_notify_stream` 在独立线程中维持对 `http://127.0.0.1:{port}/api/notify_stream`
-//! 的长连接，断线后固定间隔 3 秒重连，直到 `allow_exit` 置位；分发层按平台
-//! 选择通知后端——Windows 用 tauri-winrt-notification（Toast），Linux 用
-//! notify-rust，macOS 等其余平台用 tauri-plugin-notification；由 main.rs 在后端就绪后启用。
-
-use std::{
-    io::{BufRead, BufReader},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    thread,
-    time::Duration,
-};
+//! 平台原生通知显示；事件由启动器 WS 通道统一接收。
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::thread;
 
 #[cfg(windows)]
 use std::{
@@ -23,13 +12,11 @@ use std::{
 use anyhow::{anyhow, Result};
 #[cfg(target_os = "linux")]
 use notify_rust::{Hint, Notification};
-use reqwest::blocking::Client;
-use reqwest::header::ACCEPT;
 use rust_i18n::t;
 use serde::Deserialize;
 #[cfg(all(not(windows), not(target_os = "linux")))]
 use tauri_plugin_notification::NotificationExt;
-use tracing::{debug, info, warn};
+use tracing::warn;
 
 /// 通知被点击时执行的回调。
 ///
@@ -75,7 +62,7 @@ fn windows_app_name_announcement() -> String {
 #[cfg(windows)]
 const WINDOWS_NOTIFICATION_ICON: &[u8] = include_bytes!("../icons/icon.png");
 
-/// 后端 SSE 事件反序列化后的通知载荷。
+/// 后端 WS 事件反序列化后的通知载荷。
 ///
 /// 所有字段均可缺失，缺失时展示层逐级回退到本地化默认文案。
 #[derive(Debug, Deserialize)]
@@ -102,135 +89,11 @@ enum NotificationType {
     Announcement,
 }
 
-/// 启动后台线程订阅通知流，直到 `allow_exit` 置位才停止重连。
-///
-/// 该线程与主线程完全解耦：后端重启、依赖同步期间通知流会反复断开，
-/// 均在此线程内静默重连，不影响启动器其他功能。
-pub fn start_notify_stream(
-    app: tauri::AppHandle,
-    port: u16,
-    allow_exit: Arc<AtomicBool>,
-    on_click: NotificationClickHandler,
-) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        let url = format!("http://127.0.0.1:{port}/api/notify_stream");
-        // 连接超时 5 秒并绕过系统代理：目标是本机回环地址，走代理只会添乱。
-        let client = match Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(None)
-            .no_proxy()
-            .build()
-        {
-            Ok(client) => client,
-            Err(e) => {
-                warn!("Unable to create notify stream client: {e}");
-                return;
-            }
-        };
-
-        // 断线固定等 3 秒再重连：实现简单且足以应对后端重启窗口；
-        // 退出标志置位后立即跳出，不再做无谓的睡眠与连接。
-        while !allow_exit.load(Ordering::SeqCst) {
-            info!("Connecting to notify stream: {url}");
-            match read_notify_stream(&client, &url, &app, &allow_exit, &on_click) {
-                Ok(()) => debug!("Notify stream ended"),
-                Err(e) => warn!("Notify stream disconnected: {e}"),
-            }
-
-            if !allow_exit.load(Ordering::SeqCst) {
-                for _ in 0..30 {
-                    if allow_exit.load(Ordering::SeqCst) {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(100));
-                }
-            }
-        }
-    })
-}
-
-/// 建立一次 SSE 连接并阻塞读取，直到对端关闭或收到退出信号。
-///
-/// 按 SSE 协议逐行解析：`data:` 前缀行为事件数据，空行为事件分隔符；
-/// 每凑齐一条完整事件就立即分发为桌面通知。
-///
-/// # Errors
-///
-/// 连接建立失败、服务端返回非 2xx 状态，或读取流时发生 IO 错误
-/// （含退出时主动断开导致的错误）时返回 `Err`，由外层统一重连。
-fn read_notify_stream(
-    client: &Client,
-    url: &str,
-    app: &tauri::AppHandle,
-    allow_exit: &Arc<AtomicBool>,
-    on_click: &NotificationClickHandler,
-) -> Result<()> {
-    // SSE 协议要求客户端声明 Accept: text/event-stream，后端据此返回流式响应。
-    let response = crate::cancel::request(
-        client.get(url).header(ACCEPT, "text/event-stream"),
-        allow_exit,
-    )?;
-
-    if !response.status().is_success() {
-        return Err(anyhow!("server returned {}", response.status()));
-    }
-
-    // SSE 以空行作为一条事件（message）的边界，因此逐行缓冲读取。
-    let mut reader = BufReader::new(crate::cancel::body(response, allow_exit.clone()));
-    let mut data_lines = Vec::new();
-
-    while !allow_exit.load(Ordering::SeqCst) {
-        let mut line = String::new();
-        let bytes = reader.read_line(&mut line)?;
-        // read_line 返回 0 字节表示对端已关闭连接，结束本次读取交由外层重连。
-        if bytes == 0 {
-            break;
-        }
-
-        let line = line.trim_end_matches(['\r', '\n']);
-        if line.is_empty() {
-            // 空行 = 事件结束：把积累的 data 行拼成分发一条通知。
-            if !allow_exit.load(Ordering::SeqCst) {
-                dispatch_sse_data(&mut data_lines, app, on_click);
-            }
-            continue;
-        }
-
-        // 同一事件可拆成多个 data: 行，先累积，遇到空行时再统一处理。
-        if let Some(data) = line.strip_prefix("data:") {
-            data_lines.push(data.trim_start().to_owned());
-        }
-    }
-
-    // 退出前把未跟随空行的残余数据也分发一次，避免丢失最后一条通知。
-    if !allow_exit.load(Ordering::SeqCst) {
-        dispatch_sse_data(&mut data_lines, app, on_click);
-    }
+/// 显示经过 WS 协议校验的通知；不记录通知正文。
+pub fn display(app: &tauri::AppHandle, data: serde_json::Value, on_click: &NotificationClickHandler) -> Result<()> {
+    let payload = serde_json::from_value::<NotifyPayload>(data)?;
+    show_notification(app, payload, on_click);
     Ok(())
-}
-
-/// 把一条 SSE 事件的 `data` 行集合还原为 JSON 并展示为桌面通知。
-///
-/// SSE 规范允许事件数据拆分为多个 `data:` 行，还原时需以换行拼接；
-/// 空 `data_lines`（如心跳注释产生的空行）直接忽略。
-fn dispatch_sse_data(
-    data_lines: &mut Vec<String>,
-    app: &tauri::AppHandle,
-    on_click: &NotificationClickHandler,
-) {
-    if data_lines.is_empty() {
-        return;
-    }
-
-    let data = data_lines.join("\n");
-    data_lines.clear();
-
-    // 载荷非法（JSON 损坏或字段类型不符）时仅告警丢弃，不让单个坏事件
-    // 拖垮整条通知流。
-    match serde_json::from_str::<NotifyPayload>(&data) {
-        Ok(payload) => show_notification(app, payload, on_click),
-        Err(e) => warn!("Ignoring invalid notify payload: {e}; payload={data}"),
-    }
 }
 
 /// 把一条通知载荷渲染为标题与正文，并按平台分发给对应的通知后端。
@@ -443,7 +306,7 @@ fn show_linux_notification(
     let handle = notification.show()?;
 
     // wait_for_action 会阻塞等待用户交互，必须放入独立线程，否则会卡住
-    // SSE 读取线程进而阻断后续通知。
+    // WS 读取线程进而阻断后续通知。
     thread::spawn(move || {
         handle.wait_for_action(move |action| {
             if action == "default" {

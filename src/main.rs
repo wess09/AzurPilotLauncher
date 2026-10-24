@@ -18,11 +18,12 @@ mod cancel;
 /// 多语言（i18n）初始化与本地化支持。
 mod i18n;
 mod launcher;
-/// 启动器反向控制流：接收后端经 SSE 下发的退出等指令。
+/// 本机启动器 WS：控制、通知、心跳与免密票据。
 mod launcher_control;
+mod launcher_protocol;
 /// Windows 运行时 Node.js 的检测与安装引导。
 mod nodejs;
-/// SSE 通知流：接收后端推送的系统通知与点击回调。
+/// 平台原生通知与点击回调。
 mod notify;
 /// 统一的启动进度状态、快照与推送节奏。
 mod progress;
@@ -46,7 +47,7 @@ use crate::setup::SplashUpdate;
 use anyhow::{anyhow, Context, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use chrono::{DateTime, FixedOffset, Local, Utc};
-use reqwest::{blocking::Client, header::DATE};
+use reqwest::header::DATE;
 use rust_i18n::t;
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -112,15 +113,12 @@ const START_MINIMIZED_ARGS: &[&str] = &["--start-minimized", "/start-minimized"]
 //
 // 启动器为每次会话生成一个随机信任密钥，经 backend_env 的双名称环境变量注入到
 // gui.py 子进程。WebUI 启动后会据当前 --key / deploy.yaml Password 登记该
-// 密钥；启动器窗口导航前先向后端换发一次性令牌，再进入 /launcher-login 页面
-// 预置登录态实现免密。信任密钥与会话密钥解耦，其它浏览器仍走原密码门禁。
+// 密钥；窗口导航前通过 WS 换发一次性票据，再由后端认证浏览器会话。
+// 票据不包含 WebUI 密码，其他浏览器仍走原密码门禁。
 // 手动 gui.py 启动时密钥未注入，WebUI 端整体关闭该通道。
 // ---------------------------------------------------------------------------
 /// 信任密钥的原始随机字节数（base64 编码后约 32 字符）。
 const TRUST_SECRET_LENGTH: usize = 24;
-/// 换发免密令牌的请求超时：失败即回退普通登录页，不能拖慢主窗口展示。
-const TRUST_LOGIN_TIMEOUT: Duration = Duration::from_secs(3);
-
 /// 本次会话的信任密钥缓存：首次调用时生成并全程复用，进程结束即失效。
 static LAUNCHER_TRUST_SECRET: OnceLock<String> = OnceLock::new();
 
@@ -134,47 +132,16 @@ pub(crate) fn launcher_trust_secret() -> &'static str {
     })
 }
 
-/// 计算主窗口应导航到的后端地址：若后端支持启动器免密（本机回环 + 密钥匹配），
-/// 则返回带一次性令牌的 /launcher-login 页面；否则回退普通后端首页，维持原有
-/// 登录行为。本函数不抛错，任何失败都静默回退。
-fn webui_navigate_url(port: u16) -> String {
-    let fallback = || backend_url(port);
-    let secret = launcher_trust_secret();
-    let client = match Client::builder().timeout(TRUST_LOGIN_TIMEOUT).build() {
-        Ok(client) => client,
-        Err(_) => return fallback(),
-    };
-    let response = client
-        .post(format!(
-            "http://127.0.0.1:{port}/api/launcher/trusted-login"
-        ))
-        .header("X-Webui-Launcher-Secret", secret)
-        .send();
-    let response = match response {
-        Ok(response) if response.status().is_success() => response,
-        _ => return fallback(),
-    };
-    // reqwest 未启用 json feature，手动解析 body。
-    let body_text = match response.text() {
-        Ok(body_text) => body_text,
-        Err(_) => return fallback(),
-    };
-    let body: serde_json::Value = match serde_json::from_str(&body_text) {
-        Ok(body) => body,
-        Err(_) => return fallback(),
-    };
-    let Some(token) = body.get("token").and_then(|token| token.as_str()) else {
-        return fallback();
-    };
-    if token.is_empty() {
-        return fallback();
+/// 通过本次后端会话的 WS 换取一次性票据，失败时进入正常首页。
+fn webui_navigate_url(port: u16, channel: Option<Arc<launcher_control::LauncherChannel>>) -> String {
+    match channel.and_then(|channel| channel.login_ticket().ok()) {
+        Some(ticket) => format!("http://127.0.0.1:{port}/?launcherTicket={ticket}"),
+        None => backend_url(port),
     }
-    // 令牌为 URL-safe 随机串（secrets.token_urlsafe），可直接置于 query。
-    format!("http://127.0.0.1:{port}/launcher-login?token={token}")
 }
 
 /// URL 的日志安全形式：只保留 scheme/host/port/path，剔除 query，避免
-/// /launcher-login 的一次性令牌经日志落盘。
+/// 启动器的一次性登录票据经日志落盘。
 fn redacted_url_log(url: &Url) -> String {
     let Some(host) = url.host_str() else {
         return url.to_string();
@@ -819,11 +786,12 @@ async fn retry_backend_connection(
     let port = controller.port();
     let task = controller.snapshot().task_id;
     // 等待与换发免密令牌均含阻塞调用，统一放在阻塞线程中执行。
+    let navigation_controller = controller.inner().clone();
     let target_url = tauri::async_runtime::spawn_blocking(move || {
         if wait_for_backend_connection(port, BACKEND_NAVIGATION_TIMEOUT).is_err() {
             return None;
         }
-        Some(webui_navigate_url(port))
+        Some(navigation_controller.webui_url())
     })
     .await
     .map_err(|e| {

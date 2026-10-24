@@ -32,7 +32,7 @@ cargo check            # 仅检查编译
 ## 模块职责
 
 - `frontend/`：React 首页、进度、错误页、确认弹窗；构建时读取四份语言 YAML。
-- `src/launcher.rs`：唯一状态控制器、任务互斥、启动/停止/修复/退出、SSE 会话和托盘。
+- `src/launcher.rs`：唯一状态控制器、任务互斥、启动/停止/修复/退出、WS 会话和托盘。
 - `src/updater.rs`：检查更新、用户显式更新、mTLS/摘要校验、平台替换与参数恢复。
 - `src/windows.rs`：窗口恢复、React 连接错误路由、保留的 WebUI 标题栏注入。
 - `src/main.rs`：模块入口、日志、信任登录、时间炸弹及通用窗口/文件命令。
@@ -40,7 +40,7 @@ cargo check            # 仅检查编译
 - `src/backend.rs` / `backend_process.rs`：后端进程组与 Windows Job，退出不连带关闭独立模拟器。
 - `src/backend_env.rs`：同时注入 `AP_` / `ALAS_` 后端环境协议，双归属标记均匹配时才兜底清理子进程。
 - `src/task_process.rs` / `cancel.rs`：安装任务进程组与可取消 HTTP，不在取消时删除环境。
-- `src/notify.rs` / `launcher_control.rs`：每次后端会话独立的通知流、控制流与停止标志。
+- `src/notify.rs` / `launcher_control.rs`：每次后端会话独立的单条 WS 通道、原生通知与停止标志。
 - `src/nodejs.rs`、`autostart.rs`、`i18n.rs`、`window_util.rs`：Node.js 安装、自启、多语言和子进程窗口控制。
 
 详细开发流程及 IPC 见 [启动器界面与生命周期](docs/launcher-ui.md)。
@@ -56,7 +56,7 @@ cargo check            # 仅检查编译
 
 ## 关键常量
 
-WebUI 端口 `22267`；Python `3.14.6`；后端端口等待 60s；SSE 重连 3s。时间炸弹配置在 `Cargo.toml` 的 `[package.metadata.azurpilot.time-bomb]`（运行时由 `main.rs` 解析，当前 `enabled = false`）。
+WebUI 端口 `22267`；Python `3.14.6`；后端端口等待 60s；WS 心跳 15s、重连 1/2/5/10/30s。时间炸弹配置在 `Cargo.toml` 的 `[package.metadata.azurpilot.time-bomb]`（运行时由 `main.rs` 解析，当前 `enabled = false`）。
 
 - **环境修复**：关闭/取消/后端超时均不得自动删除 `.venv` 或缓存。仅首页确认后的修复重建 `.venv`，运行中必须先停止服务。
 - **前端通信**：新管理命令验证本地 `launcher` 窗口；页面先订阅 `launcher://state` 再取快照，按 `sequence` 去重，按 `task_id` 隔离任务。不要重新引入 Rust HTML 拼接或全局 JS 回调。

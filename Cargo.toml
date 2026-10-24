@@ -1,6 +1,6 @@
 [package]
 name = "azurpilot"
-version = "3.0.0"
+version = "3.0.1"
 description = "AzurPilot launcher built with Tauri"
 authors = ["Jianfeng Zhang <swordfeng123@gmail.com>"]
 edition = "2021"
@@ -37,6 +37,7 @@ chrono = { version = "0.4.41", default-features = false, features = ["clock"] }
 rust-i18n = "3"
 sys-locale = "0.3"
 tempfile = "3"
+tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 
 [package.metadata.azurpilot.time-bomb]
 enabled = false

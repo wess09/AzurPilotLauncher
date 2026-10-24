@@ -1,6 +1,6 @@
 //! 窗口、后端导航与保留的 WebUI 标题栏注入。
 use crate::{
-    launcher, page_load_injector, redacted_url_log, webui_navigate_url, BACKEND_CONNECT_TIMEOUT,
+    launcher, page_load_injector, redacted_url_log, BACKEND_CONNECT_TIMEOUT,
     BACKEND_NAVIGATION_TIMEOUT,
 };
 use anyhow::{anyhow, Result};
@@ -144,7 +144,7 @@ pub(crate) fn navigate_backend_or_error(
     }
     match result {
         Ok(()) => {
-            let url = webui_navigate_url(port);
+            let url = window.state::<Arc<launcher::Launcher>>().webui_url();
             if !session_matches(window, task) {
                 return Ok(false);
             }
