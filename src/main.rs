@@ -58,7 +58,7 @@ use std::{
 use tauri::image::Image;
 use tauri::{
     webview::{PageLoadEvent, PageLoadPayload},
-    Manager, State, Url, WebviewWindow,
+    Emitter, Manager, State, Url, WebviewWindow,
 };
 use tauri_plugin_dialog::{DialogExt, FilePath};
 #[cfg(windows)]
@@ -607,16 +607,49 @@ fn today_gui_log_filename() -> String {
     format!("{}_gui.txt", Local::now().format("%Y-%m-%d"))
 }
 
-/// Tauri 命令：把整个 log 目录顶层文件打包为 zip 并弹出另存为对话框。
-///
-/// 异步 + `spawn_blocking`：日志可达数百 MB，同步压缩会阻塞主线程
-/// 消息泵导致窗口"未响应"。先在后台线程写入系统临时目录，用户确认
-/// 保存后拷贝到目标路径并清理临时文件。返回归档包含的文件数。
+/// log 归档进度事件载荷：done/total 为已写入与总计字节数。
+#[derive(Clone, serde::Serialize)]
+struct LogArchiveProgress {
+    done: u64,
+    total: u64,
+}
+
+/// Tauri 命令：弹出 zip 另存为对话框（带过滤器与预填文件名），
+/// 返回用户选择的目标路径；取消时返回 None。
 ///
 /// # Errors
-/// 日志目录缺失或打包失败时返回本地化错误字符串。
+/// 对话框通道关闭时返回错误字符串。
 #[tauri::command]
-async fn download_log_archive(app_handle: tauri::AppHandle) -> std::result::Result<usize, String> {
+async fn prompt_log_archive_path(
+    app_handle: tauri::AppHandle,
+) -> std::result::Result<Option<String>, String> {
+    let archive_name = format!("AzurPilot-log-{}.zip", Local::now().format("%Y-%m-%d"));
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app_handle
+        .dialog()
+        .file()
+        .add_filter("ZIP", &["zip"])
+        .set_file_name(&archive_name)
+        .save_file(move |path| {
+            let _ = sender.send(path.map(|p| p.to_string()));
+        });
+    tauri::async_runtime::spawn_blocking(move || receiver.recv())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Tauri 命令：把 log 目录顶层文件打包为 zip 写入 target 路径。
+/// 打包在后台线程执行，逐文件向 launcher 窗口发进度事件
+/// （launcher://log-archive-progress，done/total 字节）。返回文件数。
+///
+/// # Errors
+/// 日志目录缺失、目录扫描或 zip 写入失败时返回本地化错误字符串。
+#[tauri::command]
+async fn download_log_archive(
+    app_handle: tauri::AppHandle,
+    target: String,
+) -> std::result::Result<usize, String> {
     let log_dir = std::env::current_dir()
         .map_err(|e| e.to_string())?
         .join("log");
@@ -627,70 +660,48 @@ async fn download_log_archive(app_handle: tauri::AppHandle) -> std::result::Resu
         )
         .to_string());
     }
-    let archive_name = format!("AzurPilot-log-{}.zip", Local::now().format("%Y-%m-%d_%H%M%S"));
-    let temp_zip = std::env::temp_dir().join(&archive_name);
-    let pack_dir = log_dir.clone();
-    let count = tauri::async_runtime::spawn_blocking(move || {
-        pack_log_directory(&pack_dir, &temp_zip)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| t!("errors.pack_log_failed", error = e.to_string()).to_string())?;
-    let temp_for_dialog = temp_zip.clone();
-    app_handle
-        .dialog()
-        .file()
-        .set_file_name(&archive_name)
-        .save_file(move |path| {
-            let result: Result<()> = (|| {
-                let file_path = path.as_ref().and_then(FilePath::as_path).ok_or_else(|| {
-                    anyhow!(t!(
-                        "errors.invalid_file_path",
-                        path = format!("{:?}", &path)
-                    ))
-                })?;
-                fs::copy(&temp_for_dialog, file_path)?;
-                info!("Saved log archive to {:?}", file_path);
-                Ok(())
-            })();
-            if let Err(e) = result {
-                error!("Failed to save log archive: {:?}", e);
-            }
-            let _ = fs::remove_file(&temp_for_dialog);
-        });
-    Ok(count)
-}
-
-/// 打包 log 目录顶层全部文件为 zip（不含子目录），返回文件数。
-///
-/// 子目录（error 崩溃转储等）可能含数千文件，全量打包会卡死 UI 线程，
-/// 因此只收顶层文件。
-///
-/// # Errors
-/// 目录遍历、文件读取或 zip 写入失败时返回 io 错误。
-fn pack_log_directory(
-    log_dir: &std::path::Path,
-    target: &std::path::Path,
-) -> std::io::Result<usize> {
-    let file = fs::File::create(target)?;
-    let mut zip = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-    let mut count = 0usize;
-    for entry in fs::read_dir(log_dir)? {
-        let entry = entry?;
+    let mut files: Vec<(std::path::PathBuf, String, u64)> = Vec::new();
+    for entry in std::fs::read_dir(&log_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         if !path.is_file() {
             continue;
         }
-        let name = entry.file_name().to_string_lossy().to_string();
-        zip.start_file(name, options.clone())?;
-        let mut source = fs::File::open(&path)?;
-        std::io::copy(&mut source, &mut zip)?;
-        count += 1;
+        let size = entry.metadata().map_err(|e| e.to_string())?.len();
+        files.push((path, entry.file_name().to_string_lossy().to_string(), size));
     }
-    zip.finish()?;
-    Ok(count)
+    if files.is_empty() {
+        return Err(t!(
+            "errors.log_dir_missing",
+            path = log_dir.to_string_lossy().to_string()
+        )
+        .to_string());
+    }
+    let total: u64 = files.iter().map(|(_, _, size)| *size).sum();
+    let emitter = app_handle;
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = fs::File::create(&target).map_err(|e| e.to_string())?;
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        let mut done: u64 = 0;
+        for (path, name, size) in &files {
+            zip.start_file(name.clone(), options.clone())
+                .map_err(|e| e.to_string())?;
+            let mut source = fs::File::open(path).map_err(|e| e.to_string())?;
+            std::io::copy(&mut source, &mut zip).map_err(|e| e.to_string())?;
+            done += size;
+            let _ = emitter.emit_to(
+                "launcher",
+                "launcher://log-archive-progress",
+                LogArchiveProgress { done, total },
+            );
+        }
+        zip.finish().map_err(|e| e.to_string())?;
+        Ok(files.len())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 生成今天的启动器日志文件名（{日期}_launcher.txt，日期取本地时区）。
