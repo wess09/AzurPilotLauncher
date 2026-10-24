@@ -218,6 +218,25 @@ describe("snapshot ordering and progress", () => {
     expect(screen.queryByText(/FETCH/)).toBeNull();
     expect(screen.queryByText(/Dependencies/)).toBeNull();
   });
+  it("shows cancelling instead of the stale step after cancellation", async () => {
+    await mount();
+    await send({
+      phase: "cancelling",
+      can_start: false,
+      can_cancel: true,
+      progress: {
+        title: "Preparing",
+        detail: "FETCH REPOSITORY BRANCH",
+        subtitle: "",
+        progress: 42,
+        is_error: false,
+        terminal: false,
+        sequence: 2,
+      },
+    });
+    expect(screen.getByRole("button", { name: "Cancelling" })).toBeTruthy();
+    expect(screen.queryByText("Preparing")).toBeNull();
+  });
 });
 
 it("uses the same complete translation keys in all four languages", () => {

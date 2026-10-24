@@ -252,7 +252,7 @@ launcher:
   running: "Service running"
   stopping: "Stopping service"
   repairing: "Repairing environment"
-  cancelling: "Stopping task"
+  cancelling: "Cancelling"
   error: "Something went wrong"
   start: "Launch"
   open_webui: "Open WebUI"

@@ -252,7 +252,7 @@ launcher:
   running: "サービス稼働中"
   stopping: "停止中"
   repairing: "環境を修復中"
-  cancelling: "タスクを停止中"
+  cancelling: "キャンセル中"
   error: "操作に失敗しました"
   start: "起動"
   open_webui: "WebUI を開く"

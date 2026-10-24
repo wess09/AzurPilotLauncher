@@ -477,7 +477,8 @@ export function App() {
 }
 
 // 任务进行中：按钮内仅显示当前步骤名（progress.title），无百分比与
-// uv/git 具体输出；步骤切换时由 launchText 动画呈现淡入效果。
+// uv/git 具体输出；取消阶段固定显示“正在取消”，避免残留旧步骤标题；
+// 步骤切换时由 launchText 动画呈现淡入效果。
 function LaunchActivity({
   t,
   state,
@@ -485,7 +486,10 @@ function LaunchActivity({
   t: ReturnType<typeof translator>;
   state: Snapshot | null;
 }) {
-  const text = state?.progress?.title ?? (state ? t(state.phase) : "");
+  const text =
+    state?.phase === "cancelling"
+      ? t("cancelling")
+      : state?.progress?.title ?? (state ? t(state.phase) : "");
   if (!text) return null;
   return (
     <span className={styles.launchText} key={text}>
