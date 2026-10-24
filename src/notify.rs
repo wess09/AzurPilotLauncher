@@ -80,7 +80,7 @@ const WINDOWS_NOTIFICATION_ICON: &[u8] = include_bytes!("../icons/icon.png");
 /// 所有字段均可缺失，缺失时展示层逐级回退到本地化默认文案。
 #[derive(Debug, Deserialize)]
 struct NotifyPayload {
-    /// 产生通知的 ALAS 实例名，正文缺失时用于拼出兜底文案。
+    /// 产生通知的 AzurPilot 实例名，正文缺失时用于拼出兜底文案。
     instance: Option<String>,
     /// 通知标题，空白时回退到默认标题。
     title: Option<String>,
@@ -470,12 +470,12 @@ mod tests {
     #[test]
     fn parses_notify_payload() {
         let payload: NotifyPayload = serde_json::from_str(
-            r#"{"instance":"alas","title":"AzurPilot <alas> 警告","content":"<alas> 游戏卡住"}"#,
+            r#"{"instance":"azurpilot","title":"AzurPilot <azurpilot> 警告","content":"<azurpilot> 游戏卡住"}"#,
         )
         .unwrap();
 
-        assert_eq!(payload.instance.as_deref(), Some("alas"));
-        assert_eq!(payload.title.as_deref(), Some("AzurPilot <alas> 警告"));
-        assert_eq!(payload.content.as_deref(), Some("<alas> 游戏卡住"));
+        assert_eq!(payload.instance.as_deref(), Some("azurpilot"));
+        assert_eq!(payload.title.as_deref(), Some("AzurPilot <azurpilot> 警告"));
+        assert_eq!(payload.content.as_deref(), Some("<azurpilot> 游戏卡住"));
     }
 }

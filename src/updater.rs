@@ -1455,24 +1455,24 @@ mod tests {
             assert!(titlebar_script.contains("window_start_dragging"));
             assert!(titlebar_script.contains("-webkit-app-region:no-drag"));
             assert!(titlebar_script.contains(
-                ".alas-titlebar-drag-zone{position:absolute;inset:0 148px 0 0;height:100%;pointer-events:none"
+                ".azurpilot-titlebar-drag-zone{position:absolute;inset:0 148px 0 0;height:100%;pointer-events:none"
             ));
             assert!(titlebar_script.contains("getComputedStyle(element).cursor === 'pointer'"));
             assert!(titlebar_script.contains("min-height:28px"));
             assert!(titlebar_script.contains("background:rgba(250,250,247,.78)"));
             assert!(titlebar_script.contains(".icon-close{color:#e64f58}"));
-            assert!(titlebar_script.contains("--alas-titlebar-height:56px"));
+            assert!(titlebar_script.contains("--azurpilot-titlebar-height:56px"));
             assert!(titlebar_script.contains("transform:translateY(-6px) scale(.96)"));
             assert!(!titlebar_script.contains("scale(.72)"));
-            assert!(titlebar_script.contains("alas-close-menu"));
-            assert!(!titlebar_script.contains("alas-close-optics"));
-            assert!(!titlebar_script.contains("alas-island-open"));
-            assert!(titlebar_script.contains("__ALAS_OPEN_CLOSE_PROMPT"));
+            assert!(titlebar_script.contains("azurpilot-close-menu"));
+            assert!(!titlebar_script.contains("azurpilot-close-optics"));
+            assert!(!titlebar_script.contains("azurpilot-island-open"));
+            assert!(titlebar_script.contains("__AZURPILOT_OPEN_CLOSE_PROMPT"));
             assert!(titlebar_script.contains("window_exit_application"));
             assert!(!titlebar_script.contains("addEventListener('scroll'"));
             assert!(!titlebar_script.contains("MutationObserver"));
             assert!(titlebar_script.contains("data-theme*="));
-            assert!(titlebar_script.contains("#alas-launcher-titlebar.is-dark"));
+            assert!(titlebar_script.contains("#azurpilot-launcher-titlebar.is-dark"));
         }
     }
 

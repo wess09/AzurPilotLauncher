@@ -28,6 +28,7 @@ tracing-appender = "0.2"
 command-group = "5.0.1"
 base64 = "0.22.1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "=2.0.0"
 sysinfo = { version = "0.36.1", default-features = false, features = ["system"] }

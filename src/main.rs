@@ -26,6 +26,8 @@ mod nodejs;
 mod notify;
 /// 统一的启动进度状态、快照与推送节奏。
 mod progress;
+/// 启动器行为设置：SQLite 存储、Tauri 命令与开机自启副作用。
+mod settings;
 mod task_process;
 mod updater;
 mod windows;
@@ -624,14 +626,12 @@ async fn prompt_log_archive_path(
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<Option<String>, String> {
     let archive_name = format!("AzurPilot-log-{}.zip", Local::now().format("%Y-%m-%d"));
-    let mut builder = app_handle
-        .dialog()
-        .file()
-        .add_filter("ZIP", &["zip"])
-        .set_file_name(&archive_name);
+    let mut builder = app_handle.dialog().file();
+    builder = builder.add_filter("ZIP", &["zip"]);
+    builder = builder.set_file_name(&archive_name);
     // 默认定位到系统"下载"文件夹；获取失败时交给系统记忆的位置。
     if let Some(downloads) = dirs::download_dir() {
-        builder.set_directory(downloads);
+        builder = builder.set_directory(downloads);
     }
     let (sender, receiver) = std::sync::mpsc::channel();
     builder.save_file(move |path| {

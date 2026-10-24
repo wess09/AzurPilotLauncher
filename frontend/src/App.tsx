@@ -15,6 +15,7 @@ import {
   Info16Regular,
   Open16Filled,
   Play16Filled,
+  Settings16Regular,
   Stop16Regular,
   SubtractRegular,
   Wrench16Filled,
@@ -25,6 +26,7 @@ import { translator } from "./i18n";
 import { acceptSnapshot, busy, type Context, type Snapshot } from "./types";
 import { Confirm } from "./Confirm";
 import { ErrorDialog } from "./ErrorDialog";
+import { SettingsDialog } from "./SettingsDialog";
 import background from "../../bg/bg.mp4";
 import styles from "./launcher.module.css";
 
@@ -49,6 +51,7 @@ export function App() {
   const [bridgeError, setBridgeError] = useState("");
   const [armCancel, setArmCancel] = useState(false);
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
   const t = useMemo(() => translator(context.locale), [context.locale]);
   const connection = location.hash.startsWith("#/connection-error");
@@ -261,6 +264,14 @@ export function App() {
           </div>
           {context.platform !== "macos" && (
             <div className={styles.windowControls}>
+              <Button
+                appearance="transparent"
+                className={styles.captionButton}
+                aria-label={t("settings")}
+                title={t("settings")}
+                icon={<Settings16Regular fontSize={16} />}
+                onClick={() => setSettingsOpen(true)}
+              />
               <Button
                 appearance="transparent"
                 className={styles.captionButton}
@@ -527,6 +538,16 @@ export function App() {
             }
           }}
           onClose={() => setErrorDialogOpen(false)}
+        />
+      )}
+      {settingsOpen && (
+        <SettingsDialog
+          title={t("settings")}
+          launchOnStartupLabel={t("settings_launch_on_startup")}
+          autoStartServiceLabel={t("settings_auto_start_service")}
+          keepWebviewOnTrayLabel={t("settings_keep_webview_tray")}
+          closeLabel={t("close")}
+          onClose={() => setSettingsOpen(false)}
         />
       )}
     </div>

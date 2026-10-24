@@ -842,6 +842,7 @@ pub(crate) fn run() -> Result<()> {
     let preview_crash = preview_crash_arg_present();
     let minimized = start_minimized_arg_present();
     let auto_start = minimized || std::env::var_os("AZURPILOT_RESUME_START").is_some();
+    let settings_store = Arc::new(crate::settings::Store::new());
     std::env::remove_var("AZURPILOT_RESUME_START");
     info!("Starting React launcher {}", env!("CARGO_PKG_VERSION"));
     tauri::Builder::default()
@@ -857,7 +858,8 @@ pub(crate) fn run() -> Result<()> {
             launcher_check_update, launcher_install_update, launcher_open_webui, launcher_show_home,
             launcher_cancel_and_exit, launcher_cancel, launcher_back,
             crate::save_as, crate::download_today_gui_log, crate::download_today_launcher_log, crate::retry_backend_connection,
-            crate::download_log_archive,
+            crate::download_log_archive, crate::prompt_log_archive_path,
+            crate::settings::settings_get, crate::settings::settings_set,
             crate::window_hide, crate::window_minimize, crate::window_toggle_maximize, crate::window_close, crate::window_exit_application,
             crate::window_start_dragging, crate::window_is_maximized
         ])
@@ -866,6 +868,8 @@ pub(crate) fn run() -> Result<()> {
                 backend: Mutex::new(None), session: Mutex::new(None), allow_exit: allow_for_setup.clone(),
                 recreate: Arc::new(AtomicBool::new(false)), port, skip_update: preview_crash || preview_no_update_arg_present(), minimized });
             app.manage(controller.clone());
+            app.manage(settings_store.clone());
+            let auto_start = auto_start || settings_store.auto_start_service();
             #[cfg(target_os = "macos")]
             app.get_webview_window("launcher").unwrap().set_decorations(true)?;
             match time_bomb_expiration_message() {

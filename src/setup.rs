@@ -132,7 +132,7 @@ const BUILTIN_PYPI_INDEXES: &[&str] = &[
     "https://repo.huaweicloud.com/repository/pypi/simple/",
     "https://mirrors.cernet.edu.cn/pypi/web/simple/",
 ];
-/// 编译期内嵌的 uv 引导二进制：由 build.rs 依据 `ALAS_BOOTSTRAP_UV` 写入；
+/// 编译期内嵌的 uv 引导二进制：由 build.rs 依据 `AZURPILOT_BOOTSTRAP_UV` 写入；
 /// 空文件表示本地开发构建未内嵌，运行时回退到 `UV` 环境变量或 PATH 中的 uv。
 const BOOTSTRAP_UV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bootstrap_uv.bin"));
 
@@ -188,7 +188,7 @@ fn platform_git_config_path() -> &'static str {
 ///
 /// # Panics
 /// 两种布局都未命中时 panic——启动器必须与仓库同发行，无法继续运行。
-pub fn alas_repo_dir() -> PathBuf {
+pub fn azurpilot_repo_dir() -> PathBuf {
     #[cfg(debug_assertions)]
     if let Some(root) = std::env::var_os("AZURPILOT_REPO_DIR") {
         let root = PathBuf::from(root)
@@ -243,7 +243,7 @@ fn prepend_path_to_env(key: &str, path: PathBuf) {
 
 /// 仓库内虚拟环境目录：`.venv`（所有平台一致）。
 fn venv_dir() -> PathBuf {
-    alas_repo_dir().join(".venv")
+    azurpilot_repo_dir().join(".venv")
 }
 
 /// `.venv` 的可执行文件目录：Windows 为 `Scripts`，Unix 为 `bin`。
@@ -360,7 +360,7 @@ fn find_on_path(executable: &str) -> Option<PathBuf> {
 /// # Errors
 /// 仓库目录不存在或切换工作目录失败时返回 Err。
 pub fn setup_environment() -> Result<()> {
-    let dir = alas_repo_dir();
+    let dir = azurpilot_repo_dir();
     info!("AzurPilot dir is {:?}", &dir);
     set_current_dir(&dir)?;
     prepend_path_to_env("PATH", venv_bin_dir());
@@ -411,7 +411,7 @@ fn setup_git_ca_bundle() {
 /// # Errors
 /// 任一阶段失败（下载、更新、同步、配置迁移）或用户取消时返回 Err，
 /// 由 main.rs 决定展示错误页面。
-pub fn setup_alas_repo(
+pub fn setup_azurpilot_repo(
     mut status_updater: impl FnMut(SplashUpdate),
     cancel_requested: Arc<AtomicBool>,
     skip_repository_update: bool,
@@ -572,7 +572,7 @@ fn remove_runtime_entry_with_retry(path: &Path) -> Result<()> {
 /// # Errors
 /// 用户取消、路径校验不通过或删除失败时返回 Err。
 fn remove_venv_for_repair(cancel_requested: &AtomicBool) -> Result<()> {
-    let repo_dir = alas_repo_dir().canonicalize()?;
+    let repo_dir = azurpilot_repo_dir().canonicalize()?;
     let venv = venv_dir();
     let venv_metadata = match fs::symlink_metadata(&venv) {
         Ok(metadata) => metadata,
@@ -1121,7 +1121,7 @@ fn dependency_wait_update(
 
 /// 经内嵌 Python 脚本调用 `deploy.git.GitManager` 拉取最新仓库代码。
 ///
-/// 不直接调用 git，而是复用上游 ALAS 的 Python 更新逻辑，保证更新
+/// 不直接调用 git，而是复用上游 AzurPilot 的 Python 更新逻辑，保证更新
 /// 行为（远程配置、冲突处理）与官方安装器一致；脚本会给 `execute`
 /// 打补丁，为 fetch 命令强制加上 `--progress` 以便解析进度条。
 /// 失败时由 [`run_command_with_retry`] 自动重试（最多 20 次）。

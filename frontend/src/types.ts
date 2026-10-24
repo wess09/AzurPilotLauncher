@@ -45,6 +45,11 @@ export interface Context {
   version: string;
   platform: string;
 }
+export interface LauncherSettings {
+  launchOnStartup: boolean;
+  autoStartService: boolean;
+  keepWebviewOnTray: boolean;
+}
 export const busy = (s: Snapshot) =>
   [
     "checking",

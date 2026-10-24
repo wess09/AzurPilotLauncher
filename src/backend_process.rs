@@ -1,6 +1,6 @@
 //! Windows 后端使用允许显式脱离的 Job，避免退出时连带关闭模拟器。
 //!
-//! 普通 Python worker 继续继承 Job；只有 ALAS 的模拟器启动命令请求
+//! 普通 Python worker 继续继承 Job；只有 AzurPilot 的模拟器启动命令请求
 //! CREATE_BREAKAWAY_FROM_JOB。不能使用 SILENT_BREAKAWAY，否则 worker 也会泄漏。
 
 use std::{
@@ -35,10 +35,7 @@ use winapi::um::{
     },
 };
 
-use crate::window_util::HAS_CONSOLE;
-
-/// ALAS 只在启动器明确提供此能力时请求脱离，兼容旧启动器和直接运行 Python。
-const BREAKAWAY_ENV: &str = "ALAS_LAUNCHER_JOB_BREAKAWAY";
+use crate::{backend_env::BREAKAWAY_ENVS, window_util::HAS_CONSOLE};
 
 pub(crate) struct BackendChild {
     child: Child,
@@ -80,7 +77,10 @@ impl BackendChild {
             } else {
                 CREATE_NO_WINDOW
             };
-        command.creation_flags(flags).env(BREAKAWAY_ENV, "1");
+        command.creation_flags(flags);
+        for key in BREAKAWAY_ENVS {
+            command.env(key, "1");
+        }
         let mut child = command.spawn()?;
         let setup = (|| {
             if unsafe { AssignProcessToJobObject(raw_job, child.as_raw_handle() as _) } == 0 {
@@ -202,8 +202,8 @@ mod tests {
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
             .args(["--exact", FIXTURE, "--nocapture"])
-            .env("ALAS_BACKEND_TEST_ROLE", role)
-            .env("ALAS_BACKEND_TEST_DIR", dir)
+            .env("AZURPILOT_BACKEND_TEST_ROLE", role)
+            .env("AZURPILOT_BACKEND_TEST_DIR", dir)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
@@ -212,21 +212,38 @@ mod tests {
 
     #[test]
     fn backend_lifetime_fixture() {
-        let Ok(role) = std::env::var("ALAS_BACKEND_TEST_ROLE") else {
+        let Ok(role) = std::env::var("AZURPILOT_BACKEND_TEST_ROLE") else {
             return;
         };
-        let dir = std::path::PathBuf::from(std::env::var_os("ALAS_BACKEND_TEST_DIR").unwrap());
+        let dir = std::path::PathBuf::from(std::env::var_os("AZURPILOT_BACKEND_TEST_DIR").unwrap());
         if role == "backend" {
-            assert_eq!(std::env::var(BREAKAWAY_ENV).unwrap(), "1");
+            for key in BREAKAWAY_ENVS {
+                assert_eq!(std::env::var(key).unwrap(), "1");
+            }
             let _worker = fixture_command("worker", &dir)
                 .creation_flags(CREATE_NO_WINDOW)
                 .spawn()
                 .unwrap();
             let _emulator = fixture_command("emulator", &dir)
+                // 模拟现有后端只清除 ALAS 归属标记的脱离路径。
+                .env_remove("ALAS_LAUNCHER_PID")
                 .creation_flags(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB)
                 .spawn()
                 .unwrap();
         }
+        let launcher_pid = std::env::var("AP_LAUNCHER_PID").unwrap().parse().unwrap();
+        let environment: Vec<_> = std::env::vars_os()
+            .map(|(key, value)| {
+                let mut entry = key;
+                entry.push("=");
+                entry.push(value);
+                entry
+            })
+            .collect();
+        assert_eq!(
+            crate::backend_env::is_managed_child(&environment, launcher_pid),
+            role != "emulator"
+        );
         fs::write(dir.join(&role), std::process::id().to_string()).unwrap();
         sleep(Duration::from_secs(30));
     }
@@ -273,7 +290,9 @@ mod tests {
 
     fn check_cleanup(mode: &str) {
         let dir = tempfile::tempdir().unwrap();
-        let mut child = BackendChild::spawn(&mut fixture_command("backend", dir.path())).unwrap();
+        let mut command = fixture_command("backend", dir.path());
+        crate::backend_env::configure(&mut command, std::process::id(), "test-secret");
+        let mut child = BackendChild::spawn(&mut command).unwrap();
         let root = TestProcess::open(dir.path(), "backend");
         let worker = TestProcess::open(dir.path(), "worker");
         let emulator = TestProcess::open(dir.path(), "emulator");

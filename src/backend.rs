@@ -1,6 +1,6 @@
 //! 后端进程托管模块：负责 gui.py（AzurPilot WebUI）子进程的完整生命周期。
 //! 启动前先清理占用目标端口的残留进程，再以进程组方式拉起 Python 解释器，
-//! 并注入 `ALAS_LAUNCHER_PID` 环境变量标记子进程归属，便于退出时兜底回收。
+//! 并注入 `AP_LAUNCHER_PID` / `ALAS_LAUNCHER_PID` 双标记，便于退出时兜底回收。
 //! main.rs 在启动流程中调用 [`ManagedBackend::new_cancellable`] 拉起后端，退出时依赖
 //! [`ManagedBackend`] 的 [`Drop`] 实现杀掉遗留子进程，防止进程泄漏。
 
@@ -23,9 +23,9 @@ use tracing::{info, warn};
 
 #[cfg(windows)]
 use crate::backend_process::BackendChild;
-use crate::setup::{alas_repo_dir, isolate_python_child_environment, venv_python};
+use crate::setup::{azurpilot_repo_dir, isolate_python_child_environment, venv_python};
 use crate::window_util::CreateNoWindow as _;
-use crate::{launcher_trust_secret, TRUST_SECRET_ENV};
+use crate::{backend_env, launcher_trust_secret};
 
 /// 等待后端端口就绪的总超时时长，超时后判定启动失败并交由上层恢复。
 ///
@@ -70,7 +70,7 @@ pub(crate) fn is_backend_startup_timeout(error: &anyhow::Error) -> bool {
     error.downcast_ref::<BackendStartupTimeout>().is_some()
 }
 
-/// 一次 WebUI 启动的完整参数，来源为 ALAS 的 deploy 配置或保守默认值。
+/// 一次 WebUI 启动的完整参数，来源为 AzurPilot 的 deploy 配置或保守默认值。
 ///
 /// 各字段与 gui.py 的命令行开关一一对应，由 [`WebuiLaunchConfig::args`]
 /// 负责翻译成实际的参数列表。
@@ -78,7 +78,7 @@ pub(crate) fn is_backend_startup_timeout(error: &anyhow::Error) -> bool {
 pub struct WebuiLaunchConfig {
     /// WebUI 监听地址，默认 `127.0.0.1`，仅允许本机访问。
     pub host: String,
-    /// WebUI 监听端口，默认 22267，与 ALAS 上游约定一致。
+    /// WebUI 监听端口，默认 22267，与 AzurPilot 上游约定一致。
     pub port: u16,
     /// WebUI 访问密码；缺失时后端以无密码模式运行。
     pub password: Option<String>,
@@ -88,13 +88,13 @@ pub struct WebuiLaunchConfig {
     pub ssl_key: Option<String>,
     /// HTTPS 证书路径。
     pub ssl_cert: Option<String>,
-    /// 启动后立即执行的 ALAS 任务名列表，经 `--run` 透传给 gui.py。
+    /// 启动后立即执行的 AzurPilot 任务名列表，经 `--run` 透传给 gui.py。
     pub run: Vec<String>,
 }
 
 /// `WebuiLaunchConfig` 的构造与命令行翻译逻辑。
 impl WebuiLaunchConfig {
-    /// 从 ALAS 的 deploy 配置中提取 WebUI 参数。
+    /// 从 AzurPilot 的 deploy 配置中提取 WebUI 参数。
     ///
     /// `config` 为 `None` 或缺少 `Deploy.Webui` 节点时，各字段独立回退到
     /// 默认值，因此即使配置部分损坏也能以保守默认值启动后端。
@@ -231,9 +231,9 @@ fn value_as_string_list(value: &JsonValue) -> Vec<String> {
 /// 托管中的 gui.py 子进程句柄。
 ///
 /// 持有后端进程组，使终止操作能连同 gui.py 派生的孙进程
-/// （例如 uvicorn worker）一并结束；子进程的归属另通过 `ALAS_LAUNCHER_PID`
+/// （例如 uvicorn worker）一并结束；子进程的归属另通过 AP / ALAS 双 PID 标记
 /// 环境变量在进程表层面标记，供 `Drop` 兜底回收使用。Windows 模拟器由
-/// ALAS 显式脱离 Job，并清除上述归属标记，从而独立于后端存活。
+/// AzurPilot 显式脱离 Job，并清除上述归属标记，从而独立于后端存活。
 pub struct ManagedBackend {
     /// 进程组子进程句柄；`None` 表示已被 [`ManagedBackend::terminate`]
     /// 取走或从未成功拉起，此时 `Drop` 不再重复强杀。
@@ -244,8 +244,8 @@ pub struct ManagedBackend {
 impl ManagedBackend {
     /// 按配置启动 gui.py 并阻塞等待其 WebUI 端口就绪。
     ///
-    /// 流程依次为：写入 `ALAS_LAUNCHER_PID` 归属标记、清理占用目标端口的
-    /// 残留进程、以进程组拉起子进程、轮询 TCP 连接直至就绪或超时。超时路径
+    /// 流程依次为：清理占用目标端口的残留进程、向后端命令注入双名称环境变量、
+    /// 以进程组拉起子进程、轮询 TCP 连接直至就绪或超时。超时路径
     /// 会先主动终止刚拉起的子进程再返回错误，避免遗留半死进程。
     ///
     /// # Errors
@@ -263,17 +263,13 @@ impl ManagedBackend {
         cancel: &std::sync::atomic::AtomicBool,
     ) -> Result<Self> {
         crate::launcher::ensure_not_cancelled(cancel)?;
-        // 先写归属标记再启动：此后任何时刻，本启动器拉起的 gui.py 都能通过
-        // 环境变量追溯到当前启动器实例，供 Drop 的全进程表扫描兜底回收。
-        std::env::set_var("ALAS_LAUNCHER_PID", format!("{}", std::process::id()));
         kill_processes_using_port(config.port)?;
 
         // 使用仓库 venv 内的 Python 解释器，避免依赖系统全局 Python 环境。
         let mut command = Command::new(venv_python());
         command.args(config.args());
-        // 注入启动器信任密钥，WebUI 据此为启动器窗口开启免密；子进程缺省继承，
-        // isolate_python_child_environment 不清理该键。
-        command.env(TRUST_SECRET_ENV, launcher_trust_secret());
+        // 同时注入 AP / ALAS 的归属标记与信任密钥，兼容新旧 Python 后端。
+        backend_env::configure(&mut command, std::process::id(), launcher_trust_secret());
         isolate_python_child_environment(&mut command);
         // 以进程组方式拉起：terminate/drop 时可整组回收，防止孙进程残留。
         #[cfg(unix)]
@@ -356,7 +352,7 @@ impl ManagedBackend {
 
 /// 清理占用指定 TCP 端口的所有进程，并等待端口真正释放。
 ///
-/// ALAS 非正常退出时常遗留占用 WebUI 端口的 Python 进程，不清掉会导致
+/// AzurPilot 非正常退出时常遗留占用 WebUI 端口的 Python 进程，不清掉会导致
 /// 新后端绑定端口失败。扫描失败视为可容忍路径（仅告警后放行），因为端口
 /// 本就可能无人占用；同时跳过 PID 0 与启动器自身，避免误杀。
 ///
@@ -522,7 +518,7 @@ fn local_address_uses_port(address: &str, port: u16) -> bool {
 /// `Drop` 在正常返回、错误传播与 panic 展开等所有路径上都会执行，因此即使
 /// 启动中途失败（例如端口等待超时、调用方提前丢弃句柄），已拉起的子进程
 /// 也会在此被终止。除直接 `kill` 进程组外，还会扫描全系统进程表，按
-/// `ALAS_LAUNCHER_PID` 环境变量找出"归属当前启动器、但句柄已随失败路径
+/// AP / ALAS 双 PID 标记找出"归属当前启动器、但句柄已随失败路径
 /// 丢失"的子进程一并回收，这是防止进程泄漏的最后防线。
 impl Drop for ManagedBackend {
     fn drop(&mut self) {
@@ -534,19 +530,13 @@ impl Drop for ManagedBackend {
                 Err(e) => warn!("Failed to kill gui.py process: {:?}", e),
             }
         }
-        // 扫描潜在泄漏的进程：启动失败等路径可能拿不到子进程句柄，此时只能
-        // 依据 ALAS_LAUNCHER_PID 环境变量在进程表层面反查归属并补杀。
+        // 双归属标记均匹配时才补杀；任一标记被后端清除都视为显式脱离。
         let sys = sysinfo::System::new_all();
         for (pid, process) in sys.processes() {
-            for var in process.environ() {
-                // 启动器自身的进程环境里同样带有该变量（set_var 设置的就是
-                // 本进程，子进程只是继承），必须排除自身 PID，否则会误杀自己。
-                if pid.as_u32() != std::process::id()
-                    && var.to_str().unwrap_or_default()
-                        == format!("ALAS_LAUNCHER_PID={}", std::process::id())
-                {
-                    process.kill();
-                }
+            if pid.as_u32() != std::process::id()
+                && backend_env::is_managed_child(process.environ(), std::process::id())
+            {
+                process.kill();
             }
         }
     }
@@ -555,10 +545,17 @@ impl Drop for ManagedBackend {
 /// 将子进程异常退出表述为可读原因：优先取 gui.py 写在日志里的失败原因，
 /// 取不到时退回端口与退出码。
 fn backend_exit_error(config: &WebuiLaunchConfig, status: &ExitStatus) -> anyhow::Error {
+    // 非零退出码即 Python 侧的分类错误码（deploy ErrorCodes / gui EXIT_*），
+    // 以 AZURPILOT_ERROR 前缀携带，由 launcher::split_error_code 提取。
+    let code_prefix = status
+        .code()
+        .filter(|code| *code != 0)
+        .map(|code| format!("AZURPILOT_ERROR:{code}: "))
+        .unwrap_or_default();
     match read_backend_failure_reason() {
-        Some(reason) => anyhow!("{reason}（端口 {}，{status}）", config.port),
+        Some(reason) => anyhow!("{code_prefix}{reason}（端口 {}，{status}）", config.port),
         None => anyhow!(
-            "后端在端口 {} 就绪前退出：{status}（未能从日志读取失败原因）",
+            "{code_prefix}后端在端口 {} 就绪前退出：{status}（未能从日志读取失败原因）",
             config.port
         ),
     }
@@ -568,7 +565,7 @@ fn backend_exit_error(config: &WebuiLaunchConfig, status: &ExitStatus) -> anyhow
 pub(crate) fn read_backend_failure_reason() -> Option<String> {
     // 优先读当日日志；跨零点启动（如启动器挂到次日）当日文件尚未建立时，
     // 退回目录中修改时间最新的一份。
-    let log_directory = alas_repo_dir().join("log");
+    let log_directory = azurpilot_repo_dir().join("log");
     let today = log_directory.join(format!("{}_gui.txt", Local::now().format("%Y-%m-%d")));
     let log_path = if today.is_file() {
         today
