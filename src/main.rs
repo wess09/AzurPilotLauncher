@@ -624,15 +624,20 @@ async fn prompt_log_archive_path(
     app_handle: tauri::AppHandle,
 ) -> std::result::Result<Option<String>, String> {
     let archive_name = format!("AzurPilot-log-{}.zip", Local::now().format("%Y-%m-%d"));
-    let (sender, receiver) = std::sync::mpsc::channel();
-    app_handle
+    let mut builder = app_handle
         .dialog()
         .file()
         .add_filter("ZIP", &["zip"])
         .set_file_name(&archive_name)
-        .save_file(move |path| {
-            let _ = sender.send(path.map(|p| p.to_string()));
-        });
+        .to_owned();
+    // 默认定位到系统"下载"文件夹；获取失败时交给系统记忆的位置。
+    if let Some(downloads) = dirs::download_dir() {
+        builder.set_directory(downloads);
+    }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    builder.save_file(move |path| {
+        let _ = sender.send(path.map(|p| p.to_string()));
+    });
     tauri::async_runtime::spawn_blocking(move || receiver.recv())
         .await
         .map_err(|e| e.to_string())?
@@ -698,10 +703,41 @@ async fn download_log_archive(
             );
         }
         zip.finish().map_err(|e| e.to_string())?;
+        if let Err(e) = reveal_in_file_manager(std::path::Path::new(&target)) {
+            warn!("Failed to reveal log archive: {:?}", e);
+        }
         Ok(files.len())
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 在系统文件管理器中定位指定文件（Windows 资源管理器选中、macOS 访达
+/// 显示、Linux 打开所在目录）。失败仅由调用方记录，不影响保存结果。
+fn reveal_in_file_manager(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        // explorer /select 需要反斜杠路径；"/select," 与路径作为一个参数传入。
+        Command::new("explorer")
+            .arg(format!("/select,{}", path.to_string_lossy().replace('/', "\\")))
+            .spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        Command::new("open")
+            .args(["-R", &path.to_string_lossy()])
+            .spawn()?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        use std::process::Command;
+        if let Some(parent) = path.parent() {
+            Command::new("xdg-open").arg(parent).spawn()?;
+        }
+    }
+    Ok(())
 }
 
 /// 生成今天的启动器日志文件名（{日期}_launcher.txt，日期取本地时区）。
