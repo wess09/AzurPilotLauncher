@@ -294,7 +294,6 @@ export function App() {
               disabled={
                 launching ? undefined : pending || !canAct || !!bridgeError
               }
-              aria-disabled={launching || undefined}
               icon={
                 launching ? (
                   <Spinner size="small" />
