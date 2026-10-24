@@ -296,7 +296,11 @@ export function App() {
               }
               icon={
                 launching ? (
-                  <Spinner size="small" />
+                  armCancel ? (
+                    <DismissRegular />
+                  ) : (
+                    <Spinner size="small" />
+                  )
                 ) : MainIcon ? (
                   <MainIcon />
                 ) : undefined
