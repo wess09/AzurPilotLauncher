@@ -3,7 +3,7 @@
 //! 数据库位于系统数据目录（`dirs::data_dir()/AzurPilot/launcher.db`），
 //! 打开或建表失败时自动降级为内存数据库，保证启动器始终可用。
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -47,7 +47,7 @@ impl Store {
     /// # Errors
     /// 数据目录创建或 SQLite 打开/建表失败时返回错误。
     fn open() -> Result<Self> {
-        let connection = rusqlite::Connection::open(database_path())?;
+        let connection = rusqlite::Connection::open(database_path()?)?;
         connection.execute(
             "CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -94,7 +94,7 @@ impl Store {
             connection.execute(
                 "INSERT INTO settings (key, value) VALUES (?1, ?2)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                [key, i64::from(value)],
+                rusqlite::params![key, i64::from(value)],
             )?;
         }
         Ok(())
@@ -103,6 +103,11 @@ impl Store {
     /// 托盘化时是否保留 WebView。
     pub fn keep_webview_on_tray(&self) -> bool {
         self.get().keep_webview_on_tray
+    }
+
+    /// 启动器启动时是否直接启动服务。
+    pub fn auto_start_service(&self) -> bool {
+        self.get().auto_start_service
     }
 }
 
