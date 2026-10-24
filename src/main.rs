@@ -607,11 +607,16 @@ fn today_gui_log_filename() -> String {
     format!("{}_gui.txt", Local::now().format("%Y-%m-%d"))
 }
 
-/// Tauri 命令：把整个 log 目录递归打包为 zip 并弹出另存为对话框。
-/// 先写入系统临时目录，用户确认保存后拷贝到目标路径并清理临时文件。
-/// 返回归档包含的文件数；目录缺失或打包失败时返回错误字符串。
+/// Tauri 命令：把整个 log 目录顶层文件打包为 zip 并弹出另存为对话框。
+///
+/// 异步 + `spawn_blocking`：日志可达数百 MB，同步压缩会阻塞主线程
+/// 消息泵导致窗口"未响应"。先在后台线程写入系统临时目录，用户确认
+/// 保存后拷贝到目标路径并清理临时文件。返回归档包含的文件数。
+///
+/// # Errors
+/// 日志目录缺失或打包失败时返回本地化错误字符串。
 #[tauri::command]
-fn download_log_archive(app_handle: tauri::AppHandle) -> std::result::Result<usize, String> {
+async fn download_log_archive(app_handle: tauri::AppHandle) -> std::result::Result<usize, String> {
     let log_dir = std::env::current_dir()
         .map_err(|e| e.to_string())?
         .join("log");
@@ -624,8 +629,13 @@ fn download_log_archive(app_handle: tauri::AppHandle) -> std::result::Result<usi
     }
     let archive_name = format!("AzurPilot-log-{}.zip", Local::now().format("%Y-%m-%d_%H%M%S"));
     let temp_zip = std::env::temp_dir().join(&archive_name);
-    let count = pack_log_directory(&log_dir, &temp_zip)
-        .map_err(|e| t!("errors.pack_log_failed", error = e.to_string()).to_string())?;
+    let pack_dir = log_dir.clone();
+    let count = tauri::async_runtime::spawn_blocking(move || {
+        pack_log_directory(&pack_dir, &temp_zip)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| t!("errors.pack_log_failed", error = e.to_string()).to_string())?;
     let temp_for_dialog = temp_zip.clone();
     app_handle
         .dialog()
