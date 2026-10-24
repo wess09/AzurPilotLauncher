@@ -259,6 +259,8 @@ launcher:
   need_log_help: "サポートが必要な場合は、この画面のスクリーンショットではなく、エラーログをダウンロードして送信してください。"
   not_supported: "このプラットフォームでは利用できません"
   settings: "設定"
+  settings_language: "表示言語"
+  lang_auto: "システムに従う"
   settings_launch_on_startup: "PC起動時に自動起動"
   settings_auto_start_service: "ランチャー起動時にサービスを自動開始"
   settings_keep_webview_tray: "トレイ格納時にメモリを解放しない（WebView を閉じない）"

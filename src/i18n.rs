@@ -18,6 +18,18 @@ pub fn init() {
     tracing::info!("i18n locale set to: {}", locale);
 }
 
+/// 应用设置里的语言覆盖（None 表示跟随系统检测）。
+///
+/// 供设置模块在用户切换界面语言、以及启动时恢复已保存语言时调用，
+/// 保证 Rust 侧消息与前端界面语言一致。
+pub fn apply_override(language: Option<&str>) {
+    let locale = language
+        .map(normalize_locale)
+        .unwrap_or_else(detect_locale);
+    rust_i18n::set_locale(&locale);
+    tracing::info!("i18n locale overridden to: {}", locale);
+}
+
 /// 检查启动参数中是否有 --lang / --locale 覆盖。
 ///
 /// 同时支持 `--lang <值>`（空格分隔）与 `--lang=<值>`（等号连接）

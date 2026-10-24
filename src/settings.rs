@@ -19,6 +19,8 @@ pub struct Settings {
     pub auto_start_service: bool,
     /// 托盘化时保留 WebView（不销毁主窗口）。
     pub keep_webview_on_tray: bool,
+    /// UI 语言偏好；None 表示跟随系统。
+    pub language: Option<String>,
 }
 
 /// SQLite 设置存储：内部互斥锁保护连接。
@@ -74,22 +76,36 @@ impl Store {
     }
 
     /// 读取全部设置；缺失的键按默认值（关闭）返回。
+    ///
+    /// value 列早期为 INTEGER（布尔），现也存语言码字符串；按 SQLite
+    /// 动态类型分别解析，保证旧库平滑兼容。
     pub fn get(&self) -> Settings {
         let connection = self.connection.lock().unwrap();
-        let read = |key: &str| -> bool {
+        let raw = |key: &str| -> Option<rusqlite::types::Value> {
             connection
                 .query_row(
                     "SELECT value FROM settings WHERE key = ?1",
                     [key],
-                    |row| row.get::<_, i64>(0),
+                    |row| row.get::<_, rusqlite::types::Value>(0),
                 )
-                .map(|value| value != 0)
-                .unwrap_or(false)
+                .ok()
         };
+        let as_bool = |value: Option<rusqlite::types::Value>| -> bool {
+            match value {
+                Some(rusqlite::types::Value::Integer(i)) => i != 0,
+                Some(rusqlite::types::Value::Text(t)) => t == "1",
+                _ => false,
+            }
+        };
+        let language = raw("language").and_then(|value| match value {
+            rusqlite::types::Value::Text(t) if !t.is_empty() => Some(t),
+            _ => None,
+        });
         Settings {
-            launch_on_startup: read("launchOnStartup"),
-            auto_start_service: read("autoStartService"),
-            keep_webview_on_tray: read("keepWebviewOnTray"),
+            launch_on_startup: as_bool(raw("launchOnStartup")),
+            auto_start_service: as_bool(raw("autoStartService")),
+            keep_webview_on_tray: as_bool(raw("keepWebviewOnTray")),
+            language,
         }
     }
 
@@ -99,16 +115,35 @@ impl Store {
     /// SQLite 写入失败时返回错误。
     pub fn set(&self, settings: &Settings) -> Result<()> {
         let connection = self.connection.lock().unwrap();
-        for (key, value) in [
-            ("launchOnStartup", settings.launch_on_startup),
-            ("autoStartService", settings.auto_start_service),
-            ("keepWebviewOnTray", settings.keep_webview_on_tray),
-        ] {
-            connection.execute(
-                "INSERT INTO settings (key, value) VALUES (?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                rusqlite::params![key, i64::from(value)],
-            )?;
+        let mut upsert = |key: &str, value: &str| -> Result<()> {
+            connection
+                .execute(
+                    "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    rusqlite::params![key, value],
+                )
+                .map_err(anyhow::Error::from)?;
+            Ok(())
+        };
+        upsert(
+            "launchOnStartup",
+            if settings.launch_on_startup { "1" } else { "0" },
+        )?;
+        upsert(
+            "autoStartService",
+            if settings.auto_start_service { "1" } else { "0" },
+        )?;
+        upsert(
+            "keepWebviewOnTray",
+            if settings.keep_webview_on_tray { "1" } else { "0" },
+        )?;
+        match settings.language.as_deref() {
+            Some(language) => upsert("language", language)?,
+            None => {
+                connection
+                    .execute("DELETE FROM settings WHERE key = 'language'", [])
+                    .map_err(anyhow::Error::from)?;
+            }
         }
         Ok(())
     }
@@ -182,6 +217,8 @@ pub(crate) fn settings_set(
 ) -> Result<Settings, String> {
     let previous = store.get();
     store.set(&settings).map_err(|e| e.to_string())?;
+    // 语言覆盖同步到 Rust 侧，保证启动器自身消息与前端界面一致。
+    crate::i18n::apply_override(settings.language.as_deref());
     if previous.launch_on_startup != settings.launch_on_startup {
         crate::autostart::set_enabled(settings.launch_on_startup)
             .map_err(|e| e.to_string())?;

@@ -373,6 +373,9 @@ body {
 .errorDialog {
   max-width: min(640px, calc(100vw - 32px));
 }
+.errorDialog button {
+  white-space: nowrap;
+}
 .dialogHint {
   margin: 12px 0 0;
   font-size: 12px;

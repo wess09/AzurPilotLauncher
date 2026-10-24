@@ -30,6 +30,8 @@ const keys = [
   "need_log_help",
   "not_supported",
   "settings",
+  "settings_language",
+  "lang_auto",
   "settings_launch_on_startup",
   "settings_auto_start_service",
   "settings_keep_webview_tray",

@@ -843,6 +843,8 @@ pub(crate) fn run() -> Result<()> {
     let minimized = start_minimized_arg_present();
     let auto_start = minimized || std::env::var_os("AZURPILOT_RESUME_START").is_some();
     let settings_store = Arc::new(crate::settings::Store::new());
+    // 启动时恢复已保存的语言覆盖，Rust 侧消息与前端一致。
+    crate::i18n::apply_override(settings_store.get().language.as_deref());
     std::env::remove_var("AZURPILOT_RESUME_START");
     info!("Starting React launcher {}", env!("CARGO_PKG_VERSION"));
     tauri::Builder::default()

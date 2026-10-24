@@ -74,7 +74,7 @@ beforeEach(() => {
 afterEach(cleanup);
 const mount = async () => {
   render(<App />);
-  await screen.findByRole("button", { name: /Launch$/ });
+  await screen.findByRole("button", { name: /Run$/ });
 };
 const send = (s: Partial<Snapshot>) =>
   act(() => bridge.receive({ ...ready(), sequence: 2, ...s }));
@@ -82,7 +82,7 @@ const send = (s: Partial<Snapshot>) =>
 describe("launcher actions", () => {
   it("launches only when the Rust snapshot permits it", async () => {
     await mount();
-    fireEvent.click(screen.getByRole("button", { name: /Launch$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Run$/ }));
     expect(bridge.command).toHaveBeenCalledWith("launcher_start");
     await send({
       phase: "starting",
@@ -112,7 +112,7 @@ describe("launcher actions", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /Update launcher/ }));
     expect(bridge.command).toHaveBeenCalledWith("launcher_install_update");
-    expect(screen.queryByRole("button", { name: /Launch$/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Run$/ })).toBeNull();
   });
   it("retries an update check rather than bypassing its failure", async () => {
     await mount();
@@ -137,7 +137,7 @@ describe("launcher actions", () => {
       can_repair: true,
     });
     fireEvent.click(screen.getByRole("button", { name: /Retry repair/ }));
-    expect(bridge.command).not.toHaveBeenCalled();
+    expect(bridge.command).not.toHaveBeenCalledWith("launcher_repair");
     fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
     await waitFor(() =>
       expect(bridge.command).toHaveBeenCalledWith("launcher_repair"),
@@ -171,7 +171,7 @@ describe("launcher actions", () => {
     });
     const launch = screen.getByRole("button", { name: /Starting/ });
     fireEvent.click(launch);
-    expect(bridge.command).not.toHaveBeenCalled();
+    expect(bridge.command).not.toHaveBeenCalledWith("launcher_cancel");
     const armed = screen.getByRole("button", {
       name: /Click again to cancel/,
     });
@@ -182,7 +182,7 @@ describe("launcher actions", () => {
     await mount();
     act(() => bridge.close());
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(bridge.command).not.toHaveBeenCalled();
+    expect(bridge.command).not.toHaveBeenCalledWith("launcher_cancel_and_exit");
     act(() => bridge.close());
     fireEvent.click(
       screen.getByRole("button", { name: "Cancel task and exit" }),

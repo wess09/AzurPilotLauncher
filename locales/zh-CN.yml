@@ -259,6 +259,8 @@ launcher:
   need_log_help: "如需帮助，请下载错误日志并发送给对方，而不是截图或拍摄这个界面。"
   not_supported: "当前平台不支持"
   settings: "设置"
+  settings_language: "界面语言"
+  lang_auto: "跟随系统"
   settings_launch_on_startup: "开机自启"
   settings_auto_start_service: "启动启动器时直接启动"
   settings_keep_webview_tray: "托盘化时不释放内存（不关闭 WebView）"
