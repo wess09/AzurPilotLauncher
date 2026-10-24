@@ -187,15 +187,11 @@ export function App() {
     !state?.backend_running;
   // 任务进行中同样收起面板：右下角大按钮以转圈与轮播文字表达进度。
   const launching = active && !connection && !error;
-  // 两段式取消：第一次点击进入待确认态，3 秒内再按一次才真正取消。
+  // 两段式取消：第一次点击进入待确认态并保持，再次点击才取消；
+  // 任务结束（launching 变 false）时自动复位。
   useEffect(() => {
     if (!launching) setArmCancel(false);
   }, [launching]);
-  useEffect(() => {
-    if (!armCancel) return;
-    const timer = setTimeout(() => setArmCancel(false), 3000);
-    return () => clearTimeout(timer);
-  }, [armCancel]);
   const handleLaunchClick = () => {
     if (armCancel) {
       setArmCancel(false);
