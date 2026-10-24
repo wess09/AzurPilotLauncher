@@ -49,6 +49,7 @@ export interface LauncherSettings {
   launchOnStartup: boolean;
   autoStartService: boolean;
   keepWebviewOnTray: boolean;
+  language: string | null;
 }
 export const busy = (s: Snapshot) =>
   [

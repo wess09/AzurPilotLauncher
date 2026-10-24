@@ -1,15 +1,15 @@
 //! Tauri 构建脚本：在编译期固化 Windows 清单与关键构建资源。
 //!
 //! 内嵌 Windows manifest（requireAdministrator 提权、Common-Controls 依赖）；
-//! 处理 ALAS_BOOTSTRAP_UV（内嵌 uv 二进制，未设置时写空占位符、运行时回退
-//! PATH 中的 uv）、ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64（mTLS 自更新证书
+//! 处理 AZURPILOT_BOOTSTRAP_UV（内嵌 uv 二进制，未设置时写空占位符、运行时回退
+//! PATH 中的 uv）、AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64（mTLS 自更新证书
 //! base64，未设置回退"证书.txt"）与 LAUNCHER_UPDATE_URL（自更新源覆盖）。
 use std::{env, fs, path::PathBuf};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 
 /// 内嵌 launcher 自更新 mTLS 客户端证书（PEM 的 base64 编码）的环境变量名。
-const MTLS_IDENTITY_ENV: &str = "ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64";
+const MTLS_IDENTITY_ENV: &str = "AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64";
 /// 强制要求提供 mTLS 证书的环境变量名；设置后证书缺失即构建失败。
 const REQUIRE_MTLS_ENV: &str = "REQUIRE_LAUNCHER_MTLS_IDENTITY";
 /// 编译期覆盖自更新源地址的环境变量名。
@@ -79,15 +79,15 @@ fn main() {
     let out_dir = PathBuf::from(out_dir);
 
     let bootstrap_uv_target = out_dir.join("bootstrap_uv.bin");
-    if let Ok(source) = env::var("ALAS_BOOTSTRAP_UV") {
-        fs::copy(&source, &bootstrap_uv_target).expect("copy ALAS_BOOTSTRAP_UV");
-        println!("cargo:rerun-if-env-changed=ALAS_BOOTSTRAP_UV");
+    if let Ok(source) = env::var("AZURPILOT_BOOTSTRAP_UV") {
+        fs::copy(&source, &bootstrap_uv_target).expect("copy AZURPILOT_BOOTSTRAP_UV");
+        println!("cargo:rerun-if-env-changed=AZURPILOT_BOOTSTRAP_UV");
         println!("cargo:rerun-if-changed={source}");
     } else {
         // 本地构建通常没有现成的 uv 二进制：写入空占位符，运行时检测到
         // 空文件后回退到 PATH 中的 uv，保证开发流程不被阻断。
         fs::write(&bootstrap_uv_target, []).expect("write empty bootstrap uv placeholder");
-        println!("cargo:warning=ALAS_BOOTSTRAP_UV is not set; launcher will use PATH uv for local builds");
+        println!("cargo:warning=AZURPILOT_BOOTSTRAP_UV is not set; launcher will use PATH uv for local builds");
     }
 
     let mtls_identity_target = out_dir.join("launcher_mtls_identity.pem");
@@ -98,7 +98,7 @@ fn main() {
             BASE64_STANDARD
                 .decode(encoded.trim().as_bytes())
                 // 解码失败说明环境变量内容损坏，立即失败而非静默降级。
-                .expect("decode ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64"),
+                .expect("decode AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64"),
         ),
         _ => {
             // 未设置环境变量时回退到仓库根目录的"证书.txt"，仅供开发使用。
@@ -107,7 +107,7 @@ fn main() {
             let local_cert_path = manifest_dir.join("证书.txt");
             if local_cert_path.exists() {
                 println!(
-                    "cargo:warning=ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 is not set; using local {}",
+                    "cargo:warning=AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64 is not set; using local {}",
                     local_cert_path.display()
                 );
                 println!("cargo:rerun-if-changed={}", local_cert_path.display());
@@ -116,10 +116,10 @@ fn main() {
                 // 发布构建通过 REQUIRE_LAUNCHER_MTLS_IDENTITY 强制提供证书；
                 // 缺失必须失败，绝不允许无证书的构建混入发布渠道。
                 if env::var_os(REQUIRE_MTLS_ENV).is_some() {
-                    panic!("ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 is required but not set");
+                    panic!("AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64 is required but not set");
                 }
                 println!(
-                    "cargo:warning=ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 is not set; launcher update client will build without mTLS identity"
+                    "cargo:warning=AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64 is not set; launcher update client will build without mTLS identity"
                 );
                 None
             }

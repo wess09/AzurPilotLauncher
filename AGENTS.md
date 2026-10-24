@@ -23,8 +23,8 @@ cargo check            # 仅检查编译
 
 ### 构建脚本环境变量（build.rs）
 
-- `ALAS_BOOTSTRAP_UV`：指向要内嵌的 uv 二进制。未设置时用空占位符（本地开发正常，运行时回退到 PATH 中的 uv）。
-- `ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64`：launcher 自更新的 mTLS 客户端证书（base64 PEM）。未设置时回退读取仓库根目录的 `证书.txt`（不入库）。
+- `AZURPILOT_BOOTSTRAP_UV`：指向要内嵌的 uv 二进制。未设置时用空占位符（本地开发正常，运行时回退到 PATH 中的 uv）。
+- `AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64`：launcher 自更新的 mTLS 客户端证书（base64 PEM）。未设置时回退读取仓库根目录的 `证书.txt`（不入库）。
 - `LAUNCHER_UPDATE_URL`：覆盖自更新源，默认 `https://launcher-api.azurpilot.com/updata/stable.json`。
 
 注意：Windows 构建的 manifest 是 `requireAdministrator`（build.rs 内嵌），本地运行会弹 UAC。
@@ -38,6 +38,7 @@ cargo check            # 仅检查编译
 - `src/main.rs`：模块入口、日志、信任登录、时间炸弹及通用窗口/文件命令。
 - `src/setup.rs`：工具安装、Git 更新、uv 同步、配置迁移与用户主动环境修复。
 - `src/backend.rs` / `backend_process.rs`：后端进程组与 Windows Job，退出不连带关闭独立模拟器。
+- `src/backend_env.rs`：同时注入 `AP_` / `ALAS_` 后端环境协议，双归属标记均匹配时才兜底清理子进程。
 - `src/task_process.rs` / `cancel.rs`：安装任务进程组与可取消 HTTP，不在取消时删除环境。
 - `src/notify.rs` / `launcher_control.rs`：每次后端会话独立的通知流、控制流与停止标志。
 - `src/nodejs.rs`、`autostart.rs`、`i18n.rs`、`window_util.rs`：Node.js 安装、自启、多语言和子进程窗口控制。

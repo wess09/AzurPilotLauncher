@@ -34,12 +34,12 @@
     },
     {
       "title": "后端进程与连接管理 / Backend Process and Connection Management",
-      "purpose": "依据 src/backend.rs 和 src/main.rs，解释 gui.py 子进程、环境变量隔离、端口检测、就绪超时、连接重试、.venv 修复、退出与重启、Drop 清理及 ALAS_LAUNCHER_PID 防泄漏；从代码确认具体时间与条件。Explain gui.py subprocess management, environment isolation, ports, readiness timeouts, retries, .venv repair, shutdown, restart, Drop cleanup and ALAS_LAUNCHER_PID leak prevention; verify timings and conditions in source.",
+      "purpose": "依据 src/backend.rs 和 src/main.rs，解释 gui.py 子进程、环境变量隔离、端口检测、就绪超时、连接重试、.venv 修复、退出与重启、Drop 清理及 AP_LAUNCHER_PID / ALAS_LAUNCHER_PID 双标记防泄漏；从代码确认具体时间与条件。Explain gui.py subprocess management, environment isolation, ports, readiness timeouts, retries, .venv repair, shutdown, restart, Drop cleanup and AP_LAUNCHER_PID / ALAS_LAUNCHER_PID dual-marker leak prevention; verify timings and conditions in source.",
       "parent": "架构与启动流程 / Architecture and Startup Flow"
     },
     {
       "title": "启动页与原生窗口 / Splash and Native Windows",
-      "purpose": "依据 src/main.rs、src/window_util.rs、tauri.conf.json，解释 alas-splash 与 alas-error 协议、内嵌 HTML、SplashUpdate 回调、主进度与 UV 进度、loading.webp 头部、视频与字体嵌入、标题栏、拖动、退出确认、主题与平台差异。Explain URI schemes, embedded HTML, SplashUpdate callbacks, main and UV progress, the loading.webp marker, embedded video and fonts, title bars, dragging, exit confirmation, themes and platform differences.",
+      "purpose": "依据 src/main.rs、src/window_util.rs、tauri.conf.json，解释 React 启动页与错误路由、launcher://state 事件、SplashUpdate 回调、主进度与 UV 进度、loading.webp 头部、视频与字体嵌入、标题栏、拖动、退出确认、主题与平台差异。Explain React launcher and error routes, launcher://state events, SplashUpdate callbacks, main and UV progress, the loading.webp marker, embedded video and fonts, title bars, dragging, exit confirmation, themes and platform differences.",
       "parent": "架构与启动流程 / Architecture and Startup Flow"
     },
     {

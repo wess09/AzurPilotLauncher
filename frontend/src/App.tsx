@@ -23,7 +23,7 @@ import {
 } from "@fluentui/react-icons";
 import { command, getContext, native, subscribe } from "./bridge";
 import { translator } from "./i18n";
-import { acceptSnapshot, busy, type Context, type Snapshot } from "./types";
+import { acceptSnapshot, busy, type Context, type LauncherSettings, type Snapshot } from "./types";
 import { Confirm } from "./Confirm";
 import { ErrorDialog } from "./ErrorDialog";
 import { SettingsDialog } from "./SettingsDialog";
@@ -53,7 +53,11 @@ export function App() {
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
-  const t = useMemo(() => translator(context.locale), [context.locale]);
+  const [localeOverride, setLocaleOverride] = useState<string | null>(null);
+  const t = useMemo(
+    () => translator(localeOverride ?? context.locale),
+    [localeOverride, context.locale],
+  );
   const connection = location.hash.startsWith("#/connection-error");
   useEffect(() => {
     let disposed = false;
@@ -66,6 +70,14 @@ export function App() {
         }
       })
       .catch((e) => setBridgeError(String(e)));
+    // 语言偏好（设置里选定的 UI 语言）覆盖系统语言。
+    command<LauncherSettings>("settings_get")
+      .then((s) => {
+        if (!disposed && s?.language) setLocaleOverride(s.language);
+      })
+      .catch(() => {
+        /* 设置读取失败时沿用系统语言 */
+      });
     subscribe(
       (s) => {
         if (!disposed) {
@@ -543,11 +555,17 @@ export function App() {
         <SettingsDialog
           title={t("settings")}
           platform={context.platform}
+          languageLabel={t("settings_language")}
+          autoLanguageLabel={t("lang_auto")}
           launchOnStartupLabel={t("settings_launch_on_startup")}
           autoStartServiceLabel={t("settings_auto_start_service")}
           keepWebviewOnTrayLabel={t("settings_keep_webview_tray")}
           closeLabel={t("close")}
           unsupportedLabel={t("not_supported")}
+          onLanguageChange={(locale) => {
+            setLocaleOverride(locale);
+            document.documentElement.lang = locale ?? context.locale;
+          }}
           onClose={() => setSettingsOpen(false)}
         />
       )}

@@ -158,11 +158,11 @@ This project works closely with the following core projects in its ecosystem:
         </a>
       </div>
       <br>
-      <b>Upstream Automation Script (ALAS)</b>
+      <b>Upstream Automation Script (AzurLaneAutoScript)</b>
       <p>The upstream AzurLaneAutoScript project — the foundation of Azur Lane automation, from which this ecosystem's capabilities evolved.</p>
       <hr>
       <div>
-        <img src="https://img.shields.io/badge/Core-ALAS%20Framework-0052cc?style=flat-square" alt="ALAS">
+        <img src="https://img.shields.io/badge/Core-AzurLaneAutoScript%20Framework-0052cc?style=flat-square" alt="AzurLaneAutoScript">
         <img src="https://img.shields.io/badge/Vision-OpenCV%20%7C%20OCR-5C3EE8?style=flat-square" alt="Vision">
         <img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square" alt="GPL-3.0">
       </div>

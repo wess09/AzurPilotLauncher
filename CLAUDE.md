@@ -22,7 +22,7 @@ cargo build --locked --release --features custom-protocol
 
 Node.js 24 是开发构建依赖；发布后首页无需 Node.js 或 Vite。直接运行 debug Cargo 产物需先执行 `npm --prefix frontend run dev`；生产 Cargo 构建必须先构建前端。`build.rs` 不自动安装 npm 依赖。
 
-构建脚本（`build.rs`）需要 `ALAS_BOOTSTRAP_UV` 环境变量指向要内嵌的 `uv` 二进制文件。本地开发不设置时使用空占位符，启动器会在运行时从 PATH 中查找 `uv` 或通过环境变量 `UV` 指定。
+构建脚本（`build.rs`）需要 `AZURPILOT_BOOTSTRAP_UV` 环境变量指向要内嵌的 `uv` 二进制文件。本地开发不设置时使用空占位符，启动器会在运行时从 PATH 中查找 `uv` 或通过环境变量 `UV` 指定。
 
 ## 启动参数
 
@@ -130,10 +130,10 @@ Windows 和 Linux 移除原生窗口装饰（`set_decorations(false)`），通�
 
 ### 子进程泄漏清理
 
-`ManagedBackend` 的 `Drop` 实现会扫描所有进程的环境变量，查找包含 `ALAS_LAUNCHER_PID={当前PID}` 的子进程并 kill，防止 `gui.py` 子进程泄漏。
+`ManagedBackend` 的 `Drop` 实现会扫描所有进程的环境变量，查找同时包含 `AP_LAUNCHER_PID={当前PID}` 和 `ALAS_LAUNCHER_PID={当前PID}` 的子进程并 kill，防止 `gui.py` 子进程泄漏；任一归属标记被后端清除后即跳过，避免误杀独立模拟器。
 
 Windows 后端由 `src/backend_process.rs` 创建允许显式脱离的 Job；普通 worker 仍随 Job 回收，
-ALAS 启动模拟器时根据 `ALAS_LAUNCHER_JOB_BREAKAWAY=1` 请求脱离，并清除清理标记和信任密钥。
+AzurPilot 启动模拟器时根据 `AP_LAUNCHER_JOB_BREAKAWAY=1` 或兼容别名 `ALAS_LAUNCHER_JOB_BREAKAWAY=1` 请求脱离，并清除清理标记和信任密钥。归属、脱离能力与免密信任密钥均同时设置 `AP_` / `ALAS_` 两套名称，集中定义在 `src/backend_env.rs`。
 两边需配套更新，协议、失败处理与隔离验证见 [后端进程生命周期](docs/backend-lifecycle.md)。
 
 ### 平台相关代码

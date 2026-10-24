@@ -3,7 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>AzurPilot</title>
+    <style>
+      /* 主题 CSS 加载前的首帧底色，避免白闪 */
+      html {
+        background: #1f1f1f;
+      }
+      @media (prefers-color-scheme: light) {
+        html {
+          background: #f3f3f3;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

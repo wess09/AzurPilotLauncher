@@ -161,15 +161,15 @@ jobs:
           linux: |
             mkdir -p bootstrap
             cp "$(command -v uv)" bootstrap/uv
-            echo "ALAS_BOOTSTRAP_UV=$PWD/bootstrap/uv" >> "$GITHUB_ENV"
+            echo "AZURPILOT_BOOTSTRAP_UV=$PWD/bootstrap/uv" >> "$GITHUB_ENV"
           macos: |
             mkdir -p bootstrap
             cp "$(command -v uv)" bootstrap/uv
-            echo "ALAS_BOOTSTRAP_UV=$PWD/bootstrap/uv" >> "$GITHUB_ENV"
+            echo "AZURPILOT_BOOTSTRAP_UV=$PWD/bootstrap/uv" >> "$GITHUB_ENV"
           windows: |
             mkdir -ea 0 bootstrap
             cp (Get-Command uv).Source bootstrap\uv.exe
-            "ALAS_BOOTSTRAP_UV=$PWD\bootstrap\uv.exe" >> $env:GITHUB_ENV
+            "AZURPILOT_BOOTSTRAP_UV=$PWD\bootstrap\uv.exe" >> $env:GITHUB_ENV
       - name: Rustup for cache
         run: rustup toolchain install stable --profile minimal
       - name: Setup Rust cache
@@ -180,7 +180,8 @@ jobs:
           cache-bin: false
       - name: Build
         env:
-          ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64: ${{ secrets.ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 }}
+          # Prefer the new Secret name while keeping existing release credentials usable.
+          AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64: ${{ secrets.AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64 || secrets.ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 }}
           REQUIRE_LAUNCHER_MTLS_IDENTITY: "1"
           LAUNCHER_UPDATE_URL: https://launcher-api.azurpilot.com/updata/stable.json
         run: cargo build --locked --release --features custom-protocol

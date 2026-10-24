@@ -158,11 +158,11 @@
         </a>
       </div>
       <br>
-      <b>上游自动化脚本 (ALAS)</b>
+      <b>上游自动化脚本 (AzurLaneAutoScript)</b>
       <p>AzurLaneAutoScript 上游项目，碧蓝航线自动化的奠基之作，本生态链的全部自动化能力由此演化而来。</p>
       <hr>
       <div>
-        <img src="https://img.shields.io/badge/Core-ALAS%20Framework-0052cc?style=flat-square" alt="ALAS">
+        <img src="https://img.shields.io/badge/Core-AzurLaneAutoScript%20Framework-0052cc?style=flat-square" alt="AzurLaneAutoScript">
         <img src="https://img.shields.io/badge/Vision-OpenCV%20%7C%20OCR-5C3EE8?style=flat-square" alt="Vision">
         <img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square" alt="GPL-3.0">
       </div>
