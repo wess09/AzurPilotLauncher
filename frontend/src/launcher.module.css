@@ -124,6 +124,12 @@ body {
 .wordmark span {
   color: var(--accent);
 }
+.brandVersion {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
 .windowControls {
   display: flex;
   height: 100%;

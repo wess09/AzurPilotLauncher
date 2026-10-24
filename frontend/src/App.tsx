@@ -261,6 +261,7 @@ export function App() {
             <span className={styles.wordmark}>
               Azur<span>Pilot</span>
             </span>
+            <span className={styles.brandVersion}>{context.version}</span>
           </div>
           <div className={styles.windowControls}>
             <Button
