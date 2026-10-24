@@ -42,12 +42,16 @@ impl Store {
         }
     }
 
-    /// 打开磁盘数据库并建表。
+    /// 打开磁盘数据库并建表；父目录不存在时自动创建。
     ///
     /// # Errors
     /// 数据目录创建或 SQLite 打开/建表失败时返回错误。
     fn open() -> Result<Self> {
-        let connection = rusqlite::Connection::open(database_path()?)?;
+        let path = database_path()?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let connection = rusqlite::Connection::open(path)?;
         connection.execute(
             "CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
