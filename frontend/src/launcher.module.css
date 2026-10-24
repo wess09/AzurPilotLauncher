@@ -361,9 +361,6 @@ body {
   padding: 8px 0 0;
   user-select: text;
 }
-.notice {
-  margin-top: 12px;
-}
 .dialog {
   max-width: min(480px, calc(100vw - 32px));
 }

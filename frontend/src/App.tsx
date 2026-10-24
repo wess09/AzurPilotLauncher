@@ -3,7 +3,7 @@
 // tokens (Mica backdrop, hero ramp, spacing) stay in launcher.module.css.
 // One primary action per state, all state logic identical to before.
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
-import { Button, MessageBar, Spinner } from "@fluentui/react-components";
+import { Button, Spinner } from "@fluentui/react-components";
 import {
   ArrowClockwise16Filled,
   ArrowClockwise16Regular,
@@ -46,8 +46,6 @@ export function App() {
   const [state, setState] = useState<Snapshot | null>(null);
   const [dialog, setDialog] = useState<"repair" | "close" | null>(null);
   const [pending, setPending] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [noticeFailed, setNoticeFailed] = useState(false);
   const [bridgeError, setBridgeError] = useState("");
   const [armCancel, setArmCancel] = useState(false);
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
@@ -123,17 +121,11 @@ export function App() {
   const act = async (name: string) => {
     if (pending) return;
     setPending(true);
-    setNotice("");
     try {
-      const result = await command<string | boolean>(name);
-      if (name.includes("download_today_") && result) {
-        setNotice(t("log_saved"));
-        setNoticeFailed(false);
-      }
+      await command<string | boolean>(name);
       setDialog(null);
-    } catch (error) {
-      setNotice(`${t("action_failed")} ${String(error)}`);
-      setNoticeFailed(true);
+    } catch {
+      setDialog(null);
     } finally {
       setPending(false);
     }
@@ -185,7 +177,6 @@ export function App() {
     !active &&
     !error &&
     !bridgeError &&
-    !notice &&
     !state?.update_version &&
     !state?.backend_running;
   // 任务进行中同样收起面板：右下角大按钮以转圈与轮播文字表达进度。
@@ -401,15 +392,6 @@ export function App() {
             {shownError && state?.message && (
               <p className={styles.taskDetail}>{state.message}</p>
             )}
-            {notice && (
-              <MessageBar
-                className={styles.notice}
-                intent={noticeFailed ? "error" : "success"}
-                role="status"
-              >
-                {notice}
-              </MessageBar>
-            )}
           </section>
           <div className={styles.actions}>
               <div className={styles.secondaryActions}>
@@ -540,9 +522,7 @@ export function App() {
               if (!target) return false;
               await command("download_log_archive", { target });
               return true;
-            } catch (e) {
-              setNotice(`${t("action_failed")} ${String(e)}`);
-              setNoticeFailed(true);
+            } catch {
               return false;
             }
           }}
