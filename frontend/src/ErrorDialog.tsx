@@ -19,6 +19,7 @@ import styles from "./launcher.module.css";
 export function ErrorDialog({
   title,
   log,
+  hint,
   downloadLabel,
   packingLabel,
   closeLabel,
@@ -27,6 +28,7 @@ export function ErrorDialog({
 }: {
   title: string;
   log: string;
+  hint: string;
   downloadLabel: string;
   packingLabel: string;
   closeLabel: string;
@@ -73,6 +75,7 @@ export function ErrorDialog({
           <DialogTitle id="error-dialog-title">{title}</DialogTitle>
           <DialogContent>
             <pre className={styles.errorLog}>{log}</pre>
+            <p className={styles.dialogHint}>{hint}</p>
             {packing && (
               <div className={styles.packProgress}>
                 <ProgressBar value={percent / 100} thickness="large" />

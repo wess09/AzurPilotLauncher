@@ -530,6 +530,7 @@ export function App() {
         <ErrorDialog
           title={errorTitle}
           log={shownError}
+          hint={t("need_log_help")}
           downloadLabel={t("download_error_log")}
           packingLabel={t("packing_log")}
           closeLabel={t("close")}

@@ -256,6 +256,7 @@ launcher:
   error: "操作に失敗しました"
   launch_failed: "起動に失敗しました"
   packing_log: "ログを圧縮中"
+  need_log_help: "サポートが必要な場合は、この画面のスクリーンショットではなく、エラーログをダウンロードして送信してください。"
   download_error_log: "エラーログをダウンロード"
   err_command: "コマンドの実行に失敗しました"
   err_git_fetch: "コード更新に失敗しました"

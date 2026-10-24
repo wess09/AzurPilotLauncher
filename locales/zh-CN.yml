@@ -256,6 +256,7 @@ launcher:
   error: "操作未完成"
   launch_failed: "启动失败"
   packing_log: "正在打包日志"
+  need_log_help: "如需帮助，请下载错误日志并发送给对方，而不是截图或拍摄这个界面。"
   download_error_log: "下载错误日志"
   err_command: "命令执行失败"
   err_git_fetch: "代码更新失败"

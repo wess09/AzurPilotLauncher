@@ -27,6 +27,7 @@ const keys = [
   "update_failed",
   "check_failed",
   "download_error_log",
+  "need_log_help",
   "packing_log",
   "start",
   "open_webui",
