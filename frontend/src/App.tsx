@@ -9,7 +9,6 @@ import {
   ArrowClockwise16Regular,
   ArrowDownload16Regular,
   ArrowLeft16Regular,
-  ChevronDown16Regular,
   DismissRegular,
   ErrorCircle16Regular,
   FullScreenMaximizeRegular,
@@ -25,6 +24,7 @@ import { command, getContext, native, subscribe } from "./bridge";
 import { translator } from "./i18n";
 import { acceptSnapshot, busy, type Context, type Snapshot } from "./types";
 import { Confirm } from "./Confirm";
+import { ErrorDialog } from "./ErrorDialog";
 import background from "../../bg/bg.mp4";
 import styles from "./launcher.module.css";
 
@@ -50,6 +50,7 @@ export function App() {
   const [noticeFailed, setNoticeFailed] = useState(false);
   const [bridgeError, setBridgeError] = useState("");
   const [armCancel, setArmCancel] = useState(false);
+  const [errorDialogOpen, setErrorDialogOpen] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
   const t = useMemo(() => translator(context.locale), [context.locale]);
   const connection = location.hash.startsWith("#/connection-error");
@@ -140,6 +141,7 @@ export function App() {
   const phase = state?.phase ?? "checking";
   const active = !!state && busy(state);
   const error = connection ? state?.connection_error : state?.error;
+  const shownError = error || bridgeError;
   const mainAction = connection
     ? "retry_backend_connection"
     : state?.can_update
@@ -193,6 +195,22 @@ export function App() {
   useEffect(() => {
     if (!launching) setArmCancel(false);
   }, [launching]);
+  // 出现新错误时自动弹出错误报告（PCL 风格）；关闭后可经“查看错误详情”重开。
+  useEffect(() => {
+    if (shownError) setErrorDialogOpen(true);
+  }, [shownError]);
+  // 弹窗标题按失败的操作类型区分，无操作上下文时回退到通用文案。
+  const errorTitle = connection
+    ? t("connection_title")
+    : !state || !state.operation
+      ? t("error")
+      : state.operation === "repair"
+        ? t("repair_failed")
+        : state.operation === "update"
+          ? t("update_failed")
+          : state.operation === "check"
+            ? t("check_failed")
+            : t("launch_failed");
   const handleLaunchClick = () => {
     if (armCancel) {
       setArmCancel(false);
@@ -376,15 +394,15 @@ export function App() {
                   t(state?.backend_running ? "repair_disabled" : "start_hint")}
               </p>
             )}
-            {(error || bridgeError) && (
-              <details className={styles.errorDetails} open>
-                <summary className={styles.errorSummary}>
-                  <ErrorCircle16Regular aria-hidden="true" />
-                  <span>{t("details")}</span>
-                  <ChevronDown16Regular className={styles.chevron} aria-hidden="true" />
-                </summary>
-                <pre className={styles.errorLog}>{error || bridgeError}</pre>
-              </details>
+            {shownError && (
+              <button
+                type="button"
+                className={styles.errorSummary}
+                onClick={() => setErrorDialogOpen(true)}
+              >
+                <ErrorCircle16Regular aria-hidden="true" />
+                <span>{t("details")}</span>
+              </button>
             )}
             {notice && (
               <MessageBar
@@ -497,6 +515,16 @@ export function App() {
                 : "launcher_cancel_and_exit",
             )
           }
+        />
+      )}
+      {shownError && errorDialogOpen && (
+        <ErrorDialog
+          title={errorTitle}
+          log={shownError}
+          copyLabel={t("copy_error")}
+          copiedLabel={t("copied")}
+          closeLabel={t("close")}
+          onClose={() => setErrorDialogOpen(false)}
         />
       )}
     </div>

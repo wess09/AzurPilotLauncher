@@ -35,7 +35,13 @@ export default defineConfig({
     },
   ],
   clearScreen: false,
-  server: { port: 1420, strictPort: true, fs: { allow: [".."] } },
+  server: {
+    port: 1420,
+    strictPort: true,
+    fs: { allow: [".."] },
+    // Windows 下编辑器原子保存会让 chokidar 丢事件，轮询保证模块图失效可靠。
+    watch: { usePolling: true, interval: 300 },
+  },
   build: { target: ["chrome105", "safari15"], assetsInlineLimit: 0 },
   test: { environment: "jsdom", restoreMocks: true },
 });
