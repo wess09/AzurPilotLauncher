@@ -9,6 +9,8 @@
 mod autostart;
 /// gui.py 后端子进程的托管（启动、就绪探测、终止等）。
 mod backend;
+/// 后端环境协议的新旧名称与进程归属判断。
+mod backend_env;
 /// Windows 后端 Job：回收工作进程，同时允许模拟器显式脱离。
 #[cfg(windows)]
 mod backend_process;
@@ -106,14 +108,12 @@ const START_MINIMIZED_ARGS: &[&str] = &["--start-minimized", "/start-minimized"]
 // ---------------------------------------------------------------------------
 // 启动器信任免密登录
 //
-// 启动器为每次会话生成一个随机信任密钥，经环境变量 TRUST_SECRET_ENV 注入到
+// 启动器为每次会话生成一个随机信任密钥，经 backend_env 的双名称环境变量注入到
 // gui.py 子进程。WebUI 启动后会据当前 --key / deploy.yaml Password 登记该
 // 密钥；启动器窗口导航前先向后端换发一次性令牌，再进入 /launcher-login 页面
 // 预置登录态实现免密。信任密钥与会话密钥解耦，其它浏览器仍走原密码门禁。
 // 手动 gui.py 启动时密钥未注入，WebUI 端整体关闭该通道。
 // ---------------------------------------------------------------------------
-/// 注入 gui.py 子进程的免密信任密钥所用的环境变量名。
-pub(crate) const TRUST_SECRET_ENV: &str = "ALAS_WEBUI_TRUST_SECRET";
 /// 信任密钥的原始随机字节数（base64 编码后约 32 字符）。
 const TRUST_SECRET_LENGTH: usize = 24;
 /// 换发免密令牌的请求超时：失败即回退普通登录页，不能拖慢主窗口展示。
@@ -607,6 +607,87 @@ fn today_gui_log_filename() -> String {
     format!("{}_gui.txt", Local::now().format("%Y-%m-%d"))
 }
 
+/// Tauri 命令：把整个 log 目录递归打包为 zip 并弹出另存为对话框。
+/// 先写入系统临时目录，用户确认保存后拷贝到目标路径并清理临时文件。
+/// 返回归档包含的文件数；目录缺失或打包失败时返回错误字符串。
+#[tauri::command]
+fn download_log_archive(app_handle: tauri::AppHandle) -> std::result::Result<usize, String> {
+    let log_dir = std::env::current_dir()
+        .map_err(|e| e.to_string())?
+        .join("log");
+    if !log_dir.is_dir() {
+        return Err(t!(
+            "errors.log_dir_missing",
+            path = log_dir.to_string_lossy().to_string()
+        )
+        .to_string());
+    }
+    let archive_name = format!("AzurPilot-log-{}.zip", Local::now().format("%Y-%m-%d_%H%M%S"));
+    let temp_zip = std::env::temp_dir().join(&archive_name);
+    let count = pack_log_directory(&log_dir, &temp_zip)
+        .map_err(|e| t!("errors.pack_log_failed", error = e.to_string()).to_string())?;
+    let temp_for_dialog = temp_zip.clone();
+    app_handle
+        .dialog()
+        .file()
+        .set_file_name(&archive_name)
+        .save_file(move |path| {
+            let result: Result<()> = (|| {
+                let file_path = path.as_ref().and_then(FilePath::as_path).ok_or_else(|| {
+                    anyhow!(t!(
+                        "errors.invalid_file_path",
+                        path = format!("{:?}", &path)
+                    ))
+                })?;
+                fs::copy(&temp_for_dialog, file_path)?;
+                info!("Saved log archive to {:?}", file_path);
+                Ok(())
+            })();
+            if let Err(e) = result {
+                error!("Failed to save log archive: {:?}", e);
+            }
+            let _ = fs::remove_file(&temp_for_dialog);
+        });
+    Ok(count)
+}
+
+/// 递归打包 log 目录下全部文件为 zip（保留相对路径），返回文件数。
+///
+/// # Errors
+/// 目录遍历、文件读取或 zip 写入失败时返回 io 错误。
+fn pack_log_directory(
+    log_dir: &std::path::Path,
+    target: &std::path::Path,
+) -> std::io::Result<usize> {
+    let file = fs::File::create(target)?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    let mut count = 0usize;
+    let mut stack = vec![(log_dir.to_path_buf(), String::new())];
+    while let Some((dir, prefix)) = stack.pop() {
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let name = if prefix.is_empty() {
+                entry.file_name().to_string_lossy().to_string()
+            } else {
+                format!("{prefix}/{}", entry.file_name().to_string_lossy())
+            };
+            if path.is_dir() {
+                stack.push((path, name));
+            } else {
+                zip.start_file(name.clone(), options.clone())?;
+                let mut source = fs::File::open(&path)?;
+                std::io::copy(&mut source, &mut zip)?;
+                count += 1;
+            }
+        }
+    }
+    zip.finish()?;
+    Ok(count)
+}
+
 /// 生成今天的启动器日志文件名（{日期}_launcher.txt，日期取本地时区）。
 fn today_launcher_log_filename() -> String {
     format!("{}_launcher.txt", Local::now().format("%Y-%m-%d"))
@@ -727,8 +808,8 @@ fn page_load_injector(webview: WebviewWindow, payload: PageLoadPayload<'_>) {
             redacted_url_log(payload.url())
         );
         let injected_js = r#"
-if (!window.alas_launcher_injected) {
-    window.alas_launcher_injected = true;
+if (!window.azurpilot_launcher_injected) {
+    window.azurpilot_launcher_injected = true;
     (function () {
         // Prevent going back
         history.pushState(null, document.title, location.href);
@@ -750,12 +831,12 @@ if (!window.alas_launcher_injected) {
             };
             reader.readAsDataURL(blob);
         };
-__ALAS_TITLEBAR_SCRIPT__
+__AZURPILOT_TITLEBAR_SCRIPT__
     })();
 }
 "#
         .replace(
-            "__ALAS_TITLEBAR_SCRIPT__",
+            "__AZURPILOT_TITLEBAR_SCRIPT__",
             &main_window_titlebar_injection_script(),
         );
         // 注入失败不影响页面本身功能，仅记录日志。

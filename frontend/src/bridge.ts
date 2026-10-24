@@ -19,6 +19,7 @@ let simulated: Snapshot = {
   backend_running: false,
   progress: null,
   error: null,
+  error_code: null,
   connection_error: null,
   message: null,
   can_start: true,
@@ -80,7 +81,7 @@ export async function command<T = void>(name: string): Promise<T> {
   if (name === "launcher_context")
     return {
       locale: new URLSearchParams(location.search).get("lang") ?? "zh-CN",
-      version: "2.2.5",
+      version: "2.3.0",
       platform: "windows",
     } as T;
   if (name === "launcher_snapshot") return simulated as T;

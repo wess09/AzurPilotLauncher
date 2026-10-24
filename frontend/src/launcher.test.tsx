@@ -27,6 +27,7 @@ const ready = (): Snapshot => ({
   backend_running: false,
   progress: null,
   error: null,
+  error_code: null,
   connection_error: null,
   message: null,
   can_start: true,

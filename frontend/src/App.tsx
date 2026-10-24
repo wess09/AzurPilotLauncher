@@ -199,18 +199,33 @@ export function App() {
   useEffect(() => {
     if (shownError) setErrorDialogOpen(true);
   }, [shownError]);
-  // 弹窗标题按失败的操作类型区分，无操作上下文时回退到通用文案。
+  // 弹窗标题优先按分类错误码（deploy ErrorCodes 10-13 / gui EXIT_* 70-76），
+  // 无码时回退按操作类型，再回退通用文案。
+  const errorCodeTitles: Record<number, Parameters<typeof t>[0]> = {
+    10: "err_command",
+    11: "err_git_fetch",
+    12: "err_git_merge",
+    13: "err_deps",
+    70: "err_startup",
+    71: "err_backend",
+    72: "err_deps",
+    73: "err_frontend",
+    74: "err_backend",
+    75: "err_backend",
+    76: "err_backend",
+  };
   const errorTitle = connection
     ? t("connection_title")
-    : !state || !state.operation
-      ? t("error")
-      : state.operation === "repair"
-        ? t("repair_failed")
-        : state.operation === "update"
-          ? t("update_failed")
-          : state.operation === "check"
-            ? t("check_failed")
-            : t("launch_failed");
+    : (state?.error_code != null && errorCodeTitles[state.error_code]) ||
+      (!state || !state.operation
+        ? t("error")
+        : state.operation === "repair"
+          ? t("repair_failed")
+          : state.operation === "update"
+            ? t("update_failed")
+            : state.operation === "check"
+              ? t("check_failed")
+              : t("launch_failed"));
   const handleLaunchClick = () => {
     if (armCancel) {
       setArmCancel(false);
@@ -521,9 +536,19 @@ export function App() {
         <ErrorDialog
           title={errorTitle}
           log={shownError}
-          copyLabel={t("copy_error")}
-          copiedLabel={t("copied")}
+          downloadLabel={t("download_error_log")}
+          savedLabel={t("log_saved")}
           closeLabel={t("close")}
+          onDownload={async () => {
+            try {
+              await command("download_log_archive");
+              return true;
+            } catch (e) {
+              setNotice(`${t("action_failed")} ${String(e)}`);
+              setNoticeFailed(true);
+              return false;
+            }
+          }}
           onClose={() => setErrorDialogOpen(false)}
         />
       )}

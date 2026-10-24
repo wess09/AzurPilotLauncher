@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Button,
   Dialog,
@@ -8,39 +8,35 @@ import {
   DialogSurface,
   DialogTitle,
 } from "@fluentui/react-components";
-import { Copy16Regular } from "@fluentui/react-icons";
+import { ArrowDownload16Regular } from "@fluentui/react-icons";
 import styles from "./launcher.module.css";
 
-// PCL 风格错误报告弹窗：标题 + 可滚动的原始错误日志 + 复制/关闭。
+// PCL 风格错误报告弹窗：标题 + 可滚动的原始错误日志 + 下载日志归档/关闭。
 // 父组件按状态条件挂载，open 恒为 true；Escape 与 backdrop 均回调 onClose。
 export function ErrorDialog({
   title,
   log,
-  copyLabel,
-  copiedLabel,
+  downloadLabel,
+  savedLabel,
   closeLabel,
+  onDownload,
   onClose,
 }: {
   title: string;
   log: string;
-  copyLabel: string;
-  copiedLabel: string;
+  downloadLabel: string;
+  savedLabel: string;
   closeLabel: string;
+  onDownload: () => Promise<boolean>;
   onClose: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 2000);
-    return () => clearTimeout(timer);
-  }, [copied]);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(log);
-      setCopied(true);
-    } catch {
-      /* 剪贴板不可用时静默失败 */
-    }
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const download = async () => {
+    setSaving(true);
+    const ok = await onDownload();
+    setSaving(false);
+    setSaved(ok);
   };
   return (
     <Dialog
@@ -62,11 +58,11 @@ export function ErrorDialog({
           </DialogContent>
           <DialogActions>
             <Button
-              icon={<Copy16Regular />}
-              onClick={() => void copy()}
-              autoFocus
+              icon={<ArrowDownload16Regular />}
+              onClick={() => void download()}
+              disabled={saving}
             >
-              {copied ? copiedLabel : copyLabel}
+              {saved ? savedLabel : downloadLabel}
             </Button>
             <Button appearance="primary" onClick={onClose}>
               {closeLabel}

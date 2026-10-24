@@ -30,6 +30,7 @@ export interface Snapshot {
   backend_running: boolean;
   progress: Progress | null;
   error: string | null;
+  error_code: number | null;
   connection_error: string | null;
   message: string | null;
   can_start: boolean;

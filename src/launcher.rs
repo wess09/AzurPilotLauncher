@@ -72,6 +72,7 @@ pub(crate) struct Snapshot {
     pub backend_running: bool,
     pub progress: Option<SplashUpdate>,
     pub error: Option<String>,
+    pub error_code: Option<i32>,
     pub connection_error: Option<String>,
     pub message: Option<String>,
     pub can_start: bool,
@@ -106,6 +107,7 @@ impl Model {
                 backend_running: false,
                 progress: None,
                 error: None,
+                error_code: None,
                 connection_error: None,
                 message: None,
                 can_start: false,
@@ -170,6 +172,7 @@ impl Model {
         self.view.operation = Some(operation);
         self.view.progress = None;
         self.view.error = None;
+        self.view.error_code = None;
         self.view.message = None;
         if operation == Operation::Check {
             self.view.update_checked = false;
@@ -209,11 +212,14 @@ impl Model {
                         Phase::Idle
                     };
                     self.view.error = None;
+        self.view.error_code = None;
                     self.view.progress = None;
                 }
                 Err(error) => {
                     self.view.phase = Phase::Error;
-                    self.view.error = Some(format!("{error:#}"));
+                    let (text, code) = split_error_code(&format!("{error:#}"));
+                    self.view.error = Some(text);
+                    self.view.error_code = code;
                 }
             }
         }
@@ -678,6 +684,26 @@ pub(crate) fn ensure_not_cancelled(cancel: &AtomicBool) -> Result<()> {
     Ok(())
 }
 
+/// 从错误文本提取 `AZURPILOT_ERROR:{code}:` 标记：返回（剥掉标记的文本, 错误码）。
+/// Python 侧（AzurPilot deploy/installer.py）以该前缀携带分类退出码。
+pub(crate) fn split_error_code(text: &str) -> (String, Option<i32>) {
+    const MARK: &str = "AZURPILOT_ERROR:";
+    let Some(pos) = text.find(MARK) else {
+        return (text.to_string(), None);
+    };
+    let rest = &text[pos + MARK.len()..];
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    let Ok(code) = digits.parse::<i32>() else {
+        return (text.to_string(), None);
+    };
+    // 剥掉标记本身与其后的消息分隔冒号，保留下一段可读文本。
+    let mut clean = String::new();
+    clean.push_str(&text[..pos]);
+    let after = &rest[digits.len()..];
+    clean.push_str(after.strip_prefix(':').unwrap_or(after));
+    (clean.trim().to_string(), Some(code))
+}
+
 pub(crate) fn is_local_page(app: &tauri::AppHandle, window: &WebviewWindow) -> bool {
     let Ok(url) = window.url() else {
         return false;
@@ -831,6 +857,7 @@ pub(crate) fn run() -> Result<()> {
             launcher_check_update, launcher_install_update, launcher_open_webui, launcher_show_home,
             launcher_cancel_and_exit, launcher_cancel, launcher_back,
             crate::save_as, crate::download_today_gui_log, crate::download_today_launcher_log, crate::retry_backend_connection,
+            crate::download_log_archive,
             crate::window_hide, crate::window_minimize, crate::window_toggle_maximize, crate::window_close, crate::window_exit_application,
             crate::window_start_dragging, crate::window_is_maximized
         ])
@@ -976,6 +1003,23 @@ fn create_tray(_app: &mut tauri::App) -> Result<()> {
 mod tests {
     use super::*;
     use anyhow::anyhow;
+
+    #[test]
+    fn split_error_code_extracts_marker_and_cleans_text() {
+        let (text, code) = split_error_code("AZURPILOT_ERROR:11: git fetch origin master 重试穷尽");
+        assert_eq!(code, Some(11));
+        assert_eq!(text, "git fetch origin master 重试穷尽");
+        let (text, code) = split_error_code("前置说明 AZURPILOT_ERROR:13: uv sync 失败（端口 22267）");
+        assert_eq!(code, Some(13));
+        assert!(text.starts_with("前置说明"));
+        assert!(text.contains("uv sync 失败"));
+        let (text, code) = split_error_code("AZURPILOT_ERROR:bad: 无数字");
+        assert_eq!(code, None);
+        assert!(text.contains("AZURPILOT_ERROR"));
+        let (text, code) = split_error_code("普通错误，无标记");
+        assert_eq!(code, None);
+        assert_eq!(text, "普通错误，无标记");
+    }
 
     #[test]
     fn local_origin_check_supports_custom_schemes_and_rejects_other_origins() {
