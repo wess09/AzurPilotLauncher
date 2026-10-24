@@ -398,15 +398,8 @@ export function App() {
                   t(state?.backend_running ? "repair_disabled" : "start_hint")}
               </p>
             )}
-            {shownError && (
-              <button
-                type="button"
-                className={styles.errorSummary}
-                onClick={() => setErrorDialogOpen(true)}
-              >
-                <ErrorCircle16Regular aria-hidden="true" />
-                <span>{t("details")}</span>
-              </button>
+            {shownError && state?.message && (
+              <p className={styles.taskDetail}>{state.message}</p>
             )}
             {notice && (
               <MessageBar
@@ -484,22 +477,34 @@ export function App() {
                   </Button>
                 )}
               </div>
-              <Button
-                appearance="primary"
-                size="large"
-                className={styles.primary}
-                onClick={handleMain}
-                disabled={pending || !canAct || !!bridgeError}
-                icon={
-                  active ? (
-                    <Spinner size="extra-small" />
-                  ) : MainIcon ? (
-                    <MainIcon />
-                  ) : undefined
-                }
-              >
-                {active ? t(phase) : t(mainLabel)}
-              </Button>
+              <div className={styles.launchStack}>
+                {shownError && (
+                  <button
+                    type="button"
+                    className={styles.errorSummary}
+                    onClick={() => setErrorDialogOpen(true)}
+                  >
+                    <ErrorCircle16Regular aria-hidden="true" />
+                    <span>{t("details")}</span>
+                  </button>
+                )}
+                <Button
+                  appearance="primary"
+                  size="large"
+                  className={styles.primary}
+                  onClick={handleMain}
+                  disabled={pending || !canAct || !!bridgeError}
+                  icon={
+                    active ? (
+                      <Spinner size="extra-small" />
+                    ) : MainIcon ? (
+                      <MainIcon />
+                    ) : undefined
+                  }
+                >
+                  {active ? t(phase) : t(mainLabel)}
+                </Button>
+              </div>
             </div>
           </div>
         )}
