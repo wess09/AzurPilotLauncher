@@ -628,8 +628,7 @@ async fn prompt_log_archive_path(
         .dialog()
         .file()
         .add_filter("ZIP", &["zip"])
-        .set_file_name(&archive_name)
-        .to_owned();
+        .set_file_name(&archive_name);
     // 默认定位到系统"下载"文件夹；获取失败时交给系统记忆的位置。
     if let Some(downloads) = dirs::download_dir() {
         builder.set_directory(downloads);
