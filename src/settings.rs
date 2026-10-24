@@ -52,6 +52,17 @@ impl Store {
             std::fs::create_dir_all(parent)?;
         }
         let connection = rusqlite::Connection::open(path)?;
+        Self::ensure_table(&connection)?;
+        Ok(Self {
+            connection: Mutex::new(connection),
+        })
+    }
+
+    /// 建表（幂等）。
+    ///
+    /// # Errors
+    /// SQLite 建表失败时返回错误。
+    fn ensure_table(connection: &rusqlite::Connection) -> Result<()> {
         connection.execute(
             "CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -59,9 +70,7 @@ impl Store {
             )",
             [],
         )?;
-        Ok(Self {
-            connection: Mutex::new(connection),
-        })
+        Ok(())
     }
 
     /// 读取全部设置；缺失的键按默认值（关闭）返回。
@@ -112,6 +121,39 @@ impl Store {
     /// 启动器启动时是否直接启动服务。
     pub fn auto_start_service(&self) -> bool {
         self.get().auto_start_service
+    }
+
+    /// 测试专用：内存数据库实例，不触碰用户数据目录。
+    #[cfg(test)]
+    pub(crate) fn in_memory() -> Self {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory sqlite");
+        Self::ensure_table(&connection).expect("create settings table");
+        Self {
+            connection: Mutex::new(connection),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_default_to_disabled_and_round_trip() {
+        let store = Store::in_memory();
+        assert!(!store.get().launch_on_startup);
+        assert!(!store.get().auto_start_service);
+        assert!(!store.get().keep_webview_on_tray);
+        let next = Settings {
+            launch_on_startup: true,
+            auto_start_service: false,
+            keep_webview_on_tray: true,
+        };
+        store.set(&next).expect("save settings");
+        let read = store.get();
+        assert!(read.launch_on_startup);
+        assert!(!read.auto_start_service);
+        assert!(read.keep_webview_on_tray);
     }
 }
 

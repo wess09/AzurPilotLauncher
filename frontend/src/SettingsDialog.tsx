@@ -16,17 +16,21 @@ import styles from "./launcher.module.css";
 // 设置弹窗：开关即时生效（settings_set 保存并应用副作用），失败回滚。
 export function SettingsDialog({
   title,
+  platform,
   launchOnStartupLabel,
   autoStartServiceLabel,
   keepWebviewOnTrayLabel,
   closeLabel,
+  unsupportedLabel,
   onClose,
 }: {
   title: string;
+  platform: string;
   launchOnStartupLabel: string;
   autoStartServiceLabel: string;
   keepWebviewOnTrayLabel: string;
   closeLabel: string;
+  unsupportedLabel: string;
   onClose: () => void;
 }) {
   const [settings, setSettings] = useState<LauncherSettings | null>(null);
@@ -78,7 +82,12 @@ export function SettingsDialog({
               <div className={styles.settingsRows}>
                 <Switch
                   checked={settings.launchOnStartup}
-                  label={launchOnStartupLabel}
+                  label={
+                    platform === "windows"
+                      ? launchOnStartupLabel
+                      : `${launchOnStartupLabel}（${unsupportedLabel}）`
+                  }
+                  disabled={platform !== "windows"}
                   onChange={(_e, data) => void update({ launchOnStartup: data.checked })}
                 />
                 <Switch
@@ -88,7 +97,12 @@ export function SettingsDialog({
                 />
                 <Switch
                   checked={settings.keepWebviewOnTray}
-                  label={keepWebviewOnTrayLabel}
+                  label={
+                    platform === "windows"
+                      ? keepWebviewOnTrayLabel
+                      : `${keepWebviewOnTrayLabel}（${unsupportedLabel}）`
+                  }
+                  disabled={platform !== "windows"}
                   onChange={(_e, data) => void update({ keepWebviewOnTray: data.checked })}
                 />
               </div>

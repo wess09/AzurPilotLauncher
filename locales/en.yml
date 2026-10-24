@@ -257,6 +257,7 @@ launcher:
   launch_failed: "Launch failed"
   packing_log: "Packing logs"
   need_log_help: "If you need help, download the error log and send it to us — don't screenshot or photograph this window."
+  not_supported: "Not supported on this platform"
   settings: "Settings"
   settings_launch_on_startup: "Start on boot"
   settings_auto_start_service: "Start the service when the launcher starts"

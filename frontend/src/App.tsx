@@ -262,10 +262,9 @@ export function App() {
               Azur<span>Pilot</span>
             </span>
           </div>
-          {context.platform !== "macos" && (
-            <div className={styles.windowControls}>
-              <Button
-                appearance="transparent"
+          <div className={styles.windowControls}>
+            <Button
+              appearance="transparent"
                 className={styles.captionButton}
                 aria-label={t("settings")}
                 title={t("settings")}
@@ -299,7 +298,6 @@ export function App() {
                 }
               />
             </div>
-          )}
         </header>
       )}
       <main className={`${styles.main} ${connection ? styles.connection : ""}`}>
@@ -543,10 +541,12 @@ export function App() {
       {settingsOpen && (
         <SettingsDialog
           title={t("settings")}
+          platform={context.platform}
           launchOnStartupLabel={t("settings_launch_on_startup")}
           autoStartServiceLabel={t("settings_auto_start_service")}
           keepWebviewOnTrayLabel={t("settings_keep_webview_tray")}
           closeLabel={t("close")}
+          unsupportedLabel={t("not_supported")}
           onClose={() => setSettingsOpen(false)}
         />
       )}

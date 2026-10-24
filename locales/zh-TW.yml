@@ -257,6 +257,7 @@ launcher:
   launch_failed: "啟動失敗"
   packing_log: "正在打包日誌"
   need_log_help: "如需協助，請下載錯誤日誌並傳送給對方，而不是截圖或拍攝這個介面。"
+  not_supported: "目前平台不支援"
   settings: "設定"
   settings_launch_on_startup: "開機自啟"
   settings_auto_start_service: "啟動啟動器時直接啟動"

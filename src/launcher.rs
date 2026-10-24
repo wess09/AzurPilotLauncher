@@ -870,8 +870,6 @@ pub(crate) fn run() -> Result<()> {
             app.manage(controller.clone());
             app.manage(settings_store.clone());
             let auto_start = auto_start || settings_store.auto_start_service();
-            #[cfg(target_os = "macos")]
-            app.get_webview_window("launcher").unwrap().set_decorations(true)?;
             match time_bomb_expiration_message() {
                 Ok(Some(message)) => {
                     allow_for_setup.store(true, Ordering::SeqCst);

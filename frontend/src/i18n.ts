@@ -28,6 +28,7 @@ const keys = [
   "check_failed",
   "download_error_log",
   "need_log_help",
+  "not_supported",
   "settings",
   "settings_launch_on_startup",
   "settings_auto_start_service",
