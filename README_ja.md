@@ -189,7 +189,7 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/モジュール-ネイティブ体験-00875a?style=flat-square" alt="Tag"><br>
       <h3>ネイティブ デスクトップシェル</h3>
-      <p>Tauri 2 ベースのネイティブ WebView シェル：グラスモーフィズムのスプラッシュ画面とカスタムタイトルバー、システムトレイ、Windows Toast / macOS / Linux のネイティブ通知、シングルインスタンス動作。再起動時は既存ウィンドウへのフォーカスだけを行います。</p>
+      <p>Tauri 2 ベースのネイティブ WebView シェル：カスタムタイトルバーとミニマルなホーム画面、システムトレイ、Windows Toast / macOS / Linux のネイティブ通知、シングルインスタンス動作。再起動時は既存ウィンドウへのフォーカスだけを行います。</p>
       <div>
         <img src="https://img.shields.io/badge/フレームワーク-Tauri%202-blue?style=flat-square" alt="Tauri">
         <img src="https://img.shields.io/badge/統合-トレイ%20%2B%20通知%20%2B%20タイトルバー-teal?style=flat-square" alt="Native">
@@ -242,6 +242,28 @@
       </div>
     </td>
   </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="https://img.shields.io/badge/モジュール-設定センター-0057ff?style=flat-square" alt="Tag"><br>
+      <h3>ランチャー設定センター</h3>
+      <p>PC 起動時の自動起動、ランチャー起動と同時にサービスを開始、トレイ常駐、UI 言語、そしてコンポーネント / Python / PyPI の 3 段階ミラー選択。すべてのスイッチは即時反映され、失敗時は自動でロールバックします。</p>
+      <div>
+        <img src="https://img.shields.io/badge/言語-4言語切替-blueviolet?style=flat-square" alt="Language">
+        <img src="https://img.shields.io/badge/ミラー-3層選択-green?style=flat-square" alt="Mirrors">
+        <img src="https://img.shields.io/badge/スイッチ-即時反映-teal?style=flat-square" alt="Instant">
+      </div>
+    </td>
+    <td width="50%" valign="top">
+      <img src="https://img.shields.io/badge/モジュール-電源とモーション-ff991f?style=flat-square" alt="Tag"><br>
+      <h3>電源とモーション管理</h3>
+      <p>「コンピューターの自動スリープを防止」は 3 プラットフォームの電源ロックで無人運用を中断させません（画面は通常どおり消灯できます）。「視覚効果を減らす」は背景動画と UI アニメーションを停止し、システム本来の消灯リズムを取り戻します。</p>
+      <div>
+        <img src="https://img.shields.io/badge/スリープ防止-3プラットフォーム対応-orange?style=flat-square" alt="Prevent Sleep">
+        <img src="https://img.shields.io/badge/モーション-軽減可能-9ae6b4?style=flat-square" alt="Reduced Motion">
+        <img src="https://img.shields.io/badge/画面消灯-影響なし-blue?style=flat-square" alt="Display">
+      </div>
+    </td>
+  </tr>
 </table>
 
 ---
@@ -253,20 +275,20 @@
 ```mermaid
 graph TD
     subgraph Shell ["ランチャーシェル (Tauri 2 · Rust)"]
-        Splash["スプラッシュ画面 React launcher<br/>(グラス調プログレスバー / エラーページ React connection error)"]
-        Setup["環境構築 setup.rs<br/>(Python / uv / adb / git の導入と移行)"]
+        Splash["React ホーム launcher<br/>(ミニマルなメインボタンとリアルタイム手順 / 接続エラーページ)"]
+        Setup["コンポーネント配置 components.rs<br/>(ダウンロード / 検証 / トランザクション復元)"]
         Tray["システム統合<br/>(システムトレイ / ネイティブ通知 / カスタムタイトルバー)"]
         Backend["バックエンド管理 backend.rs<br/>(ポートクリーンアップ / プロセス回収)"]
     end
 
-    subgraph Venv [".venv ランタイム (uv 管理 · 再配置可能)"]
+    subgraph Venv ["ローカルランタイム (uv 管理)"]
         PYTHON["CPython 3.14.x インタプリタ"]
-        TOOLS["内蔵 Python / dependencies / ADB ツールチェーン"]
-        SYNC["uv sync --frozen 依存同期 (uv.lock 固定)"]
+        TOOLS[".azurpilot/tools Git / ADB"]
+        SYNC["uv sync 依存同期 (uv.lock)"]
     end
 
     subgraph Repo ["AzurPilot バックエンドリポジトリ"]
-        GIT["Git 自動更新 (deploy.git.GitManager · 20 回リトライ)"]
+        GIT["deploy.git リポジトリ更新"]
         GUI["gui.py WebUI バックエンド"]
         WEB["WebUI コンソール (127.0.0.1:22267)"]
     end
@@ -279,7 +301,7 @@ graph TD
     SYNC --> GUI
     Backend --> GUI
     GUI --> WEB
-    Shell -. "WebView ホスティング · SSE 通知ストリーム" .-> WEB
+    Shell -. "WebView ホスティング · WebSocket チャネル" .-> WEB
     Tray -. "デスクトップ通知 / トレイ操作" .-> Shell
 ```
 
@@ -317,9 +339,9 @@ graph TD
       <td>Python のダウンロード、依存関係の同期、リポジトリ更新に必要。CN 版は中国国内ミラーで高速化</td>
     </tr>
     <tr>
-      <td><b>Node.js (Windows のみ)</b></td>
-      <td><img src="https://img.shields.io/badge/検出-自動処理-orange?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
-      <td>システムレベルの Node.js が見つからない場合、確認後に自動ダウンロード・インストール（SHA-256 検証付き）</td>
+      <td><b>Node.js（フロントエンド構築）</b></td>
+      <td><img src="https://img.shields.io/badge/不足-明確な案内-orange?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
+      <td>初回起動時の WebUI 構築には Node.js / npm が必要です。未導入の場合はランチャーが明確にエラーを表示し、導入を案内します</td>
     </tr>
   </tbody>
 </table>
@@ -347,9 +369,9 @@ graph TD
     <td width="25%" valign="top">
       <div align="center">
         <img src="https://img.shields.io/badge/ステップ-03-purple?style=flat-square" alt="Step 3"><br>
-        <h4>環境初期化を待機</h4>
+        <h4>デプロイして起動</h4>
       </div>
-      スプラッシュ画面に進行状況がリアルタイム表示されます：<code>.venv</code> の作成、リポジトリの更新、依存関係の同期。初回起動はネット接続が必要で、2 回目以降は既存ウィンドウへのフォーカスのみです。
+      ランタイムコンポーネントが不足している場合はホーム画面でまず「デプロイ」を押し、完了後に「起動」を押します。右下のメインボタンが現在の手順（Python のインストール、リポジトリの更新、依存関係の同期、フロントエンドの構築）をリアルタイム表示します。初回起動はネット接続が必要で、2 回目以降は既存ウィンドウへのフォーカスのみです。
     </td>
     <td width="25%" valign="top">
       <div align="center">
@@ -374,10 +396,9 @@ graph TD
 
 ## アプリプレビュー
 
-| プラットフォーム | 简体中文 | English |
-|:---:|:---:|:---:|
-| **Windows** | <img src="screenshots/win-cn.webp" width="420"/> | <img src="screenshots/win-en.webp" width="420"/> |
-| **macOS** | <img src="screenshots/mac-cn.webp" width="420"/> | <img src="screenshots/mac-en.webp" width="420"/> |
+<p align="center">
+  <img src="screenshots/launcher.png" width="640" alt="AzurPilot Launcher メイン画面（簡体中文）"/>
+</p>
 
 ---
 
@@ -388,11 +409,11 @@ graph TD
 | # | 変更点 | 説明 |
 |:---:|:---|:---|
 | 1 | **マルチプラットフォーム対応** | Windows 限定ではなく、macOS（Apple Silicon ネイティブ含む）と Linux でも動作 |
-| 2 | **更新ポリシーの再構築** | git リポジトリの更新のみを行い、依存関係は `.venv` 内蔵の uv で同期。再起動時は既存ウィンドウへのフォーカスのみで、破壊的なクリーンアップは行いません |
-| 3 | **依存バージョンの固定** | Python パッケージのバージョンは `pyproject.toml` と `uv.lock` で固定され、自動同期が既定で有効。環境のドリフトを防止します |
+| 2 | **更新ポリシーの再構築** | ランタイムコンポーネントを統一マニフェストで更新し、検証後にグループ単位でコミット。再起動時は既存ウィンドウへのフォーカスのみ |
+| 3 | **依存バージョンの固定** | Python パッケージはランチャーがローカルの uv でプロジェクトのロックファイルに従い同期 |
 | 4 | **adb ポリシー** | adb の再起動・置き換えは行いません |
-| 5 | **ディレクトリ構成の変更** | Python / Python / dependencies / ADB はすべて `.venv` 内に収められます。詳細は下記の構成を参照 |
-| 6 | **Node.js 自動化 (Windows)** | システムレベルの Node.js を検出し、見つからない場合は確認後に自動ダウンロード・インストール |
+| 5 | **ディレクトリ構成の変更** | Python 環境は `.venv` に、Git/ADB は `.azurpilot/tools` に置かれ、独立して管理されます |
+| 6 | **ローカルでのフロントエンド構築** | Python 依存の準備完了後、deploy スクリプトが Node.js/npm で WebUI を構築します |
 
 ---
 

@@ -28,6 +28,7 @@ import { Confirm } from "./Confirm";
 import { ErrorDialog } from "./ErrorDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import background from "../../bg/bg.mp4";
+import backgroundPoster from "../../bg/loading.webp";
 import styles from "./launcher.module.css";
 
 const mainIcons: Record<string, ComponentType> = {
@@ -264,6 +265,7 @@ export function App() {
         ref={video}
         className={styles.background}
         src={background}
+        poster={backgroundPoster}
         autoPlay
         muted
         loop

@@ -91,7 +91,7 @@ export async function command<T = void>(
   if (name === "launcher_context")
     return {
       locale: new URLSearchParams(location.search).get("lang") ?? "zh-CN",
-      version: "2.3.0",
+      version: "3.0.2",
       platform: "windows",
     } as T;
   if (name === "launcher_snapshot") return simulated as T;

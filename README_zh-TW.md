@@ -189,7 +189,7 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/模組-原生體驗-00875a?style=flat-square" alt="Tag"><br>
       <h3>原生桌面殼層體驗</h3>
-      <p>基於 Tauri 2 的原生 WebView 殼：玻璃質感啟動畫面與自訂標題列、系統列、Windows Toast / macOS / Linux 原生通知、單一實例執行，重複啟動自動聚焦已有視窗。</p>
+      <p>基於 Tauri 2 的原生 WebView 殼：自訂標題列與極簡首頁、系統列、Windows Toast / macOS / Linux 原生通知、單一實例執行，重複啟動自動聚焦已有視窗。</p>
       <div>
         <img src="https://img.shields.io/badge/框架-Tauri%202-blue?style=flat-square" alt="Tauri">
         <img src="https://img.shields.io/badge/互動-系統列%20%2B%20通知%20%2B%20標題列-teal?style=flat-square" alt="Native">
@@ -242,6 +242,28 @@
       </div>
     </td>
   </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="https://img.shields.io/badge/模組-設定中心-0057ff?style=flat-square" alt="Tag"><br>
+      <h3>啟動器設定中心</h3>
+      <p>開機自啟、啟動器啟動時直接執行服務、系統列保活、介面語言，以及元件 / Python / PyPI 三級鏡像選擇；全部開關即時生效、失敗自動回滾。</p>
+      <div>
+        <img src="https://img.shields.io/badge/語言-四語切換-blueviolet?style=flat-square" alt="Language">
+        <img src="https://img.shields.io/badge/鏡像-三源可選-green?style=flat-square" alt="Mirrors">
+        <img src="https://img.shields.io/badge/開關-即時生效-teal?style=flat-square" alt="Instant">
+      </div>
+    </td>
+    <td width="50%" valign="top">
+      <img src="https://img.shields.io/badge/模組-電源與動效-ff991f?style=flat-square" alt="Tag"><br>
+      <h3>電源與動效管理</h3>
+      <p>「阻止電腦自動睡眠」讓掛機執行不中斷（三平台電源鎖，螢幕仍可正常關閉）；「減弱動態效果」暫停背景影片與介面動畫，恢復系統正常息屏節奏。</p>
+      <div>
+        <img src="https://img.shields.io/badge/防睡眠-三平台電源鎖-orange?style=flat-square" alt="Prevent Sleep">
+        <img src="https://img.shields.io/badge/動效-可減弱-9ae6b4?style=flat-square" alt="Reduced Motion">
+        <img src="https://img.shields.io/badge/息屏-不受影響-blue?style=flat-square" alt="Display">
+      </div>
+    </td>
+  </tr>
 </table>
 
 ---
@@ -253,20 +275,20 @@
 ```mermaid
 graph TD
     subgraph Shell ["啟動器殼層 (Tauri 2 · Rust)"]
-        Splash["啟動畫面 React launcher<br/>(玻璃質感進度條 / 錯誤頁 React connection error)"]
-        Setup["環境建置 setup.rs<br/>(Python / uv / adb / git 安裝與遷移)"]
+        Splash["React 首頁 launcher<br/>(極簡主按鈕與即時步驟 / 連線錯誤頁)"]
+        Setup["元件部署 components.rs<br/>(下載 / 校驗 / 事務恢復)"]
         Tray["系統整合<br/>(系統列 / 原生通知 / 自訂標題列)"]
         Backend["後端託管 backend.rs<br/>(連接埠清理 / 程序回收)"]
     end
 
-    subgraph Venv [".venv 執行環境 (uv 管理 · 可重定位)"]
+    subgraph Venv ["本機執行環境 (uv 管理)"]
         PYTHON["CPython 3.14.x 直譯器"]
-        TOOLS["Python / dependencies / ADB 內建工具鏈"]
-        SYNC["uv sync --frozen 依賴同步 (uv.lock 鎖定)"]
+        TOOLS[".azurpilot/tools Git / ADB"]
+        SYNC["uv sync 依賴同步 (uv.lock)"]
     end
 
     subgraph Repo ["AzurPilot 後端儲存庫"]
-        GIT["Git 自動更新 (deploy.git.GitManager · 重試 20 次)"]
+        GIT["deploy.git 儲存庫更新"]
         GUI["gui.py WebUI 後端"]
         WEB["WebUI 控制台 (127.0.0.1:22267)"]
     end
@@ -279,7 +301,7 @@ graph TD
     SYNC --> GUI
     Backend --> GUI
     GUI --> WEB
-    Shell -. "WebView 承載 · SSE 通知流" .-> WEB
+    Shell -. "WebView 承載 · WebSocket 通道" .-> WEB
     Tray -. "桌面通知 / 系統列控制" .-> Shell
 ```
 
@@ -317,9 +339,9 @@ graph TD
       <td>下載 Python、同步依賴與更新儲存庫；CN 版走國內鏡像加速</td>
     </tr>
     <tr>
-      <td><b>Node.js (僅 Windows)</b></td>
-      <td><img src="https://img.shields.io/badge/偵測-自動處理-orange?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
-      <td>未偵測到系統級 Node.js 時，確認後自動下載安裝（SHA-256 驗證）</td>
+      <td><b>Node.js（建置前端）</b></td>
+      <td><img src="https://img.shields.io/badge/缺失-明確提示-orange?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
+      <td>首次啟動建置 WebUI 需要 Node.js / npm；未安裝時啟動器會明確報錯並引導安裝後再啟動</td>
     </tr>
   </tbody>
 </table>
@@ -347,9 +369,9 @@ graph TD
     <td width="25%" valign="top">
       <div align="center">
         <img src="https://img.shields.io/badge/步驟-03-purple?style=flat-square" alt="Step 3"><br>
-        <h4>等待環境初始化</h4>
+        <h4>部署並啟動</h4>
       </div>
-      啟動畫面即時展示進度：建立 <code>.venv</code>、更新儲存庫、同步依賴。首次啟動需連網，之後重複啟動只會聚焦已有視窗。
+      缺少執行元件時首頁先點「部署」，完成後點「啟動」；右下角主按鈕即時顯示當前步驟（安裝 Python、更新儲存庫、同步依賴、建置前端）。首次啟動需連網，之後重複啟動只會聚焦已有視窗。
     </td>
     <td width="25%" valign="top">
       <div align="center">
@@ -374,10 +396,9 @@ graph TD
 
 ## 應用預覽
 
-| 平台 | 简体中文 | English |
-|:---:|:---:|:---:|
-| **Windows** | <img src="screenshots/win-cn.webp" width="420"/> | <img src="screenshots/win-en.webp" width="420"/> |
-| **macOS** | <img src="screenshots/mac-cn.webp" width="420"/> | <img src="screenshots/mac-en.webp" width="420"/> |
+<p align="center">
+  <img src="screenshots/launcher.png" width="640" alt="AzurPilot Launcher 主畫面（簡體中文）"/>
+</p>
 
 ---
 
@@ -388,11 +409,11 @@ graph TD
 | # | 差異點 | 說明 |
 |:---:|:---|:---|
 | 1 | **全平台支援** | 不再局限於 Windows，macOS（含 Apple Silicon 原生）與 Linux 均可執行 |
-| 2 | **更新策略重構** | 只更新 git 儲存庫，並用 `.venv` 內建的 uv 同步依賴；重複啟動僅重新聚焦已有視窗，不做破壞性清理 |
-| 3 | **依賴版本鎖定** | Python 套件版本由 `pyproject.toml` 與 `uv.lock` 鎖定，自動同步預設啟用，杜絕環境漂移 |
+| 2 | **更新策略重構** | 按統一清單更新獨立元件，校驗成功後成組提交；重複啟動僅重新聚焦已有視窗 |
+| 3 | **依賴版本鎖定** | Python 套件由啟動器在本機呼叫 uv，按專案鎖定檔同步 |
 | 4 | **adb 策略** | 不再重新啟動與替換 adb |
-| 5 | **目錄結構調整** | Python / Python / dependencies / ADB 全部收納進 `.venv`，詳見下方目錄結構 |
-| 6 | **Node.js 自動化 (Windows)** | 偵測系統級 Node.js；未偵測到時可在確認後自動下載並安裝 |
+| 5 | **目錄結構調整** | Python 環境位於 `.venv`，Git/ADB 位於 `.azurpilot/tools`，兩者獨立維護 |
+| 6 | **本機建置前端** | Python 依賴就緒後由 deploy 腳本呼叫 Node.js/npm 建置 WebUI |
 
 ---
 

@@ -189,7 +189,7 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/模块-原生体验-00875a?style=flat-square" alt="Tag"><br>
       <h3>原生桌面壳层体验</h3>
-      <p>基于 Tauri 2 的原生 WebView 壳：玻璃质感启动画面与自定义标题栏、系统托盘、Windows Toast / macOS / Linux 原生通知、单实例运行，重复启动自动聚焦已有窗口。</p>
+      <p>基于 Tauri 2 的原生 WebView 壳：自定义标题栏与极简首页、系统托盘、Windows Toast / macOS / Linux 原生通知、单实例运行，重复启动自动聚焦已有窗口。</p>
       <div>
         <img src="https://img.shields.io/badge/框架-Tauri%202-blue?style=flat-square" alt="Tauri">
         <img src="https://img.shields.io/badge/交互-托盘%20%2B%20通知%20%2B%20标题栏-teal?style=flat-square" alt="Native">
@@ -242,6 +242,28 @@
       </div>
     </td>
   </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="https://img.shields.io/badge/模块-设置中心-0057ff?style=flat-square" alt="Tag"><br>
+      <h3>启动器设置中心</h3>
+      <p>开机自启、启动器启动时直接运行服务、托盘化保活、界面语言，以及组件 / Python / PyPI 三级镜像选择；全部开关即时生效、失败自动回滚。</p>
+      <div>
+        <img src="https://img.shields.io/badge/语言-四语切换-blueviolet?style=flat-square" alt="Language">
+        <img src="https://img.shields.io/badge/镜像-三源可选-green?style=flat-square" alt="Mirrors">
+        <img src="https://img.shields.io/badge/开关-即时生效-teal?style=flat-square" alt="Instant">
+      </div>
+    </td>
+    <td width="50%" valign="top">
+      <img src="https://img.shields.io/badge/模块-电源与动效-ff991f?style=flat-square" alt="Tag"><br>
+      <h3>电源与动效管理</h3>
+      <p>「阻止计算机自动睡眠」挂机运行不中断（三平台电源锁，屏幕仍可正常关闭）；「减弱动态效果」暂停背景视频与界面动画，恢复系统正常息屏节奏。</p>
+      <div>
+        <img src="https://img.shields.io/badge/防睡眠-三平台电源锁-orange?style=flat-square" alt="Prevent Sleep">
+        <img src="https://img.shields.io/badge/动效-可减弱-9ae6b4?style=flat-square" alt="Reduced Motion">
+        <img src="https://img.shields.io/badge/息屏-不受影响-blue?style=flat-square" alt="Display">
+      </div>
+    </td>
+  </tr>
 </table>
 
 ---
@@ -253,7 +275,7 @@
 ```mermaid
 graph TD
     subgraph Shell ["启动器壳层 (Tauri 2 · Rust)"]
-        Splash["启动画面 React launcher<br/>(玻璃质感进度条 / 错误页 React connection error)"]
+        Splash["React 首页 launcher<br/>(极简主按钮与实时步骤 / 连接错误页)"]
         Setup["组件部署 components.rs<br/>(下载 / 校验 / 事务恢复)"]
         Tray["系统集成<br/>(系统托盘 / 原生通知 / 自定义标题栏)"]
         Backend["后端托管 backend.rs<br/>(端口清理 / 进程回收)"]
@@ -317,9 +339,9 @@ graph TD
       <td>下载 Python、同步依赖与更新仓库；CN 版走国内镜像加速</td>
     </tr>
     <tr>
-      <td><b>Node.js (仅 Windows)</b></td>
-      <td><img src="https://img.shields.io/badge/检测-自动处理-orange?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
-      <td>未检测到系统级 Node.js 时，确认后自动下载安装（SHA-256 校验）</td>
+      <td><b>Node.js（构建前端）</b></td>
+      <td><img src="https://img.shields.io/badge/缺失-明确提示-orange?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
+      <td>首次启动构建 WebUI 需要 Node.js / npm；未安装时启动器会明确报错并引导安装后再启动</td>
     </tr>
   </tbody>
 </table>
@@ -347,9 +369,9 @@ graph TD
     <td width="25%" valign="top">
       <div align="center">
         <img src="https://img.shields.io/badge/步骤-03-purple?style=flat-square" alt="Step 3"><br>
-        <h4>等待环境初始化</h4>
+        <h4>部署并启动</h4>
       </div>
-      启动画面实时展示进度：创建 <code>.venv</code>、更新仓库、同步依赖。首次启动需联网，之后重复启动只会聚焦已有窗口。
+      缺少运行组件时首页先点「部署」，完成后点「启动」；右下角主按钮实时显示当前步骤（安装 Python、更新仓库、同步依赖、构建前端）。首次启动需联网，之后重复启动只会聚焦已有窗口。
     </td>
     <td width="25%" valign="top">
       <div align="center">
@@ -374,10 +396,9 @@ graph TD
 
 ## 应用预览
 
-| 平台 | 简体中文 | English |
-|:---:|:---:|:---:|
-| **Windows** | <img src="screenshots/win-cn.webp" width="420"/> | <img src="screenshots/win-en.webp" width="420"/> |
-| **macOS** | <img src="screenshots/mac-cn.webp" width="420"/> | <img src="screenshots/mac-en.webp" width="420"/> |
+<p align="center">
+  <img src="screenshots/launcher.png" width="640" alt="AzurPilot Launcher 主界面（简体中文）"/>
+</p>
 
 ---
 

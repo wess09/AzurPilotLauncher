@@ -189,7 +189,7 @@ This project works closely with the following core projects in its ecosystem:
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/Module-Native%20Shell-00875a?style=flat-square" alt="Tag"><br>
       <h3>Native Desktop Shell Experience</h3>
-      <p>A native WebView shell built on Tauri 2: glassmorphism splash screen and custom title bar, system tray, Windows Toast / macOS / Linux native notifications, and single-instance behavior — relaunching simply focuses the existing window.</p>
+      <p>A native WebView shell built on Tauri 2: custom title bar and minimal home page, system tray, Windows Toast / macOS / Linux native notifications, and single-instance behavior — relaunching simply focuses the existing window.</p>
       <div>
         <img src="https://img.shields.io/badge/Framework-Tauri%202-blue?style=flat-square" alt="Tauri">
         <img src="https://img.shields.io/badge/Integration-Tray%20%2B%20Notify%20%2B%20Titlebar-teal?style=flat-square" alt="Native">
@@ -242,6 +242,28 @@ This project works closely with the following core projects in its ecosystem:
       </div>
     </td>
   </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="https://img.shields.io/badge/Module-Settings%20Hub-0057ff?style=flat-square" alt="Tag"><br>
+      <h3>Launcher Settings Hub</h3>
+      <p>Launch-on-boot, start the service together with the launcher, keep-alive on tray, UI language, and component / Python / PyPI mirror selection — every toggle applies instantly and rolls back on failure.</p>
+      <div>
+        <img src="https://img.shields.io/badge/Language-4%20Languages-blueviolet?style=flat-square" alt="Language">
+        <img src="https://img.shields.io/badge/Mirrors-3%20Tiers-green?style=flat-square" alt="Mirrors">
+        <img src="https://img.shields.io/badge/Toggles-Instant-teal?style=flat-square" alt="Instant">
+      </div>
+    </td>
+    <td width="50%" valign="top">
+      <img src="https://img.shields.io/badge/Module-Power%20%26%20Motion-ff991f?style=flat-square" alt="Tag"><br>
+      <h3>Power &amp; Motion Control</h3>
+      <p>“Prevent automatic sleep” keeps long unattended runs alive with a cross-platform power lock while the display may still turn off normally; “Reduce motion” pauses the background video and UI animations so the system resumes its normal display-off rhythm.</p>
+      <div>
+        <img src="https://img.shields.io/badge/Sleep-Prevented-orange?style=flat-square" alt="Prevent Sleep">
+        <img src="https://img.shields.io/badge/Motion-Reducible-9ae6b4?style=flat-square" alt="Reduced Motion">
+        <img src="https://img.shields.io/badge/Display-Unaffected-blue?style=flat-square" alt="Display">
+      </div>
+    </td>
+  </tr>
 </table>
 
 ---
@@ -253,20 +275,20 @@ The project follows a cleanly decoupled layered design with well-defined respons
 ```mermaid
 graph TD
     subgraph Shell ["Launcher Shell (Tauri 2 · Rust)"]
-        Splash["Splash Screen React launcher<br/>(Glass Progress Bar / Error Page React connection error)"]
-        Setup["Environment Setup setup.rs<br/>(Python / uv / adb / git Install & Migration)"]
+        Splash["React home launcher<br/>(minimal action button with live steps / connection error page)"]
+        Setup["Component Deployment components.rs<br/>(Download / Verify / Transactional Recovery)"]
         Tray["System Integration<br/>(Tray / Native Notifications / Custom Titlebar)"]
         Backend["Backend Manager backend.rs<br/>(Port Cleanup / Process Reclaim)"]
     end
 
-    subgraph Venv [".venv Runtime (uv-managed · Relocatable)"]
+    subgraph Venv ["Local Runtime (uv-managed)"]
         PYTHON["CPython 3.14.x Interpreter"]
-        TOOLS["Embedded Python / dependencies / ADB Toolchain"]
-        SYNC["uv sync --frozen Dependency Sync (uv.lock)"]
+        TOOLS[".azurpilot/tools Git / ADB"]
+        SYNC["uv sync Dependency Sync (uv.lock)"]
     end
 
     subgraph Repo ["AzurPilot backend repository"]
-        GIT["Git Auto-Update (deploy.git.GitManager · 20 Retries)"]
+        GIT["deploy.git Repository Update"]
         GUI["gui.py WebUI Backend"]
         WEB["WebUI Console (127.0.0.1:22267)"]
     end
@@ -279,7 +301,7 @@ graph TD
     SYNC --> GUI
     Backend --> GUI
     GUI --> WEB
-    Shell -. "WebView Hosting · SSE Notification Stream" .-> WEB
+    Shell -. "WebView Hosting · WebSocket Channel" .-> WEB
     Tray -. "Desktop Notifications / Tray Control" .-> Shell
 ```
 
@@ -317,9 +339,9 @@ graph TD
       <td>Needed to download Python, sync dependencies and update the repo; the CN build uses China mirrors</td>
     </tr>
     <tr>
-      <td><b>Node.js (Windows only)</b></td>
-      <td><img src="https://img.shields.io/badge/Detection-Automatic-orange?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
-      <td>If no system-level Node.js is found, the launcher offers to download and install it (SHA-256 verified)</td>
+      <td><b>Node.js (frontend build)</b></td>
+      <td><img src="https://img.shields.io/badge/Missing-Clear%20prompt-orange?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
+      <td>The first launch needs Node.js / npm to build the WebUI; when absent the launcher reports a clear error and guides you to install it first</td>
     </tr>
   </tbody>
 </table>
@@ -347,9 +369,9 @@ graph TD
     <td width="25%" valign="top">
       <div align="center">
         <img src="https://img.shields.io/badge/Step-03-purple?style=flat-square" alt="Step 3"><br>
-        <h4>Wait for Setup</h4>
+        <h4>Deploy &amp; Launch</h4>
       </div>
-      The splash screen shows live progress: creating the <code>.venv</code>, updating the repo, syncing dependencies. First launch requires a network connection; subsequent launches simply focus the existing window.
+      When runtime components are missing the home page shows “Deploy” first; after that press “Launch”. The action button in the bottom-right corner shows the current step live (installing Python, updating the repo, syncing dependencies, building the frontend). First launch requires a network connection; subsequent launches simply focus the existing window.
     </td>
     <td width="25%" valign="top">
       <div align="center">
@@ -374,10 +396,9 @@ graph TD
 
 ## App Preview
 
-| Platform | 简体中文 | English |
-|:---:|:---:|:---:|
-| **Windows** | <img src="screenshots/win-cn.webp" width="420"/> | <img src="screenshots/win-en.webp" width="420"/> |
-| **macOS** | <img src="screenshots/mac-cn.webp" width="420"/> | <img src="screenshots/mac-en.webp" width="420"/> |
+<p align="center">
+  <img src="screenshots/launcher.png" width="640" alt="AzurPilot Launcher main window (Simplified Chinese)"/>
+</p>
 
 ---
 
@@ -388,11 +409,11 @@ Compared with the bundled Electron launcher of [AzurLaneAutoScript](https://gith
 | # | Change | Description |
 |:---:|:---|:---|
 | 1 | **Cross-platform** | No longer Windows-only — runs natively on macOS (including Apple Silicon) and Linux |
-| 2 | **Reworked update strategy** | Only the git repo is updated, and dependencies are synced with the uv embedded in `.venv`; relaunching merely refocuses the existing window instead of doing destructive cleanup |
-| 3 | **Pinned dependency versions** | Python package versions are locked by `pyproject.toml` and `uv.lock`, with auto-sync enabled by default to prevent environment drift |
+| 2 | **Reworked update strategy** | Runtime components are updated from a unified manifest and committed as a group after verification; relaunching merely refocuses the existing window |
+| 3 | **Pinned dependency versions** | Python packages are synced on this machine by uv according to the project lock file |
 | 4 | **adb policy** | adb is no longer restarted or replaced |
-| 5 | **Adjusted directory layout** | Python / Python / dependencies / ADB all live inside `.venv` — see the layout below |
-| 6 | **Node.js automation (Windows)** | Detects system-level Node.js; if absent, offers to download and install it automatically after confirmation |
+| 5 | **Adjusted directory layout** | The Python environment lives in `.venv` while Git/ADB live in `.azurpilot/tools`, maintained independently |
+| 6 | **Local frontend build** | Once Python dependencies are ready the deploy script builds the WebUI via Node.js/npm |
 
 ---
 
