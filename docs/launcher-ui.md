@@ -8,14 +8,14 @@
 
 ```powershell
 npm --prefix frontend ci
-# 指向实际的 AzurPilot 后端仓库（包含 deploy/installer.py），仅 debug 构建支持覆盖。
+# 指向安装测试目录（可为空），仅 debug 构建支持覆盖。
 $env:AZURPILOT_REPO_DIR = 'C:\path\to\AzurPilot'
 cargo tauri dev
 ```
 
 `cargo tauri dev` 自动运行 Vite；直接运行 `cargo build` 的 debug 产物时，需另开终端执行 `npm --prefix frontend run dev`。开发服务器固定为 `127.0.0.1:1420`，端口被占用时明确失败，不自动换端口。
 
-不启动后端也可单独预览 React。打开 Vite 地址，使用 `?preview=progress`、`repair`、`error`、`running`、`update` 切换模拟状态，使用 `&lang=en`、`ja`、`zh-TW` 检查翻译。模拟模式只在 Vite 开发构建且不存在 Tauri 环境时生效。
+不启动后端也可单独预览 React。打开 Vite 地址，使用 `?preview=progress`、`repair`、`error`、`running`、`update`、`deploy` 切换模拟状态，使用 `&lang=en`、`ja`、`zh-TW` 检查翻译。模拟模式只在 Vite 开发构建且不存在 Tauri 环境时生效。
 
 ```powershell
 npm --prefix frontend test
@@ -26,17 +26,17 @@ cargo test --locked --all-targets
 cargo build --locked --release --features custom-protocol
 ```
 
-Windows 的 Rust 测试和启动器均需要管理员终端。发布必须先构建前端并启用 `custom-protocol`，否则 debug 配置会使用开发服务器。`build.rs` 不执行 npm 安装。生产字体、视频、JS 和 CSS 均由 Tauri 内嵌，用户运行首页不需要 Node.js；Windows 后端自身如需构建 WebUI，仍保留原有 Node.js 安装引导。
+Windows 的 Rust 测试和启动器均需要管理员终端。发布必须先构建前端并启用 `custom-protocol`，否则 debug 配置会使用开发服务器。`build.rs` 不执行 npm 安装。生产字体、视频、JS 和 CSS 均由 Tauri 内嵌，用户运行首页不需要 Node.js；后端 WebUI 同样由 CI 编译，无运行时 Node.js 安装引导。
 
 ## 用户流程
 
 普通打开先检查启动器更新，检查失败不能启动或修复。发现新版本后等待用户点击更新；下载和校验结束后才开始原子替换并重启。语言与最小化启动参数跨自更新保留。
 
-点击启动才准备工具、更新仓库、同步依赖并启动后端。成功后显示 WebUI，隐藏首页；Linux 无托盘时将首页最小化到任务栏。托盘可分别打开首页或显示/隐藏 WebUI。`--start-minimized` 自动启动服务且保持窗口隐藏，需要点击更新或发生错误时显示首页。
+缺少组件时按钮显示“部署”，组件齐全时显示“启动”。点击后才读取统一 `stable.json`，下载缺失或有变化的组件并启动后端。成功后显示 WebUI，隐藏首页；Linux 无托盘时将首页最小化到任务栏。托盘可分别打开首页或显示/隐藏 WebUI。`--start-minimized` 自动启动服务且保持窗口隐藏，需要点击更新或发生错误时显示首页。
 
 运行时首页提供“打开 WebUI”和“停止服务”，禁止修复。停止后回收当前后端、工作进程和该会话的 WS 会话，再允许重新启动或修复；已显式脱离后端 Job 的模拟器继续运行。
 
-修复需要确认，只重建当前仓库的 `.venv`、检查工具、迁移部署配置并同步依赖，不更新仓库、不清空全局 uv 缓存，完成后返回首页。缺失环境可在首次启动时安装；损坏或不兼容的已有环境提示用户手动修复。
+修复需要确认，重新部署上次完整清单的 Python、依赖与 ADB，不更新源码或资源，不清空组件与 uv 缓存，完成后返回首页。组件可以自动补齐缺失文件；部署/修复失败会回滚。详见 [独立组件部署](runtime-components.md)。
 
 首页未开始任务时关闭直接退出，运行中关闭只隐藏首页。启动或修复期间关闭需确认“取消任务并退出”，取消操作只回收任务及其子进程，不删除环境、配置或缓存。自更新进入替换交接阶段后不可中断。Windows WebUI 原有“退出 / 最小化到托盘”菜单保持原样。
 
@@ -67,10 +67,12 @@ Windows 的 Rust 测试和启动器均需要管理员终端。发布必须先构
 - 检查更新失败或发现新版时不能绕过更新门禁。
 - 启动、修复、停止互斥；停止后再次启动不重复接收通知。
 - 取消启动保留 `.venv`；取消修复不会追加清理。
-- 修复只删除 `.venv`，拒绝符号链接或指向工作区外的重解析点。
+- 安装事务和修复拒绝符号链接或指向工作区外的重解析点；中断后恢复原环境。
 - 主动停止不显示连接错误；旧会话的退出/导航回调不能覆盖新会话。
 - 关闭 Vite 后，带 `custom-protocol` 的产物仍能显示字体、视频、首页和错误页。
 
 ## 后端启动器协议
 
 控制、通知和免密登录统一使用 [启动器 WS v2](launcher-protocol-v2.md)，旧 SSE/HTTP 接口已移除。
+
+状态快照的 `deployment_required` 由 Rust 扫描安装记录与组件文件生成。设置弹窗提供组件、Python、PyPI 下载源，全部显示镜像名。自动选源读取系统原始语言与 IANA 时区，界面语言覆盖不改变自动判断。

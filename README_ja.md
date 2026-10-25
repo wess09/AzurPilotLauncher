@@ -22,7 +22,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=flat-square" alt="License: GPL-3.0"></a>
   <a href="https://www.tauri.app/"><img src="https://img.shields.io/badge/Framework-Tauri%202-24C8DB.svg?style=flat-square&logo=tauri&logoColor=white" alt="Framework: Tauri 2"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-DEA584.svg?style=flat-square&logo=rust&logoColor=white" alt="Language: Rust"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.14.6-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.14.6"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.14.x-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.14.x"></a>
   <a href="https://github.com/astral-sh/uv"><img src="https://img.shields.io/badge/Packaging-uv-DE5FE9.svg?style=flat-square" alt="Packaging: uv"></a>
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-181717.svg?style=flat-square&logo=github&logoColor=white" alt="Platform: Windows / macOS / Linux">
 </p>
@@ -87,7 +87,7 @@
     <tr>
       <td width="25%"><b>リポジトリサイズ</b><br><img src="https://img.shields.io/github/repo-size/wess09/AzurPilotLauncher?style=flat-square&color=586069" alt="Repo Size"></td>
       <td width="25%"><b>開発言語</b><br><img src="https://img.shields.io/badge/Language-Rust%20%7C%20Tauri-DEA584?style=flat-square&logo=rust&logoColor=white" alt="Language"></td>
-      <td width="25%"><b>ランタイム</b><br><img src="https://img.shields.io/badge/Python-3.14.6%20%2B%20uv-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python Runtime"></td>
+      <td width="25%"><b>ランタイム</b><br><img src="https://img.shields.io/badge/Python-3.14.x%20%2B%20uv-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python Runtime"></td>
       <td width="25%"><b>UI 言語</b><br><img src="https://img.shields.io/badge/i18n-%E7%AE%80%E4%BD%93%20%7C%20%E7%B9%81%E9%AB%94%20%7C%20%E6%97%A5%E6%9C%AC%E8%AA%9E%20%7C%20En-blueviolet?style=flat-square" alt="i18n"></td>
     </tr>
     <tr>
@@ -109,7 +109,7 @@
 
 **AzurPilot Launcher** は、フル機能の『アズールレーン』自動化アシスタント **AzurPilot** を Windows・macOS・Linux 上でネイティブにワンクリック起動できるようにするプロジェクトです。Apple Silicon の Mac Mini でも、従来の x86 マシンでも、トランスレータも Docker も不要で、システム環境を汚しません。
 
-ランチャーは `uv` パッケージマネージャーを内蔵しており、初回起動時に再配置可能な `.venv`（Python 3.14.6）を自動作成し、git で最新コードを取得して依存関係を同期した後、Python WebUI バックエンドを起動します。ネイティブ WebView シェルがスプラッシュ画面・システムトレイ・デスクトップ通知・カスタムタイトルバーを備えます。UI は簡体字中国語・繁体字中国語・日本語・英語の 4 言語に対応し、システムのロケールから自動選択されます。
+ランチャーは単一の `stable.json` から CI ビルド済みのコード、リソース、フロントエンド、最新の安定版 Python 3.14 パッチ、依存関係、ADB を必要に応じて取得します。不足時は「デプロイ」を表示します。システム言語が簡体字中国語で北京時間の場合は CNB、それ以外は GitHub を優先し、設定で取得元を選択できます。Git、uv、Python、Node.js の事前インストールは不要です。[コンポーネント仕様](docs/runtime-components.md)を参照してください。
 
 ---
 
@@ -179,9 +179,9 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/モジュール-デプロイ形態-0052cc?style=flat-square" alt="Tag"><br>
       <h3>ゼロ設定の環境構築</h3>
-      <p>ランチャーは <code>uv</code> を内蔵し、初回起動時に Python 3.14.6 を自動ダウンロードして<b>再配置可能な <code>.venv</code></b> を作成します。uv・git・adb も仮想環境にまとめてデプロイされるため、Python・uv・Git の事前インストールは一切不要。そのまま動きます。</p>
+      <p>CI が独立したコンポーネントをビルドします。不足分のみを取得し、既存の環境とキャッシュを再利用します。Python は最新の安定版 3.14 パッチです。</p>
       <div>
-        <img src="https://img.shields.io/badge/ランタイム-Python%203.14.6-orange?style=flat-square" alt="Python">
+        <img src="https://img.shields.io/badge/ランタイム-Python%203.14.x-orange?style=flat-square" alt="Python">
         <img src="https://img.shields.io/badge/依存管理-uv%20内蔵-blueviolet?style=flat-square" alt="uv">
         <img src="https://img.shields.io/badge/体験-すぐ使える-brightgreen?style=flat-square" alt="Ready">
       </div>
@@ -201,7 +201,7 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/モジュール-更新体系-403294?style=flat-square" alt="Tag"><br>
       <h3>自動更新システム</h3>
-      <p>起動時に git で最新コードを自動取得（最大 20 回リトライ）し、<code>uv sync --frozen</code> で <code>uv.lock</code> に厳密に沿って依存関係を同期。ランチャー本体も mTLS 保護されたチャネルでセルフアップデートし、複数ミラーへのフォールバックに対応します。</p>
+      <p>単一の stable.json がランチャーと実行コンポーネントを管理します。ランチャーには CNB と GitHub の取得 URL を提供します。</p>
       <div>
         <img src="https://img.shields.io/badge/コード更新-Git%20リトライ-purple?style=flat-square" alt="Git Update">
         <img src="https://img.shields.io/badge/バージョン固定-uv.lock-blue?style=flat-square" alt="Lock">
@@ -224,7 +224,7 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/モジュール-ネットワーク戦略-de350b?style=flat-square" alt="Tag"><br>
       <h3>デュアルミラーと直結ポリシー</h3>
-      <p>国際版と <code>-cn</code> 中国大陸ミラー版の 2 種類のデプロイ構成を提供。Python standalone のダウンロードは既定で npmmirror による高速化を使用します。コード更新・内蔵 Python・uv・依存関係のインストール、および WebView とローカル WebUI の接続はシステムプロキシをバイパスし、環境干渉を低減します。</p>
+      <p>簡体字中国語と北京時間のシステムは CNB、それ以外は GitHub を優先します。設定ではコンポーネント、Python、PyPI のミラー名を選択できます。</p>
       <div>
         <img src="https://img.shields.io/badge/デプロイ-国際版%20%2F%20CN%20ミラー-red?style=flat-square" alt="Mirrors">
         <img src="https://img.shields.io/badge/高速化-npmmirror-red?style=flat-square" alt="npmmirror">
@@ -260,8 +260,8 @@ graph TD
     end
 
     subgraph Venv [".venv ランタイム (uv 管理 · 再配置可能)"]
-        PYTHON["CPython 3.14.6 インタプリタ"]
-        TOOLS["内蔵 uv / git / adb ツールチェーン"]
+        PYTHON["CPython 3.14.x インタプリタ"]
+        TOOLS["内蔵 Python / dependencies / ADB ツールチェーン"]
         SYNC["uv sync --frozen 依存同期 (uv.lock 固定)"]
     end
 
@@ -391,7 +391,7 @@ graph TD
 | 2 | **更新ポリシーの再構築** | git リポジトリの更新のみを行い、依存関係は `.venv` 内蔵の uv で同期。再起動時は既存ウィンドウへのフォーカスのみで、破壊的なクリーンアップは行いません |
 | 3 | **依存バージョンの固定** | Python パッケージのバージョンは `pyproject.toml` と `uv.lock` で固定され、自動同期が既定で有効。環境のドリフトを防止します |
 | 4 | **adb ポリシー** | adb の再起動・置き換えは行いません |
-| 5 | **ディレクトリ構成の変更** | Python / uv / git / adb はすべて `.venv` 内に収められます。詳細は下記の構成を参照 |
+| 5 | **ディレクトリ構成の変更** | Python / Python / dependencies / ADB はすべて `.venv` 内に収められます。詳細は下記の構成を参照 |
 | 6 | **Node.js 自動化 (Windows)** | システムレベルの Node.js を検出し、見つからない場合は確認後に自動ダウンロード・インストール |
 
 ---
@@ -422,7 +422,7 @@ Adb
 
 ランチャーが追加する環境変数
 * Unix:    .venv/bin
-* Windows: .venv/Scripts、.venv/Scripts/git/cmd
+* Windows: .venv/Scripts
 ```
 
 ---
@@ -503,7 +503,7 @@ Adb
 | **Tauri 2** | <img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-brightgreen?style=flat-square" alt="MIT / Apache-2.0"> | クロスプラットフォーム デスクトップシェル、WebView ホスティングとシステム統合 |
 | **Rust** | <img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-brightgreen?style=flat-square" alt="MIT / Apache-2.0"> | システムプログラミング言語。ランチャーの全ネイティブロジック |
 | **uv** | <img src="https://img.shields.io/badge/License-Apache--2.0%20%7C%20MIT-brightgreen?style=flat-square" alt="Apache-2.0 / MIT"> | 内蔵の Python パッケージマネージャー。再配置可能な `.venv` を構築 |
-| **CPython 3.14.6** | <img src="https://img.shields.io/badge/License-PSF--2.0-blue?style=flat-square" alt="PSF-2.0"> | 自動化エンジンの Python ランタイム |
+| **CPython 3.14.x** | <img src="https://img.shields.io/badge/License-PSF--2.0-blue?style=flat-square" alt="PSF-2.0"> | 自動化エンジンの Python ランタイム |
 | **Git** | <img src="https://img.shields.io/badge/License-GPL--2.0-blue?style=flat-square" alt="GPL-2.0"> | リポジトリのコード更新（Unix はソースビルド / Windows は MinGit） |
 | **Android platform-tools** | <img src="https://img.shields.io/badge/License-Apache--2.0-brightgreen?style=flat-square" alt="Apache-2.0"> | adb ブリッジ。エミュレータ・デバイスとの通信 |
 

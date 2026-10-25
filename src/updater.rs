@@ -23,9 +23,9 @@ use tauri::Url;
 use tempfile::Builder as TempDirBuilder;
 
 /// 启动器更新清单主 URL：编译期由构建脚本经环境变量注入。
-const LAUNCHER_UPDATE_URL: &str = env!("LAUNCHER_UPDATE_URL");
+pub(crate) const LAUNCHER_UPDATE_URL: &str = env!("LAUNCHER_UPDATE_URL");
 /// 主 URL 不可用时的更新清单回退 URL。
-const LAUNCHER_UPDATE_FALLBACK_URL: &str =
+pub(crate) const LAUNCHER_UPDATE_FALLBACK_URL: &str =
     "https://ap.launcher-update.nanoda.work/updata/stable.json";
 /// 存在该环境变量时跳过启动器更新检查（自更新重启后的新一轮启动会带上）。
 const LAUNCHER_UPDATE_SKIP_ENV: &str = "AZURPILOT_SKIP_LAUNCHER_UPDATE";
@@ -66,6 +66,9 @@ struct LauncherUpdateManifest {
 struct LauncherUpdatePlatform {
     /// 载荷下载 URL（清单公开，载荷本身需 mTLS）。
     url: String,
+    /// GitHub Release 的同一份载荷；兼容没有此字段的旧清单。
+    #[serde(default)]
+    github_url: Option<String>,
     /// 载荷的 SHA-256 十六进制摘要，下载后用于完整性校验。
     sha256: String,
 }
@@ -273,6 +276,9 @@ pub(crate) fn check_update(cancel: &Arc<AtomicBool>) -> Result<Option<AvailableU
     };
 
     validate_launcher_update_payload(&platform.url, &platform.sha256)?;
+    if let Some(url) = &platform.github_url {
+        validate_launcher_update_payload(url, &platform.sha256)?;
+    }
     Ok(Some(AvailableUpdate {
         version: manifest.version.clone(),
         payload: platform.clone(),
@@ -285,21 +291,71 @@ pub(crate) struct AvailableUpdate {
     payload: LauncherUpdatePlatform,
 }
 
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    #[test]
+    fn github_payload_is_used_after_primary_failure_and_old_manifests_still_work() {
+        let payload: LauncherUpdatePlatform = serde_json::from_value(serde_json::json!({
+            "url": "https://launcher-download.azurpilot.com/a.exe",
+            "github_url": "https://github.com/wess09/AzurPilotLauncher/releases/download/v3/a.exe",
+            "sha256": "0".repeat(64)
+        }))
+        .unwrap();
+        let mut requested = Vec::new();
+        download_from_sources(&payload, &AtomicBool::new(false), true, |url| {
+            requested.push(url.to_owned());
+            if requested.len() == 1 {
+                bail!("primary unavailable");
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(requested.len(), 2);
+        assert_eq!(Some(requested[1].as_str()), payload.github_url.as_deref());
+        let old: LauncherUpdatePlatform = serde_json::from_value(
+            serde_json::json!({"url": "https://example.com/a", "sha256": "0".repeat(64)}),
+        )
+        .unwrap();
+        assert!(old.github_url.is_none());
+    }
+    #[test]
+    fn cancelling_primary_does_not_start_github_request() {
+        let payload = LauncherUpdatePlatform {
+            url: "https://example.com/a".into(),
+            github_url: Some("https://github.com/a".into()),
+            sha256: "0".repeat(64),
+        };
+        let cancel = AtomicBool::new(false);
+        let mut calls = 0;
+        assert!(download_from_sources(&payload, &cancel, true, |_| {
+            calls += 1;
+            cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+            bail!("cancelled")
+        })
+        .is_err());
+        assert_eq!(calls, 1);
+    }
+}
+
 pub(crate) fn install_update(
     update: &AvailableUpdate,
     cancel: Arc<AtomicBool>,
     mut status_updater: impl FnMut(SplashUpdate),
     before_commit: impl FnOnce() -> Result<()>,
+    source: crate::sources::DownloadSource,
 ) -> Result<()> {
     let current_exe = std::env::current_exe()?;
     let update_path = launcher_update_temp_path(&current_exe);
-    download_launcher_update(
-        &update.payload.url,
-        &update_path,
-        &update.payload.sha256,
-        cancel.clone(),
-        &mut status_updater,
-    )?;
+    download_from_sources(&update.payload, &cancel, source.prefer_cnb(), |url| {
+        download_launcher_update(
+            url,
+            &update_path,
+            &update.payload.sha256,
+            cancel.clone(),
+            &mut status_updater,
+        )
+    })?;
     crate::launcher::ensure_not_cancelled(&cancel)?;
     make_executable(&update_path)?;
     before_commit()?;
@@ -309,6 +365,36 @@ pub(crate) fn install_update(
         100,
     ));
     replace_launcher_and_restart(&current_exe, &update_path)
+}
+
+fn download_from_sources(
+    payload: &LauncherUpdatePlatform,
+    cancel: &AtomicBool,
+    prefer_cnb: bool,
+    mut download: impl FnMut(&str) -> Result<()>,
+) -> Result<()> {
+    let mut failures = Vec::new();
+    let mut sources = vec![payload.url.as_str()];
+    if let Some(url) = &payload.github_url {
+        if !sources.contains(&url.as_str()) {
+            sources.push(url);
+        }
+    }
+    if !prefer_cnb && sources.len() > 1 {
+        sources.swap(0, 1);
+    }
+    for url in sources {
+        crate::launcher::ensure_not_cancelled(cancel)?;
+        match download(url) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                tracing::warn!("Launcher payload {url}: {error:#}");
+                failures.push(format!("{error:#}"));
+            }
+        }
+    }
+    crate::launcher::ensure_not_cancelled(cancel)?;
+    bail!("{}", failures.join("; "))
 }
 
 /// 下载启动器更新载荷到本地临时路径，并校验 SHA-256。
@@ -329,7 +415,8 @@ fn download_launcher_update(
     validate_launcher_update_payload(url, expected_sha256)?;
 
     // 载荷 URL 来自公开清单；ESA 边缘节点要求载荷请求携带 mTLS 客户端证书。
-    let client = launcher_update_http_client(None, true)?;
+    let with_mtls = Url::parse(url)?.host_str() != Some("github.com");
+    let client = launcher_update_http_client(None, with_mtls)?;
     // 预清理残留的 .part 与目标文件，保证本次下载从零开始。
     let part_path = launcher_update_part_path(update_path);
     remove_launcher_update_file_if_exists(&part_path)?;

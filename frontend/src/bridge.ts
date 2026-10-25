@@ -17,6 +17,7 @@ let simulated: Snapshot = {
   update_version: null,
   update_checked: true,
   backend_running: false,
+  deployment_required: false,
   progress: null,
   error: null,
   error_code: null,
@@ -30,6 +31,7 @@ let simulated: Snapshot = {
   can_cancel: false,
 };
 const scenario = new URLSearchParams(location.search).get("preview");
+if (preview && scenario === "deploy") simulated.deployment_required = true;
 if (preview && scenario) {
   const phase = (
     {
@@ -60,7 +62,7 @@ if (preview && scenario) {
       progress: ["starting", "repairing"].includes(phase)
         ? {
             title: "",
-            detail: "uv sync · Python 3.14.6",
+            detail: "Downloading Python 3.14 components",
             subtitle: "",
             progress: 64.5,
             uv_progress: {
@@ -102,6 +104,7 @@ export async function command<T = void>(
       ...simulated,
       phase: "idle",
       backend_running: false,
+  deployment_required: false,
       can_start: true,
       can_repair: true,
       can_stop: false,

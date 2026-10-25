@@ -41,6 +41,24 @@ const platforms = manifest.platforms ? Object.keys(manifest.platforms) : [];
 if (!manifest.version || platforms.length === 0) {
   throw new Error(`${path} 缺少 version 或 platforms，拒绝发布`);
 }
+if (manifest.runtime) {
+  const runtime = manifest.runtime;
+  const ids = ['adb', 'dependencies', 'frontend', 'python', 'resources', 'source'];
+  if (runtime.schema !== 1 || !/^3\.14\.\d+$/.test(runtime.python) || !/^[a-f0-9]{40}$/.test(runtime.revision)) {
+    throw new Error('runtime 清单格式不兼容');
+  }
+  if (!runtime.platforms || Object.keys(runtime.platforms).length === 0) throw new Error('runtime 缺少平台');
+  for (const components of Object.values(runtime.platforms)) {
+    if (!Array.isArray(components) || components.map(c => c.id).sort().join() !== ids.join()) {
+      throw new Error('runtime 缺少独立组件或组件 ID 重复');
+    }
+    for (const component of components) {
+      if (!/^[a-f0-9]{64}$/.test(component.sha256) || !Number.isSafeInteger(component.size) || component.size <= 0 || !component.urls?.length || component.urls.some(url => !url.startsWith('https://'))) {
+        throw new Error('runtime 组件摘要、大小或下载地址无效');
+      }
+    }
+  }
+}
 console.log(`准备发布 stable.json ${manifest.version}（${platforms.length} 个平台）`);
 JS
 

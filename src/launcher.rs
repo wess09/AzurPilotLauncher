@@ -1,6 +1,4 @@
 //! 启动器状态机及任务调度。所有环境操作必须先在同一把锁下取得任务槽位。
-#[cfg(windows)]
-use crate::prompt_for_missing_nodejs;
 #[cfg(any(windows, target_os = "macos"))]
 use crate::tray_icon_for_platform;
 use crate::{
@@ -73,6 +71,7 @@ pub(crate) struct Snapshot {
     pub update_version: Option<String>,
     pub update_checked: bool,
     pub backend_running: bool,
+    pub deployment_required: bool,
     pub progress: Option<SplashUpdate>,
     pub error: Option<String>,
     pub error_code: Option<i32>,
@@ -108,6 +107,7 @@ impl Model {
                 update_version: None,
                 update_checked: false,
                 backend_running: false,
+                deployment_required: true,
                 progress: None,
                 error: None,
                 error_code: None,
@@ -215,7 +215,7 @@ impl Model {
                         Phase::Idle
                     };
                     self.view.error = None;
-        self.view.error_code = None;
+                    self.view.error_code = None;
                     self.view.progress = None;
                 }
                 Err(error) => {
@@ -335,7 +335,12 @@ impl Launcher {
 
     fn finish(&self, task: u64, result: Result<()>) {
         let failed = result.is_err();
-        self.change(|m| m.finish(task, result));
+        let deployment_required =
+            crate::components::deployment_required(&setup::azurpilot_repo_dir());
+        self.change(|m| {
+            m.view.deployment_required = deployment_required;
+            m.finish(task, result);
+        });
         if failed && !self.model.lock().unwrap().exiting {
             let _ = show_launcher_home(&self.app);
         }
@@ -346,6 +351,8 @@ impl Launcher {
         let controller = self.clone();
         thread::spawn(move || {
             let result = (|| {
+                let deployment_required =
+                    crate::components::deployment_required(&setup::azurpilot_repo_dir());
                 let update = if controller.skip_update {
                     None
                 } else {
@@ -355,6 +362,7 @@ impl Launcher {
                 if !model.accepts(task) {
                     bail!(t!("launcher.cancelled"));
                 }
+                model.view.deployment_required = deployment_required;
                 model.view.update_version = update.as_ref().map(|u| u.version.clone());
                 model.update = update;
                 model.view.update_checked = true;
@@ -399,6 +407,12 @@ impl Launcher {
                         controller.changed.notify_all();
                         Ok(())
                     },
+                    controller
+                        .app
+                        .state::<Arc<crate::settings::Store>>()
+                        .get()
+                        .sources
+                        .download_source,
                 )?;
                 controller.allow_exit.store(true, Ordering::SeqCst);
                 controller.changed.notify_all();
@@ -415,26 +429,15 @@ impl Launcher {
         let controller = self.clone();
         thread::spawn(move || {
             let result = (|| {
-                #[cfg(windows)]
-                {
-                    let window = controller
-                        .app
-                        .get_webview_window("launcher")
-                        .context("launcher window missing")?;
-                    if !prompt_for_missing_nodejs(
-                        &controller.app,
-                        &window,
-                        &mut |u| controller.publish(task, u),
-                        &cancel,
-                        controller.minimized,
-                    ) {
-                        bail!(t!("launcher.cancelled"));
-                    }
-                }
                 setup_azurpilot_repo(
                     |u| controller.publish(task, u),
                     cancel.clone(),
                     controller.skip_update,
+                    &controller
+                        .app
+                        .state::<Arc<crate::settings::Store>>()
+                        .get()
+                        .sources,
                 )?;
                 ensure_not_cancelled(&cancel)?;
                 let mut config =
@@ -477,23 +480,15 @@ impl Launcher {
         let controller = self.clone();
         thread::spawn(move || {
             let result = (|| {
-                #[cfg(windows)]
-                {
-                    let window = controller
+                setup::repair_environment(
+                    |u| controller.publish(task, u),
+                    cancel,
+                    &controller
                         .app
-                        .get_webview_window("launcher")
-                        .context("launcher window missing")?;
-                    if !prompt_for_missing_nodejs(
-                        &controller.app,
-                        &window,
-                        &mut |u| controller.publish(task, u),
-                        &cancel,
-                        false,
-                    ) {
-                        bail!(t!("launcher.cancelled"));
-                    }
-                }
-                setup::repair_environment(|u| controller.publish(task, u), cancel)?;
+                        .state::<Arc<crate::settings::Store>>()
+                        .get()
+                        .sources,
+                )?;
                 controller.change(|m| {
                     if m.accepts(task) {
                         m.view.message = Some(t!("launcher.repair_done").to_string());
@@ -517,9 +512,15 @@ impl Launcher {
                 }
             })
         };
-        let handler = Arc::new(NativeChannelHandler { app: self.app.clone(), on_click });
+        let handler = Arc::new(NativeChannelHandler {
+            app: self.app.clone(),
+            on_click,
+        });
         let (channel, worker) = start_launcher_channel(
-            self.port, crate::launcher_trust_secret().to_owned(), stop.clone(), handler,
+            self.port,
+            crate::launcher_trust_secret().to_owned(),
+            stop.clone(),
+            handler,
         );
         let streams = vec![worker];
         *self.session.lock().unwrap() = Some(Session {
@@ -632,7 +633,12 @@ impl Launcher {
     }
 
     pub(crate) fn webui_url(&self) -> String {
-        let channel = self.session.lock().unwrap().as_ref().map(|session| session.channel.clone());
+        let channel = self
+            .session
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|session| session.channel.clone());
         crate::webui_navigate_url(self.port, channel)
     }
 
@@ -752,7 +758,7 @@ fn same_local_origin(url: &tauri::Url, local: &tauri::Url) -> bool {
         && url.password().is_none()
 }
 
-fn authorize(window: &WebviewWindow, home_only: bool) -> Result<(), String> {
+pub(crate) fn authorize(window: &WebviewWindow, home_only: bool) -> Result<(), String> {
     if (window.label() != "launcher" && (home_only || window.label() != "main"))
         || !is_local_page(window.app_handle(), window)
     {
@@ -868,6 +874,8 @@ pub(crate) fn run() -> Result<()> {
     let allow_for_run = allow_exit.clone();
     let port = WebuiLaunchConfig::from_deploy_config(get_deploy_config().as_ref()).port;
     let preview_crash = preview_crash_arg_present();
+    let preview_deploy =
+        cfg!(debug_assertions) && std::env::args().any(|arg| arg == "--preview-deploy");
     let minimized = start_minimized_arg_present();
     let auto_start = minimized || std::env::var_os("AZURPILOT_RESUME_START").is_some();
     let settings_store = Arc::new(crate::settings::Store::new());
@@ -896,7 +904,7 @@ pub(crate) fn run() -> Result<()> {
         .setup(move |app| {
             let controller = Arc::new(Launcher { app: app.handle().clone(), model: Mutex::new(Model::new()), changed: Condvar::new(),
                 backend: Mutex::new(None), session: Mutex::new(None), allow_exit: allow_for_setup.clone(),
-                recreate: Arc::new(AtomicBool::new(false)), port, skip_update: preview_crash || preview_no_update_arg_present(), minimized });
+                recreate: Arc::new(AtomicBool::new(false)), port, skip_update: preview_crash || preview_deploy || preview_no_update_arg_present(), minimized });
             app.manage(controller.clone());
             app.manage(settings_store.clone());
             let auto_start = auto_start || settings_store.auto_start_service();
@@ -919,6 +927,10 @@ pub(crate) fn run() -> Result<()> {
                     m.view.operation = Some(Operation::Start);
                     m.view.error = Some(t!("splash.preview_crash_detail").to_string()); m.touch();
                 });
+                show_launcher_home(app.handle())?;
+            } else if preview_deploy {
+                controller.change(|model| { model.view.update_checked = true; model.view.deployment_required = true; model.touch(); });
+                if let Some(window) = app.get_webview_window("launcher") { window.set_title("AzurPilot Debug")?; }
                 show_launcher_home(app.handle())?;
             } else { controller.check(auto_start)?; }
             let ctrl_controller = controller.clone();
@@ -1041,7 +1053,8 @@ mod tests {
         let (text, code) = split_error_code("AZURPILOT_ERROR:11: git fetch origin master 重试穷尽");
         assert_eq!(code, Some(11));
         assert_eq!(text, "git fetch origin master 重试穷尽");
-        let (text, code) = split_error_code("前置说明 AZURPILOT_ERROR:13: uv sync 失败（端口 22267）");
+        let (text, code) =
+            split_error_code("前置说明 AZURPILOT_ERROR:13: uv sync 失败（端口 22267）");
         assert_eq!(code, Some(13));
         assert!(text.starts_with("前置说明"));
         assert!(text.contains("uv sync 失败"));

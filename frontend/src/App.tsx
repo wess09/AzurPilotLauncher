@@ -170,7 +170,9 @@ export function App() {
           ? "open_webui"
           : phase === "error" && state?.operation === "repair"
             ? "retry_repair"
-            : phase === "error"
+            : state?.deployment_required
+              ? "deploy"
+              : phase === "error"
               ? "retry_start"
               : "start";
   const canAct =
@@ -360,6 +362,7 @@ export function App() {
               appearance="primary"
               size="large"
               className={`${styles.primary} ${launching ? styles.launchingButton : ""}`}
+              title={!launching && state?.deployment_required ? t("deploy_hint") : undefined}
               onClick={launching ? handleLaunchClick : handleMain}
               disabled={
                 launching ? undefined : pending || !canAct || !!bridgeError
@@ -408,7 +411,7 @@ export function App() {
             {!active && !error && !state?.update_version && (
               <p className={styles.taskDetail}>
                 {state?.message ||
-                  t(state?.backend_running ? "repair_disabled" : "start_hint")}
+                  t(state?.backend_running ? "repair_disabled" : state?.deployment_required ? "deploy_hint" : "start_hint")}
               </p>
             )}
             {shownError && state?.message && (
@@ -554,6 +557,7 @@ export function App() {
       {settingsOpen && (
         <SettingsDialog
           title={t("settings")}
+          sourceLabels={{ download: t("settings_download_source"), python: t("settings_python_source"), pypi: t("settings_pypi_source"), hint: t("settings_sources_hint"), auto: t("source_auto"), cnb: t("source_cnb"), github: t("source_github"), nju: t("source_nju"), ustc: t("source_ustc"), npmmirror: t("source_npmmirror"), aliyun: t("source_aliyun"), astral: t("source_astral"), pypi_name: t("source_pypi"), tsinghua: t("source_tsinghua"), tencent: t("source_tencent"), huawei: t("source_huawei") }}
           platform={context.platform}
           languageLabel={t("settings_language")}
           autoLanguageLabel={t("lang_auto")}

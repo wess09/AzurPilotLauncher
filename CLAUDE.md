@@ -6,7 +6,7 @@
 
 ## 项目概述
 
-AzurPilot Launcher 是 [AzurPilot](https://github.com/wess09/AzurPilot) 的跨平台（Windows/macOS/Linux）桌面启动器，基于 **Tauri 2 + Rust** 构建。它通过内嵌的 `uv` 二进制文件管理独立的 Python 3.14.6 环境，处理基于 git 的更新，启动 Python WebUI 后端（`gui.py`），并提供原生 webview 壳（含 React 启动首页、系统托盘、通知和自定义标题栏）。
+AzurPilot Launcher 是 [AzurPilot](https://github.com/wess09/AzurPilot) 的跨平台（Windows/macOS/Linux）桌面启动器，基于 **Tauri 2 + Rust** 构建。它从既有 `stable.json` 按需部署 CI 编译的独立组件和最新稳定 Python 3.14.x，启动 Python WebUI 后端（`gui.py`），并提供原生 webview 壳（含 React 启动首页、系统托盘、通知和自定义标题栏）。
 
 ## 构建与开发命令
 
@@ -96,10 +96,12 @@ locales/
 - `launcher.rs`：统一状态、互斥任务、进度事件、托盘与每次后端会话的生命周期。
 - `updater.rs`：自动检查与显式安装分离，保留下载校验、mTLS 和平台替换。
 - `windows.rs`：WebUI 窗口、导航失败时本地 `#/connection-error` React 页面、标题栏注入。
-- `setup.rs`：首次安装、Git 更新与依赖同步；修复只重建 `.venv`，不会更新仓库或清理全局缓存。
+- `components.rs`：按清单下载、校验、事务提交与恢复；可选 CI uv 工具只在镜像备用安装时下载。
+- `setup.rs`：便携目录和后端配置；修复重新部署运行组件并保留代码与缓存。
+- `sources.rs` / `settings.rs`：按系统语言与真实时区自动选择 CNB/GitHub，保存可覆盖的组件、Python、PyPI 源。
 - `task_process.rs` / `backend_process.rs`：任务进程组及 Windows Job；`cancel.rs` 让 HTTP 等待可取消。
 
-普通启动先显示首页并检查启动器更新；发现新版后等待用户点击更新。无更新时点击“启动”才执行环境准备、仓库更新和后端启动。运行后首页隐藏（Linux 最小化到任务栏），WebUI 独立显示。首页提供停止服务与环境修复，运行中禁止修复。
+普通启动先显示首页并检查启动器更新；发现新版后等待用户点击更新。无更新时点击“启动”才执行组件部署和后端启动。运行后首页隐藏（Linux 最小化到任务栏），WebUI 独立显示。首页提供停止服务与环境修复，运行中禁止修复。
 
 所有操作通过 Rust 状态机校验；前端先订阅事件，再请求快照。快照有递增 `sequence` 和独立任务 `task_id`。进度在同一任务内单调，新任务从零开始；依赖子条以子任务标识重置。事件最多 10Hz，状态结束立即推送，React 使用 250ms 线性插值且支持减少动态效果。
 
@@ -146,10 +148,7 @@ AzurPilot 启动模拟器时根据 `AP_LAUNCHER_JOB_BREAKAWAY=1` 或兼容别名
 
 ### 部署配置
 
-六个 `deploy.*.yaml` 文件配置不同平台/镜像组合。带 `-cn` 后缀的变体使用中国大陆可访问的镜像源。`setup.rs` 中的 `migrate_dependency_config()` 会在启动时自动迁移 `config/deploy.yaml`：
-- 更新 Python/Adb/Git 可执行文件路径为 `.venv` 内路径
-- 移除已废弃的 `RequirementsFile` 配置项
-- 强制设置 `InstallDependencies: true`
+`config/deploy.yaml` 保留后端 WebUI/ADB 等业务选项。启动器不依赖后端 deploy 安装器定位目录。配置迁移写入 `.venv/runtime` 解释器路径、ADB 路径和选定 PyPI 源，关闭后端自动安装依赖/Git 更新。前端在 CI 构建并附内容指纹。
 
 ### 时间炸弹机制
 
@@ -166,25 +165,9 @@ AzurPilot 启动模拟器时根据 `AP_LAUNCHER_JOB_BREAKAWAY=1` 或兼容别名
 - 额外的 `worker` 任务用临时清单执行 `bash cf-worker/deploy.sh --dry-run`，校验 Cloudflare Worker 配置保持纯静态（无 `main`）
 - 同一事件/分支的新运行取消旧运行；单个矩阵任务失败不取消其他平台，超时为 45 分钟
 - 使用 `build.rs` 的 uv/mTLS 空占位符，不需要发布密钥，也不执行打包或部署
-- Windows 托管 runner 以管理员身份运行，满足启动器 manifest 和 Node.js 安全目录 ACL 的要求；Windows 本地测试也需管理员终端
+- Windows 托管 runner 以管理员身份运行，满足启动器 manifest 要求；本地纯组件测试亦可使用 RunAsInvoker
 - 可在 GitHub Actions 中选择 **Test AzurPilot → Run workflow** 手动运行；本地使用上述两条 Cargo 命令复现
 
-GitHub Actions（`.github/workflows/package.yml`）：
-- 触发条件：tag push 或手动 `workflow_dispatch`
-- 构建矩阵：`ubuntu-22.04`、`macos-latest`、`windows-latest`
-- Linux/macOS 从源码编译 Git v2.49.1，Windows 下载 MinGit v2.51.0
-- 下载 Android platform-tools（adb）
-- 创建可重定位 `.venv`（Python 3.14.6 + uv + adb + git + requests）
-- 打包为 `tar.xz` 归档（国际版 + CN 镜像版）
-- 上传版本化启动器更新载荷到 R2 和 CNB Release `1.0.0`；`stable.json` 作为**纯静态资源**部署到 Cloudflare Worker（`cf-worker/`，主地址 `https://launcher-api.azurpilot.com/updata/stable.json`，载荷 URL 为 `https://launcher-download.azurpilot.com/<文件名>`，由该域名 302 到 CNB；无 `main` 脚本，静态请求不消耗 Workers 请求配额；配置与权限见 `cf-worker/README.md`）
-- CNB 上传使用 `git-cnb` 1.2.3 和 `CNB_TOKEN` secret；固定 Release `1.0.0`，同名附件先删除再上传以实现覆盖
+GitHub Actions 打包、运行组件与统一清单发布见 [独立组件部署](docs/runtime-components.md)。该工作流会生成轻量启动器归档及六类组件 ZIP，下载全部完成后再发布 `stable.json`；GitHub/CNB 不另存组件 JSON。CI 解析最新稳定 Python 3.14 补丁版。用户选择镜像备用安装时，只使用 CI 发布的 uv 和已经编译的 wheels，不在设备上编译依赖。
 
-### 关键常量与配置
-
-- 默认 WebUI 端口：`22267`
-- Python 版本：`3.14.6`（`setup.rs` 中 `PYTHON_VERSION`）
-- Git 更新最大重试：20 次，间隔 1 秒
-- 后端端口等待超时：60 秒
-- 后端连接检查超时：500 毫秒
-- 通知流断线重连间隔：3 秒
-- `UV_PYTHON_INSTALL_MIRROR` 默认使用 npmmirror 加速 Python standalone 下载，并以 python-standalone.org 作为备用源
+关键配置：WebUI 端口 22267；WS 心跳 15 秒；部署失败/关闭/取消不删除环境。源码、资源、前端、Python、依赖与 ADB 清单必须来自同一批源码提交。

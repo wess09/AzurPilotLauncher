@@ -21,19 +21,19 @@ mod launcher;
 /// 本机启动器 WS：控制、通知、心跳与免密票据。
 mod launcher_control;
 mod launcher_protocol;
-/// Windows 运行时 Node.js 的检测与安装引导。
-mod nodejs;
 /// 平台原生通知与点击回调。
 mod notify;
 /// 统一的启动进度状态、快照与推送节奏。
 mod progress;
 /// 启动器行为设置：SQLite 存储、Tauri 命令与开机自启副作用。
 mod settings;
+mod sources;
 mod task_process;
 mod updater;
 mod windows;
 use windows::*;
-/// 首次启动环境准备（deploy.yaml、仓库克隆/更新、依赖同步）。
+mod components;
+/// 首次部署、组件更新与后端配置。
 mod setup;
 /// 窗口工具（控制台附着状态等平台辅助）。
 mod window_util;
@@ -42,15 +42,11 @@ mod window_util;
 extern crate rust_i18n;
 i18n!("locales", fallback = "en");
 
-#[cfg(windows)]
-use crate::setup::SplashUpdate;
 use anyhow::{anyhow, Context, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use chrono::{DateTime, FixedOffset, Local, Utc};
 use reqwest::header::DATE;
 use rust_i18n::t;
-#[cfg(windows)]
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     fs,
     path::Path,
@@ -64,8 +60,6 @@ use tauri::{
     Emitter, Manager, State, Url, WebviewWindow,
 };
 use tauri_plugin_dialog::{DialogExt, FilePath};
-#[cfg(windows)]
-use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind};
 use tracing::{error, info, warn};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
@@ -133,7 +127,10 @@ pub(crate) fn launcher_trust_secret() -> &'static str {
 }
 
 /// 通过本次后端会话的 WS 换取一次性票据，失败时进入正常首页。
-fn webui_navigate_url(port: u16, channel: Option<Arc<launcher_control::LauncherChannel>>) -> String {
+fn webui_navigate_url(
+    port: u16,
+    channel: Option<Arc<launcher_control::LauncherChannel>>,
+) -> String {
     match channel.and_then(|channel| channel.login_ticket().ok()) {
         Some(ticket) => format!("http://127.0.0.1:{port}/?launcherTicket={ticket}"),
         None => backend_url(port),
@@ -333,102 +330,6 @@ fn preview_crash_arg_present() -> bool {
 /// 是否以"启动后最小化到托盘"模式启动。
 fn start_minimized_arg_present() -> bool {
     launcher_arg_present(START_MINIMIZED_ARGS)
-}
-
-/// 生成更新载荷的临时落地路径：系统临时目录 + 进程 ID + 原可执行文件名，
-/// 避免多实例或并发更新互相覆盖。
-#[cfg(windows)]
-fn prompt_for_missing_nodejs(
-    app_handle: &tauri::AppHandle,
-    splash: &WebviewWindow,
-    mut status_updater: &mut impl FnMut(SplashUpdate),
-    cancel_requested: &Arc<AtomicBool>,
-    start_minimized: bool,
-) -> bool {
-    let availability = crate::nodejs::is_nodejs_available();
-    if matches!(availability, crate::nodejs::NodeJsAvailability::Ready) {
-        return true;
-    }
-    if cancel_requested.load(Ordering::SeqCst) {
-        return false;
-    }
-
-    // 两种情形文案不同：完全没装，与装了但版本低于构建要求。
-    let (title, message, log) = match &availability {
-        crate::nodejs::NodeJsAvailability::Outdated(found) => (
-            t!("dialog.nodejs_outdated_title"),
-            t!(
-                "dialog.nodejs_outdated_message",
-                found = found,
-                minimum = crate::nodejs::NODEJS_MIN_FRONTEND_VERSION_TEXT
-            ),
-            "Node.js version is below the version required by the frontend build",
-        ),
-        _ => (
-            t!("dialog.nodejs_missing_title"),
-            t!("dialog.nodejs_missing_message"),
-            "Node.js was not found on this Windows system",
-        ),
-    };
-    warn!("{log}");
-    // 最小化启动时先把 splash 唤起，保证弹窗有父窗口可依附。
-    if start_minimized {
-        let _ = reveal_window(splash);
-    }
-    status_updater(SplashUpdate::loading(
-        t!("setup.checking_nodejs"),
-        t!("setup.checking_nodejs"),
-        5,
-    ));
-
-    // 阻塞式弹窗：用户选择"立即安装"才进入安装流程，"暂不"则继续启动。
-    let install_requested = app_handle
-        .dialog()
-        .message(message)
-        .title(title)
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancelCustom(
-            t!("dialog.nodejs_install").to_string(),
-            t!("dialog.nodejs_not_now").to_string(),
-        ))
-        .parent(splash)
-        .blocking_show();
-    if !install_requested {
-        info!("Node.js installation was declined by the user");
-        return true;
-    }
-
-    match crate::nodejs::install_nodejs(&availability, cancel_requested, &mut status_updater) {
-        Ok(()) => {
-            info!("Node.js installation completed successfully");
-            true
-        }
-        Err(_) if cancel_requested.load(Ordering::SeqCst) => false,
-        Err(error) => {
-            error!("Node.js installation failed: {error:#}");
-            // 安装失败：splash 进入错误态并弹窗提示，但流程仍继续——
-            // 后续步骤失败时会给出更具体的报错。
-            status_updater(SplashUpdate::error(
-                t!("dialog.nodejs_install_failed"),
-                t!(
-                    "dialog.nodejs_install_failed_detail",
-                    error = format!("{error:#}")
-                ),
-                7,
-            ));
-            app_handle
-                .dialog()
-                .message(t!(
-                    "dialog.nodejs_install_failed_detail",
-                    error = format!("{error:#}")
-                ))
-                .title(t!("dialog.nodejs_install_failed"))
-                .kind(MessageDialogKind::Error)
-                .parent(splash)
-                .blocking_show();
-            true
-        }
-    }
 }
 
 fn main() -> Result<()> {
@@ -686,7 +587,10 @@ fn reveal_in_file_manager(path: &std::path::Path) -> std::io::Result<()> {
         use std::process::Command;
         // explorer /select 需要反斜杠路径；"/select," 与路径作为一个参数传入。
         Command::new("explorer")
-            .arg(format!("/select,{}", path.to_string_lossy().replace('/', "\\")))
+            .arg(format!(
+                "/select,{}",
+                path.to_string_lossy().replace('/', "\\")
+            ))
             .spawn()?;
     }
     #[cfg(target_os = "macos")]

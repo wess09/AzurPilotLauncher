@@ -22,7 +22,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=flat-square" alt="License: GPL-3.0"></a>
   <a href="https://www.tauri.app/"><img src="https://img.shields.io/badge/Framework-Tauri%202-24C8DB.svg?style=flat-square&logo=tauri&logoColor=white" alt="Framework: Tauri 2"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-DEA584.svg?style=flat-square&logo=rust&logoColor=white" alt="Language: Rust"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.14.6-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.14.6"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.14.x-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.14.x"></a>
   <a href="https://github.com/astral-sh/uv"><img src="https://img.shields.io/badge/Packaging-uv-DE5FE9.svg?style=flat-square" alt="Packaging: uv"></a>
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-181717.svg?style=flat-square&logo=github&logoColor=white" alt="Platform: Windows / macOS / Linux">
 </p>
@@ -87,7 +87,7 @@
     <tr>
       <td width="25%"><b>代码库体积</b><br><img src="https://img.shields.io/github/repo-size/wess09/AzurPilotLauncher?style=flat-square&color=586069" alt="Repo Size"></td>
       <td width="25%"><b>代码语言</b><br><img src="https://img.shields.io/badge/Language-Rust%20%7C%20Tauri-DEA584?style=flat-square&logo=rust&logoColor=white" alt="Language"></td>
-      <td width="25%"><b>运行时</b><br><img src="https://img.shields.io/badge/Python-3.14.6%20%2B%20uv-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python Runtime"></td>
+      <td width="25%"><b>运行时</b><br><img src="https://img.shields.io/badge/Python-3.14.x%20%2B%20uv-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python Runtime"></td>
       <td width="25%"><b>界面语言</b><br><img src="https://img.shields.io/badge/i18n-%E7%AE%80%E4%BD%93%20%7C%20%E7%B9%81%E9%AB%94%20%7C%20%E6%97%A5%E6%9C%AC%E8%AA%9E%20%7C%20En-blueviolet?style=flat-square" alt="i18n"></td>
     </tr>
     <tr>
@@ -109,7 +109,7 @@
 
 **AzurPilot Launcher** 致力于让全功能《碧蓝航线》自动化助手 **AzurPilot** 在 Windows、macOS 与 Linux 上以原生方式一键运行——无论是 Apple Silicon 的 Mac Mini，还是传统 x86 主机，都无需转译、无需 Docker、不污染系统环境。
 
-启动器内嵌 `uv` 包管理器，首次启动自动创建可重定位的 `.venv`（Python 3.14.6），经 git 拉取最新代码并同步依赖后，启动 Python WebUI 后端，并以原生 WebView 壳承载——内置启动画面、系统托盘、桌面通知与自定义标题栏。界面支持简体中文、繁体中文、日语、英语四种语言，按系统环境自动选择。
+启动器从同一份 `stable.json` 按需下载 CI 预构建的代码、游戏资源、前端、最新稳定 Python 3.14.x、依赖和 ADB，再启动 Python WebUI。缺少组件时首页显示“部署”；系统简体中文且为北京时间时优先 CNB，其他情况优先 GitHub，也可手动切换组件、Python 和 PyPI 镜像。用户无需预装 Git、uv、Python 或 Node.js。详见[独立组件部署](docs/runtime-components.md)。
 
 ---
 
@@ -179,10 +179,10 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/模块-部署形态-0052cc?style=flat-square" alt="Tag"><br>
       <h3>零配置环境搭建</h3>
-      <p>启动器内嵌 <code>uv</code>，首次运行自动下载 Python 3.14.6 并创建<b>可重定位 <code>.venv</code></b>，同时将 uv、git、adb 一并部署进虚拟环境。用户机器无需预装 Python、uv 或 Git，开箱即跑。</p>
+      <p>CI 预构建独立组件，启动器缺什么下什么，并复用已完成的组件和下载缓存。Python 自动使用最新稳定 3.14 补丁版，无需系统 Python、Git 或 Node.js。</p>
       <div>
-        <img src="https://img.shields.io/badge/运行时-Python%203.14.6-orange?style=flat-square" alt="Python">
-        <img src="https://img.shields.io/badge/依赖管理-uv%20内置-blueviolet?style=flat-square" alt="uv">
+        <img src="https://img.shields.io/badge/运行时-Python%203.14.x-orange?style=flat-square" alt="Python">
+        <img src="https://img.shields.io/badge/依赖管理-CI%20预构建-blueviolet?style=flat-square" alt="uv">
         <img src="https://img.shields.io/badge/体验-开箱即跑-brightgreen?style=flat-square" alt="Ready">
       </div>
     </td>
@@ -201,9 +201,9 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/模块-更新体系-403294?style=flat-square" alt="Tag"><br>
       <h3>自动化更新体系</h3>
-      <p>启动时经 git 自动拉取最新代码（最多重试 20 次），再用 <code>uv sync --frozen</code> 按 <code>uv.lock</code> 精确同步依赖；启动器本体经 mTLS 安全通道自更新，支持多镜像回退。</p>
+      <p>更新信息统一保存在启动器 stable.json，代码、资源和依赖按内容摘要更新；启动器本体提供 CNB 与 GitHub 下载地址。</p>
       <div>
-        <img src="https://img.shields.io/badge/代码更新-Git%20重试机制-purple?style=flat-square" alt="Git Update">
+        <img src="https://img.shields.io/badge/代码更新-SHA256%20组件-purple?style=flat-square" alt="Git Update">
         <img src="https://img.shields.io/badge/依赖锁定-uv.lock-blue?style=flat-square" alt="Lock">
         <img src="https://img.shields.io/badge/自更新-mTLS%20多镜像-orange?style=flat-square" alt="mTLS">
       </div>
@@ -224,7 +224,7 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/模块-网络策略-de350b?style=flat-square" alt="Tag"><br>
       <h3>双镜像与直连策略</h3>
-      <p>提供国际版与 <code>-cn</code> 国内镜像版两种部署配置；Python standalone 下载默认走 npmmirror 加速。更新代码、内置 Python、uv 与依赖安装，以及 WebView 与本地 WebUI 的连接均绕过系统代理，减少环境干扰。</p>
+      <p>系统简体中文且使用北京时间时自动优先 CNB，其余优先 GitHub。设置中可选择组件、Python 和 PyPI 镜像，全部显示镜像名。</p>
       <div>
         <img src="https://img.shields.io/badge/部署-国际版%20%2F%20CN%20镜像-red?style=flat-square" alt="Mirrors">
         <img src="https://img.shields.io/badge/加速-npmmirror-red?style=flat-square" alt="npmmirror">
@@ -254,19 +254,19 @@
 graph TD
     subgraph Shell ["启动器壳层 (Tauri 2 · Rust)"]
         Splash["启动画面 React launcher<br/>(玻璃质感进度条 / 错误页 React connection error)"]
-        Setup["环境搭建 setup.rs<br/>(Python / uv / adb / git 安装与迁移)"]
+        Setup["组件部署 components.rs<br/>(下载 / 校验 / 事务恢复)"]
         Tray["系统集成<br/>(系统托盘 / 原生通知 / 自定义标题栏)"]
         Backend["后端托管 backend.rs<br/>(端口清理 / 进程回收)"]
     end
 
-    subgraph Venv [".venv 运行时 (uv 管理 · 可重定位)"]
-        PYTHON["CPython 3.14.6 解释器"]
-        TOOLS["uv / git / adb 内置工具链"]
-        SYNC["uv sync --frozen 依赖同步 (uv.lock 锁定)"]
+    subgraph Venv [".venv/runtime (CI 预构建 · 可重定位)"]
+        PYTHON["CPython 3.14.x 解释器"]
+        TOOLS["Python / dependencies / ADB 内置工具链"]
+        SYNC["CI 构建依赖 (uv.lock 锁定)"]
     end
 
     subgraph Repo ["AzurLaneAutoScript 仓库"]
-        GIT["Git 自动更新 (deploy.git.GitManager · 重试 20 次)"]
+        GIT["stable.json 独立组件更新"]
         GUI["gui.py WebUI 后端"]
         WEB["WebUI 控制台 (127.0.0.1:22267)"]
     end
@@ -309,7 +309,7 @@ graph TD
     <tr>
       <td><b>Python / uv / Git / adb</b></td>
       <td><img src="https://img.shields.io/badge/依赖-无需预装-brightgreen?style=flat-square" alt="No Preinstall"></td>
-      <td>启动器内嵌 uv 并自动创建 <code>.venv</code>，自动部署 git 与 adb 至虚拟环境</td>
+      <td>启动器内嵌 uv 并自动创建 <code>.venv</code>，按需下载经过校验的 Python、依赖与 ADB</td>
     </tr>
     <tr>
       <td><b>网络连接</b></td>
@@ -388,11 +388,11 @@ graph TD
 | # | 差异点 | 说明 |
 |:---:|:---|:---|
 | 1 | **全平台支持** | 不再局限于 Windows，macOS（含 Apple Silicon 原生）与 Linux 均可运行 |
-| 2 | **更新策略重构** | 只更新 git 仓库，并用 `.venv` 内置的 uv 同步依赖；重复启动仅重新聚焦已有窗口，不做破坏性清理 |
-| 3 | **依赖版本锁定** | Python 包版本由 `pyproject.toml` 与 `uv.lock` 锁定，自动同步默认启用，杜绝环境漂移 |
+| 2 | **更新策略重构** | 按统一清单更新独立组件，校验成功后成组提交；重复启动仅重新聚焦已有窗口 |
+| 3 | **依赖版本锁定** | Python 包版本在 CI 依照 `uv.lock` 构建，备用安装也仅使用编译好的 wheel |
 | 4 | **adb 策略** | 不再重启和替换 adb |
-| 5 | **目录结构调整** | Python / uv / git / adb 全部收纳进 `.venv`，详见下方目录结构 |
-| 6 | **Node.js 自动化 (Windows)** | 检测系统级 Node.js；未检测到时可在确认后自动下载并安装 |
+| 5 | **目录结构调整** | Python / Python / dependencies / ADB 全部收纳进 `.venv`，详见下方目录结构 |
+| 6 | **预构建前端** | CI 编译 WebUI，运行时无需 Node.js 或 npm |
 
 ---
 
@@ -409,12 +409,13 @@ AzurPilot 启动器
 * macOS:   AzurPilot.app/Contents/MacOS/AzurPilot
 * Linux:   AzurLaneAutoScript/AzurPilot
 
-Python / uv
-* 所有系统: .venv
+Python
+* Windows: .venv/runtime/python.exe
+* Unix: .venv/runtime/bin/python3.14
 
-Git
-* Unix:    .venv/bin/git
-* Windows: .venv/Scripts/git/cmd/git.exe
+Components
+* .azurpilot/installed.json
+* .azurpilot/cache/
 
 Adb
 * Unix:    .venv/bin/adb
@@ -422,7 +423,7 @@ Adb
 
 启动器会附加的环境变量
 * Unix:    .venv/bin
-* Windows: .venv/Scripts、.venv/Scripts/git/cmd
+* Windows: .venv/Scripts
 ```
 
 ---
@@ -503,7 +504,7 @@ Adb
 | **Tauri 2** | <img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-brightgreen?style=flat-square" alt="MIT / Apache-2.0"> | 跨平台桌面壳、WebView 承载与系统集成 |
 | **Rust** | <img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-brightgreen?style=flat-square" alt="MIT / Apache-2.0"> | 系统编程语言，启动器全部原生逻辑 |
 | **uv** | <img src="https://img.shields.io/badge/License-Apache--2.0%20%7C%20MIT-brightgreen?style=flat-square" alt="Apache-2.0 / MIT"> | 内嵌的 Python 包管理器，构建可重定位 `.venv` |
-| **CPython 3.14.6** | <img src="https://img.shields.io/badge/License-PSF--2.0-blue?style=flat-square" alt="PSF-2.0"> | 自动化引擎的 Python 运行时 |
+| **CPython 3.14.x** | <img src="https://img.shields.io/badge/License-PSF--2.0-blue?style=flat-square" alt="PSF-2.0"> | 自动化引擎的 Python 运行时 |
 | **Git** | <img src="https://img.shields.io/badge/License-GPL--2.0-blue?style=flat-square" alt="GPL-2.0"> | 仓库代码更新（Unix 源码编译 / Windows MinGit） |
 | **Android platform-tools** | <img src="https://img.shields.io/badge/License-Apache--2.0-brightgreen?style=flat-square" alt="Apache-2.0"> | adb 调试桥，模拟器与设备通信 |
 

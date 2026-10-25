@@ -25,6 +25,7 @@ const ready = (): Snapshot => ({
   update_version: null,
   update_checked: true,
   backend_running: false,
+  deployment_required: false,
   progress: null,
   error: null,
   error_code: null,
@@ -80,6 +81,28 @@ const send = (s: Partial<Snapshot>) =>
   act(() => bridge.receive({ ...ready(), sequence: 2, ...s }));
 
 describe("launcher actions", () => {
+  it("saves named mirrors without showing URL paths", async () => {
+    const settings = { launchOnStartup: false, autoStartService: false, keepWebviewOnTray: false, language: null, downloadSource: "auto", pythonSource: "auto", pypiSource: "auto" };
+    bridge.command.mockImplementation(async (name: string, args?: { settings: unknown }) => name === "settings_set" ? args?.settings : name === "settings_get" ? settings : undefined);
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const python = await screen.findByRole("combobox", { name: "Python source" });
+    fireEvent.click(python);
+    const options = await screen.findAllByRole("option");
+    expect(options.every(option => !option.textContent?.includes("http"))).toBe(true);
+    fireEvent.click(screen.getByRole("option", { name: "Taobao mirror" }));
+    await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", { settings: { ...settings, pythonSource: "npmmirror" } }));
+  });
+  it("shows Deploy for missing components and Run after deployment", async () => {
+    await mount();
+    await send({ deployment_required: true });
+    fireEvent.click(screen.getByRole("button", { name: /Deploy$/ }));
+    expect(bridge.command).toHaveBeenCalledWith("launcher_start");
+    expect(screen.getByRole("button", { name: /Deploy$/ }).getAttribute("title")).toBe("Download missing runtime components, then open WebUI.");
+    await send({ sequence: 3, deployment_required: false });
+    expect(screen.getByRole("button", { name: /Run$/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Deploy$/ })).toBeNull();
+  });
   it("launches only when the Rust snapshot permits it", async () => {
     await mount();
     fireEvent.click(screen.getByRole("button", { name: /Run$/ }));

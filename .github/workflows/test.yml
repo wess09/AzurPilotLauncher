@@ -49,6 +49,12 @@ jobs:
       - name: Build launcher UI
         run: npm --prefix frontend run build
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Test component packaging and stable.json merging
+        run: python -m unittest discover -s tools -p "test_*.py"
+
       - name: Install Tauri dependencies (Ubuntu only)
         if: runner.os == 'Linux'
         run: |

@@ -271,6 +271,9 @@ impl ManagedBackend {
         // 同时注入 AP / ALAS 的归属标记与信任密钥，兼容新旧 Python 后端。
         backend_env::configure(&mut command, std::process::id(), launcher_trust_secret());
         isolate_python_child_environment(&mut command);
+        command
+            .env("AZURPILOT_PREBUILT", "1")
+            .env("AZURPILOT_NO_UV_BOOTSTRAP", "1");
         // 以进程组方式拉起：terminate/drop 时可整组回收，防止孙进程残留。
         #[cfg(unix)]
         let child = command.group().create_no_window().spawn()?;

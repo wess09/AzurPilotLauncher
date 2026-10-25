@@ -25,6 +25,13 @@ export const languageOptions = [
   { value: "en", label: "English" },
 ] as const;
 
+type SourceLabel = "download" | "python" | "pypi" | "hint" | "auto" | "cnb" | "github" | "nju" | "ustc" | "npmmirror" | "aliyun" | "astral" | "pypi_name" | "tsinghua" | "tencent" | "huawei";
+const sourceGroups = [
+  { field: "downloadSource", label: "download", options: ["auto", "cnb", "github"] },
+  { field: "pythonSource", label: "python", options: ["auto", "nju", "ustc", "npmmirror", "aliyun", "cnb", "astral"] },
+  { field: "pypiSource", label: "pypi", options: ["auto", "pypi", "tsinghua", "ustc", "aliyun", "tencent", "huawei", "nju"] },
+] as const;
+
 // 设置弹窗：开关即时生效（settings_set 保存并应用副作用），失败回滚。
 export function SettingsDialog({
   title,
@@ -36,6 +43,7 @@ export function SettingsDialog({
   keepWebviewOnTrayLabel,
   closeLabel,
   unsupportedLabel,
+  sourceLabels,
   onLanguageChange,
   onClose,
 }: {
@@ -48,10 +56,12 @@ export function SettingsDialog({
   keepWebviewOnTrayLabel: string;
   closeLabel: string;
   unsupportedLabel: string;
+  sourceLabels: Record<SourceLabel, string>;
   onLanguageChange?: (locale: string | null) => void;
   onClose: () => void;
 }) {
   const [settings, setSettings] = useState<LauncherSettings | null>(null);
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     let disposed = false;
     const fallback: LauncherSettings = {
@@ -59,6 +69,9 @@ export function SettingsDialog({
       autoStartService: false,
       keepWebviewOnTray: false,
       language: null,
+      downloadSource: "auto",
+      pythonSource: "auto",
+      pypiSource: "auto",
     };
     void command<LauncherSettings>("settings_get")
       .then((s) => {
@@ -72,7 +85,8 @@ export function SettingsDialog({
     };
   }, []);
   const update = async (patch: Partial<LauncherSettings>) => {
-    if (!settings) return;
+    if (!settings || saving) return;
+    setSaving(true);
     const next = { ...settings, ...patch };
     setSettings(next);
     try {
@@ -84,7 +98,7 @@ export function SettingsDialog({
         onLanguageChange?.(saved?.language ?? patch.language ?? null);
     } catch {
       setSettings(settings);
-    }
+    } finally { setSaving(false); }
   };
   return (
     <Dialog
@@ -98,11 +112,11 @@ export function SettingsDialog({
       <DialogSurface className={styles.dialog} aria-labelledby="settings-title">
         <DialogBody>
           <DialogTitle id="settings-title">{title}</DialogTitle>
-          <DialogContent>
+          <DialogContent className={styles.settingsContent}>
             {settings && (
               <div className={styles.settingsRows}>
                 <Field label={languageLabel}>
-                  <Dropdown
+                  <Dropdown disabled={saving}
                     value={
                       (settings.language ?? "auto") === "auto"
                         ? autoLanguageLabel
@@ -129,6 +143,19 @@ export function SettingsDialog({
                     ))}
                   </Dropdown>
                 </Field>
+                <div className={styles.sourceSettings}>
+                  {sourceGroups.map((group) => {
+                    const selected = settings[group.field] ?? "auto";
+                    const name = (value: string) => sourceLabels[(value === "pypi" ? "pypi_name" : value) as SourceLabel];
+                    return <Field key={group.field} label={sourceLabels[group.label]}>
+                      <Dropdown disabled={saving} value={name(selected)} selectedOptions={[selected]}
+                        onOptionSelect={(_event, data) => void update({ [group.field]: data.optionValue ?? "auto" })}>
+                        {group.options.map((value) => <Option key={value} value={value}>{name(value)}</Option>)}
+                      </Dropdown>
+                    </Field>;
+                  })}
+                  <p className={styles.sourceHint}>{sourceLabels.hint}</p>
+                </div>
                 <Switch
                   checked={settings.launchOnStartup}
                   label={
@@ -136,10 +163,11 @@ export function SettingsDialog({
                       ? launchOnStartupLabel
                       : `${launchOnStartupLabel}（${unsupportedLabel}）`
                   }
-                  disabled={platform !== "windows"}
+                  disabled={saving || platform !== "windows"}
                   onChange={(_e, data) => void update({ launchOnStartup: data.checked })}
                 />
                 <Switch
+                  disabled={saving}
                   checked={settings.autoStartService}
                   label={autoStartServiceLabel}
                   onChange={(_e, data) => void update({ autoStartService: data.checked })}
@@ -151,7 +179,7 @@ export function SettingsDialog({
                       ? keepWebviewOnTrayLabel
                       : `${keepWebviewOnTrayLabel}（${unsupportedLabel}）`
                   }
-                  disabled={platform !== "windows"}
+                  disabled={saving || platform !== "windows"}
                   onChange={(_e, data) => void update({ keepWebviewOnTray: data.checked })}
                 />
               </div>

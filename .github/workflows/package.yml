@@ -18,8 +18,16 @@ on:
       - 'icons/**'
       - 'tauri.conf.json'
       - 'deploy.*.yaml'
+      - 'tools/**'
+      - 'cf-worker/**'
+      - 'install.iss'
+      - 'Info.plist'
     tags:
       - '*'
+  schedule:
+    - cron: "17 */6 * * *"
+  repository_dispatch:
+    types: [runtime-components]
   workflow_dispatch:
     inputs:
       version:
@@ -27,14 +35,173 @@ on:
         required: false
         type: string
 
-env:
-  UV_VERSION: "0.13.5"
-  UV_MANAGED_PYTHON: 1
-  UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci-cache/python
-  UV_PYTHON: 3.14.6
-
 jobs:
+  runtime-revision:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      revision: ${{ steps.source.outputs.revision }}
+    steps:
+      - name: Resolve one backend revision for every platform
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(git ls-remote https://github.com/wess09/AzurPilot.git refs/heads/master | cut -f1)"
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+  runtime-components:
+    needs: runtime-revision
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+          - os: windows-latest
+            platform: windows-x86_64
+          - os: macos-latest
+            platform: macos-aarch64
+    env:
+      UV_MANAGED_PYTHON: "1"
+      # 不复用旧补丁的安装目录；新版 uv 的下载定义负责选择最新稳定 3.14。
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci-python
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Checkout backend at resolved revision
+        uses: actions/checkout@v4
+        with:
+          repository: wess09/AzurPilot
+          ref: ${{ needs.runtime-revision.outputs.revision }}
+          path: backend-source
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend-source/frontend/package-lock.json
+      - name: Build backend frontend in CI
+        run: |
+          npm --prefix backend-source/frontend ci
+          npm --prefix backend-source/frontend run build
+      - name: Install current uv and latest stable Python 3.14
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend-source/uv.lock
+      - name: Build and relocate-test independent components
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv python install --no-bin 3.14
+          interpreter="$(uv python find --managed-python 3.14)"
+          "$interpreter" tools/build_components.py --source backend-source --output runtime-artifacts --platform '${{ matrix.platform }}' --python "$interpreter"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ matrix.platform }}
+          path: runtime-artifacts/*
+          compression-level: 0
+          retention-days: 7
+
+  publish-runtime-components:
+    needs: runtime-components
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # 启动器发布也持有此锁。读取当前清单、合并、发布必须在同一临界区内。
+    concurrency:
+      group: launcher-stable-manifest
+      cancel-in-progress: false
+    env:
+      CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+      CNB_API: https://api.cnb.cool
+      CNB_REPO: AzurPilot/AzurPilotLauncher
+      CNB_RELEASE_TAG: "1.0.0"
+      CNB_CLI_VERSION: "1.2.3"
+      GH_TOKEN: ${{ github.token }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_VERSION: "4.151.1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: runtime-*
+          merge-multiple: true
+          path: runtime-artifacts
+      - name: Validate complete runtime manifest
+        run: python tools/build_components.py --merge runtime-artifacts --output runtime-manifest.json
+      - name: Upload immutable component archives to GitHub
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view runtime >/dev/null 2>&1 || gh release create runtime --title 'Runtime components' --notes 'CI-built runtime archives. The manifest is published only in launcher stable.json.' --prerelease
+          shopt -s nullglob
+          files=(runtime-artifacts/component-*.zip)
+          existing="$(gh release view runtime --json assets --jq '.assets[].name')"
+          for file in "${files[@]}"; do
+            if grep -Fxq "$(basename "$file")" <<<"$existing"; then continue; fi
+            gh release upload runtime "$file"
+          done
+      - name: Upload immutable component archives to CNB
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${CNB_TOKEN:?Set CNB_TOKEN secret}"
+          cli="${RUNNER_TEMP}/git-cnb"
+          curl -fsSL "https://cnb.cool/looc/git-cnb/-/releases/download/${CNB_CLI_VERSION}/git-cnb_linux_amd64" -o "$cli"
+          chmod +x "$cli"
+          auth=(-H "Authorization: token ${CNB_TOKEN}" -H 'Accept: application/vnd.cnb.api+json')
+          release_json="$(curl -fsS "${auth[@]}" "${CNB_API}/${CNB_REPO}/-/releases/tags/${CNB_RELEASE_TAG}")"
+          [[ -n "$(jq -r '.id // empty' <<<"$release_json")" ]]
+          shopt -s nullglob
+          for file in runtime-artifacts/component-*.zip; do
+            name="$(basename "$file")"
+            # 内容摘要进入文件名，存在即复用；保留旧组件供旧清单和修复任务下载。
+            if jq -e --arg name "$name" '.assets[]? | select(.name == $name)' <<<"$release_json" >/dev/null; then
+              continue
+            fi
+            "$cli" --repo="$CNB_REPO" release asset-upload -t "$CNB_RELEASE_TAG" -f "$file"
+          done
+      - name: Merge runtime into launcher stable.json and publish static assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest="$(git ls-remote https://github.com/wess09/AzurPilot.git refs/heads/master | cut -f1)"
+          python tools/merge_stable_manifest.py --runtime runtime-manifest.json --expected-revision "$latest" --output cf-worker/public/updata/stable.json
+          bash cf-worker/deploy.sh --message "runtime components ${GITHUB_RUN_ID}"
+      - name: Verify published runtime revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, time, urllib.request
+          expected = json.load(open('runtime-manifest.json'))
+          for attempt in range(10):
+              with urllib.request.urlopen('https://launcher-api.azurpilot.com/updata/stable.json', timeout=15) as response:
+                  actual = json.load(response)
+              if actual.get('runtime') == expected:
+                  break
+              time.sleep(3)
+          else:
+              raise SystemExit('Published stable.json does not contain the expected runtime components')
+          PY
+
   package:
+    if: github.event_name != 'schedule' && github.event_name != 'repository_dispatch'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -49,11 +216,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - name: Get rdfind
-        uses: knicknic/os-specific-run@v1.0.3
-        with:
-          linux: sudo apt-get install -y rdfind
-          macos: brew install rdfind
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Node.js
@@ -66,15 +228,6 @@ jobs:
         run: |
           npm --prefix frontend ci
           npm --prefix frontend run build
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-suffix: ${{ matrix.os }}-${{ runner.arch }}-python-${{ env.UV_PYTHON }}
-          cache-dependency-glob: |
-            deploy.*.yaml
-            .github/workflows/package.yml
       - name: Prepare version from tag or input
         shell: python
         env:
@@ -155,21 +308,6 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"version={version}\n")
           print(f"Building version {version}")
-      - name: Prepare bootstrap uv
-        uses: knicknic/os-specific-run@v1.0.3
-        with:
-          linux: |
-            mkdir -p bootstrap
-            cp "$(command -v uv)" bootstrap/uv
-            echo "AZURPILOT_BOOTSTRAP_UV=$PWD/bootstrap/uv" >> "$GITHUB_ENV"
-          macos: |
-            mkdir -p bootstrap
-            cp "$(command -v uv)" bootstrap/uv
-            echo "AZURPILOT_BOOTSTRAP_UV=$PWD/bootstrap/uv" >> "$GITHUB_ENV"
-          windows: |
-            mkdir -ea 0 bootstrap
-            cp (Get-Command uv).Source bootstrap\uv.exe
-            "AZURPILOT_BOOTSTRAP_UV=$PWD\bootstrap\uv.exe" >> $env:GITHUB_ENV
       - name: Rustup for cache
         run: rustup toolchain install stable --profile minimal
       - name: Setup Rust cache
@@ -185,269 +323,9 @@ jobs:
           REQUIRE_LAUNCHER_MTLS_IDENTITY: "1"
           LAUNCHER_UPDATE_URL: https://launcher-api.azurpilot.com/updata/stable.json
         run: cargo build --locked --release --features custom-protocol
-      - name: Restore bundled Git cache
-        id: bundled-git-cache
-        uses: actions/cache@v4
-        with:
-          # Hash the build recipe, including Git/Conan/pedeps versions.
-          key: bundled-git-v1-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('.github/workflows/package.yml') }}
-          path: |
-            git/dist
-            git/cmd
-            git/mingw64
-            pedeps
-      - name: Get git
-        if: steps.bundled-git-cache.outputs.cache-hit != 'true'
-        uses: knicknic/os-specific-run@v1.0.3
-        with:
-          linux: |
-            git clone https://github.com/git/git.git --branch v2.49.1 --depth 1
-            cd git
-            echo NO_GETTEXT=1 > config.mak
-            cat > conanfile.txt <<CONANFILE
-            [requires]
-            openssl/3.4.1
-            libcurl/8.12.1
-            expat/2.7.1
-            pcre2/10.44
-            [generators]
-            AutotoolsDeps
-            AutotoolsToolchain
-            PkgConfigDeps
-            CONANFILE
-            container_id=$(docker run -d -v $PWD:/volume --rm -t quay.io/pypa/manylinux2010_x86_64:latest)
-            docker exec -w /volume -t $container_id yum update
-            docker exec -w /volume -t $container_id yum install -y gettext perl-IPC-Cmd perl-Digest-SHA
-            docker exec -w /volume -t $container_id pipx install conan
-            docker exec -w /volume -t $container_id conan profile detect --force
-            docker exec -w /volume -t $container_id conan install . --build=missing --build="m4*"
-            docker exec -w /volume -t $container_id make configure
-            docker exec -w /volume -t $container_id bash -c 'source conanbuild.sh; \
-              export RUNTIME_PREFIX=1
-              export CURL_CONFIG="pkg-config libcurl"
-              LDFLAGS+=" $LIBS"
-              export LDFLAGS
-              ./configure --with-openssl --with-curl --with-expat --without-tcltk --prefix=/; \
-              make -j$(nproc) RUNTIME_PREFIX=1 CURL_CONFIG="$CURL_CONFIG" install DESTDIR=/volume/dist'
-            sudo chown -R $USER:$USER .
-          macos: |
-            brew install autoconf
-            git clone https://github.com/git/git.git --branch v2.49.1 --depth 1
-            cd git
-            echo NO_GETTEXT=1 > config.mak
-            make configure
-            ./configure --with-openssl --with-curl --with-expat --without-tcltk --prefix=/
-            make -j$(sysctl -n hw.logicalcpu) RUNTIME_PREFIX=1 install DESTDIR=$PWD/dist
-          windows: |
-            curl -L -O https://github.com/brechtsanders/pedeps/releases/download/0.1.15/pedeps-0.1.15-win64.zip
-            mkdir -p pedeps
-            unzip pedeps-0.1.15-win64.zip -d pedeps/
-            curl -L -O https://github.com/git-for-windows/git/releases/download/v2.51.0.windows.2/MinGit-2.51.0.2-busybox-64-bit.zip
-            mkdir git
-            cd git
-            tar -xvf ..\MinGit-2.51.0.2-busybox-64-bit.zip
-      - name: Determine ADB cache epoch
-        id: adb-cache-epoch
-        shell: python
-        run: |
-          import datetime
-          import os
-          # platform-tools-latest is mutable; refresh at least once per UTC week.
-          year, week_number, _ = datetime.datetime.now(datetime.timezone.utc).isocalendar()
-          week = f"{year}-{week_number:02d}"
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"week={week}\n")
-      - name: Restore ADB cache
-        id: adb-cache
-        uses: actions/cache@v4
-        with:
-          key: adb-v1-${{ matrix.os }}-${{ runner.arch }}-${{ steps.adb-cache-epoch.outputs.week }}
-          path: platform-tools
-      - name: Get adb
-        if: steps.adb-cache.outputs.cache-hit != 'true'
-        uses: knicknic/os-specific-run@v1.0.3
-        with:
-          macos: |
-            curl -L -o adb.zip https://dl.google.com/android/repository/platform-tools-latest-darwin.zip
-            unzip adb.zip
-          linux: |
-            curl -L -o adb.zip https://dl.google.com/android/repository/platform-tools-latest-linux.zip
-            unzip adb.zip
-          windows: |
-            curl -L -o adb.zip https://dl.google.com/android/repository/platform-tools-latest-windows.zip
-            tar -xvf adb.zip
-      - name: Restore managed Python cache
-        # Windows cache restore can leave an invalid minor-version junction
-        # (cpython-3.14-windows-x86_64-none) that `uv python install` cannot
-        # remove; install managed Python fresh on Windows instead.
-        if: runner.os != 'Windows'
-        uses: actions/cache@v4
-        with:
-          key: managed-python-v1-${{ matrix.os }}-${{ runner.arch }}-${{ env.UV_PYTHON }}-uv-${{ env.UV_VERSION }}
-          path: .ci-cache/python
-      - name: Prepare managed Python
-        # uv validates the installed runtime; cache hits do not download it again.
-        run: uv python install --no-bin --managed-python "${{ env.UV_PYTHON }}"
-      - name: Warm packaging dependency cache
-        run: uv run --no-project --with requests python -c "import requests"
-      - name: Get AzurPilot
+      - name: Package standalone launcher
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-        run: |
-          git clone --depth=1 --filter=blob:none --sparse https://github.com/wess09/AzurPilot.git AzurLaneAutoScript
-          git -C AzurLaneAutoScript sparse-checkout set deploy
-      - name: Distribute
-        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-        uses: knicknic/os-specific-run@v1.0.3
-        with:
-          macos: |
-            set -eux
-            rm -rf package-root AzurPilot.app
-            mkdir -p package-root/AzurLaneAutoScript
-            ditto AzurLaneAutoScript/deploy package-root/AzurLaneAutoScript/deploy
-
-            cd package-root/AzurLaneAutoScript
-            mkdir -p config .venv/bin bootstrap
-            cp ../../deploy.mac.yaml config/deploy.yaml
-            export UV_PYTHON_INSTALL_DIR="$PWD/.venv/python"
-            cp -a ../../.ci-cache/python .venv/python
-            python_home="$(find .venv/python -maxdepth 1 -type d -name 'cpython-3.14.6-*' | head -n1)"
-            uv venv --allow-existing --relocatable --python "$python_home/bin/python3.14" .venv
-            uv pip install --python .venv/bin/python requests
-            cp ../../bootstrap/uv .venv/bin/uv
-            cp ../../platform-tools/adb .venv/bin/adb
-            mkdir -p .venv/libexec
-            cp -R ../../git/dist/libexec/git-core .venv/libexec/
-            mkdir -p .venv/share/git-core
-            cp -R ../../git/dist/share/git-core/templates .venv/share/git-core/
-            cp ../../git/dist/bin/git .venv/bin/git
-            test -x .venv/libexec/git-core/git-remote-https
-            cp .venv/bin/adb bootstrap/adb
-            cp -R .venv/libexec/git-core bootstrap/
-            cp -R .venv/share/git-core/templates bootstrap/git-templates
-            cp .venv/bin/git bootstrap/git
-            chmod +x .venv/bin/uv .venv/bin/adb .venv/bin/git
-            .venv/bin/python -c 'import sys; print(sys.version)'
-            .venv/bin/uv --version
-            .venv/bin/adb version
-            .venv/bin/git --version
-            GIT_EXEC_PATH="$PWD/.venv/libexec/git-core" GIT_TEMPLATE_DIR="$PWD/.venv/share/git-core/templates" .venv/bin/git init git-smoke
-            GIT_EXEC_PATH="$PWD/.venv/libexec/git-core" GIT_TEMPLATE_DIR="$PWD/.venv/share/git-core/templates" .venv/bin/git ls-remote https://github.com/git/git.git HEAD
-
-            cd ${{ github.workspace }}
-            mkdir -p AzurPilot.app/Contents/MacOS
-            cp target/release/azurpilot AzurPilot.app/Contents/MacOS/AzurPilot
-            mkdir -p AzurPilot.app/Contents/Resources
-            cp icons/icon.icns AzurPilot.app/Contents/Resources/
-            ditto package-root/AzurLaneAutoScript AzurPilot.app/Contents/AzurLaneAutoScript
-            cp Info.plist AzurPilot.app/Contents/
-            rdfind -minsize 128 -makehardlinks true AzurPilot.app
-            uv run python - <<EOF
-            import tarfile, lzma
-            with tarfile.open('AP-${{ runner.os }}-$(uname -m).tar.xz', 'x:xz', preset=9|lzma.PRESET_EXTREME) as t:
-              t.add('AzurPilot.app')
-            EOF
-
-            cp deploy.mac-cn.yaml AzurPilot.app/Contents/AzurLaneAutoScript/config/deploy.yaml
-            uv run python - <<EOF
-            import tarfile, lzma
-            with tarfile.open('AP-CN-${{ runner.os }}-$(uname -m).tar.xz', 'x:xz', preset=9|lzma.PRESET_EXTREME) as t:
-              t.add('AzurPilot.app')
-            EOF
-          linux: |
-            set -eux
-            rm -rf package-root
-            mkdir -p package-root/AzurLaneAutoScript
-            cp -a AzurLaneAutoScript/deploy package-root/AzurLaneAutoScript/deploy
-
-            cd package-root/AzurLaneAutoScript
-            mkdir -p config .venv/bin bootstrap
-            cp ../../deploy.unix.yaml config/deploy.yaml
-            export UV_PYTHON_INSTALL_DIR="$PWD/.venv/python"
-            cp -a ../../.ci-cache/python .venv/python
-            python_home="$(find .venv/python -maxdepth 1 -type d -name 'cpython-3.14.6-*' | head -n1)"
-            uv venv --allow-existing --relocatable --python "$python_home/bin/python3.14" .venv
-            uv pip install --python .venv/bin/python requests
-            cp ../../bootstrap/uv .venv/bin/uv
-            cp ../../platform-tools/adb .venv/bin/adb
-            mkdir -p .venv/libexec
-            cp -R ../../git/dist/libexec/git-core .venv/libexec/
-            mkdir -p .venv/share/git-core
-            cp -R ../../git/dist/share/git-core/templates .venv/share/git-core/
-            cp ../../git/dist/bin/git .venv/bin/git
-            test -x .venv/libexec/git-core/git-remote-https
-            cp .venv/bin/adb bootstrap/adb
-            cp -R .venv/libexec/git-core bootstrap/
-            cp -R .venv/share/git-core/templates bootstrap/git-templates
-            cp .venv/bin/git bootstrap/git
-            chmod +x .venv/bin/uv .venv/bin/adb .venv/bin/git
-            cp ../../target/release/azurpilot AzurPilot
-            .venv/bin/python -c 'import sys; print(sys.version)'
-            .venv/bin/uv --version
-            .venv/bin/adb version
-            .venv/bin/git --version
-            GIT_EXEC_PATH="$PWD/.venv/libexec/git-core" GIT_TEMPLATE_DIR="$PWD/.venv/share/git-core/templates" .venv/bin/git init git-smoke
-            GIT_EXEC_PATH="$PWD/.venv/libexec/git-core" GIT_TEMPLATE_DIR="$PWD/.venv/share/git-core/templates" GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt .venv/bin/git ls-remote https://github.com/git/git.git HEAD
-
-            cd ${{ github.workspace }}
-            rdfind -minsize 128 -makehardlinks true package-root/AzurLaneAutoScript
-            uv run python - <<EOF
-            import tarfile, lzma
-            with tarfile.open('AP-${{ runner.os }}-$(uname -m).tar.xz', 'x:xz', preset=9|lzma.PRESET_EXTREME) as t:
-              t.add('package-root/AzurLaneAutoScript', arcname='AzurLaneAutoScript')
-            EOF
-
-            cp deploy.unix-cn.yaml package-root/AzurLaneAutoScript/config/deploy.yaml
-            uv run python - <<EOF
-            import tarfile, lzma
-            with tarfile.open('AP-CN-${{ runner.os }}-$(uname -m).tar.xz', 'x:xz', preset=9|lzma.PRESET_EXTREME) as t:
-              t.add('package-root/AzurLaneAutoScript', arcname='AzurLaneAutoScript')
-            EOF
-          windows: |
-            rm -r -fo package-root -ErrorAction SilentlyContinue
-            mkdir -ea 0 package-root\AzurLaneAutoScript
-            cp -r AzurLaneAutoScript\deploy package-root\AzurLaneAutoScript\deploy
-
-            cd package-root\AzurLaneAutoScript
-            mkdir -ea 0 config
-            mkdir -ea 0 bootstrap
-            cp ..\..\deploy.windows.yaml config\deploy.yaml
-            $env:UV_PYTHON_INSTALL_DIR = "$PWD\.venv\python"
-            mkdir -ea 0 .venv
-            cp -r ..\..\.ci-cache\python .venv\python
-            $python_home = Get-ChildItem .venv\python -Directory | Where-Object { $_.Name -like "cpython-3.14.6-*" } | Select-Object -First 1
-            uv venv --allow-existing --relocatable --python "$($python_home.FullName)\python.exe" .venv
-            uv pip install --python .venv\Scripts\python.exe requests
-            cp ..\..\bootstrap\uv.exe .venv\Scripts\uv.exe
-            cp ..\..\platform-tools\adb.exe .venv\Scripts\adb.exe
-            cp ..\..\platform-tools\Adb*.dll .venv\Scripts\
-            mkdir -ea 0 .venv\Scripts\git\cmd
-            cp ..\..\git\cmd\git.exe .venv\Scripts\git\cmd\
-            mkdir -ea 0 .venv\Scripts\git\mingw64\bin
-            $git_files = @("git.exe","git-remote-http.exe","git-remote-https.exe","libcurl-4.dll") | ForEach-Object { "..\..\git\mingw64\bin\" + $_ }
-            ..\..\pedeps\bin\copypedeps.exe -r $git_files .venv\Scripts\git\mingw64\bin\
-            cp .venv\Scripts\adb.exe bootstrap\adb.exe
-            cp .venv\Scripts\Adb*.dll bootstrap\
-            mkdir -ea 0 bootstrap\git
-            cp -r .venv\Scripts\git\* bootstrap\git\
-            cp ..\..\target\release\azurpilot.exe AzurPilot.exe
-            .venv\Scripts\python.exe -c "import sys; print(sys.version)"
-            .venv\Scripts\uv.exe --version
-            .venv\Scripts\adb.exe version
-            .venv\Scripts\git\cmd\git.exe --version
-
-            cd ${{ github.workspace }}
-            uv run python -c @"
-            import tarfile, lzma
-            with tarfile.open('AzurLaneAutoScript-${{ runner.os }}-$($env:PROCESSOR_ARCHITECTURE.ToLower()).tar.xz', 'x:xz', preset=9|lzma.PRESET_EXTREME) as t:
-              t.add('package-root/AzurLaneAutoScript', arcname='AzurLaneAutoScript')
-            "@
-
-            cp deploy.windows-cn.yaml package-root\AzurLaneAutoScript\config\deploy.yaml
-            uv run python -c @"
-            import tarfile, lzma
-            with tarfile.open('AzurLaneAutoScript-CN-${{ runner.os }}-$($env:PROCESSOR_ARCHITECTURE.ToLower()).tar.xz', 'x:xz', preset=9|lzma.PRESET_EXTREME) as t:
-              t.add('package-root/AzurLaneAutoScript', arcname='AzurLaneAutoScript')
-            "@
+        run: python tools/package_launcher.py
       - name: Install Inno Setup (Windows x64 only)
         if: matrix.os == 'windows-latest' && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
         run: choco install innosetup --no-progress -y
@@ -544,7 +422,12 @@ jobs:
 
   deploy-launcher-update:
     if: github.ref_type == 'tag'
-    needs: package
+    needs: [package, publish-runtime-components]
+    permissions:
+      contents: write
+    concurrency:
+      group: launcher-stable-manifest
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     env:
       R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
@@ -587,7 +470,8 @@ jobs:
           import shutil
           from pathlib import Path
 
-          version = os.environ["VERSION"].strip()
+          release_tag = os.environ["VERSION"].strip()
+          version = release_tag
           if version.startswith("v"):
               version = version[1:]
 
@@ -625,6 +509,7 @@ jobs:
               digest = hashlib.sha256(dest_path.read_bytes()).hexdigest()
               platforms[key] = {
                   "url": f"{base_url}/{dest_name}",
+                  "github_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{release_tag}/{dest_name}",
                   "sha256": digest,
               }
 
@@ -641,6 +526,10 @@ jobs:
           print(f"Publishing mTLS manifest to {manifest_url}")
           print(json.dumps(manifest, ensure_ascii=False, indent=2))
           PY
+      - name: Upload versioned launcher payloads to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" launcher-updater-r2/azurpilot-* --clobber
       - name: Upload versioned payloads to R2
         run: |
           set -eu
@@ -711,7 +600,7 @@ jobs:
             exit 1
           fi
           mkdir -p cf-worker/public/updata
-          cp launcher-updater-r2/stable.json cf-worker/public/updata/stable.json
+          python tools/merge_stable_manifest.py --launcher launcher-updater-r2/stable.json --output cf-worker/public/updata/stable.json
           bash cf-worker/deploy.sh --message "stable.json ${GITHUB_REF_NAME}"
       - name: Verify Worker serves stable.json
         env:

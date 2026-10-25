@@ -1,8 +1,7 @@
 //! Tauri 构建脚本：在编译期固化 Windows 清单与关键构建资源。
 //!
 //! 内嵌 Windows manifest（requireAdministrator 提权、Common-Controls 依赖）；
-//! 处理 AZURPILOT_BOOTSTRAP_UV（内嵌 uv 二进制，未设置时写空占位符、运行时回退
-//! PATH 中的 uv）、AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64（mTLS 自更新证书
+//! 处理 AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64（mTLS 自更新证书
 //! base64，未设置回退"证书.txt"）与 LAUNCHER_UPDATE_URL（自更新源覆盖）。
 use std::{env, fs, path::PathBuf};
 
@@ -19,13 +18,13 @@ const DEFAULT_LAUNCHER_UPDATE_URL: &str = "https://launcher-api.azurpilot.com/up
 
 /// 执行 Tauri 构建并把编译期资源写入 `OUT_DIR`。
 ///
-/// 资源包括 uv 引导二进制与 launcher 的 mTLS 客户端证书，供运行时内嵌；
+/// 资源包括 launcher 的 mTLS 客户端证书，供运行时内嵌；
 /// 自更新源地址通过 `cargo:rustc-env` 注入为编译期环境变量，重编译条件
 /// 也在此声明。
 ///
 /// # Panics
 ///
-/// 当 Tauri 构建失败、uv 二进制复制或占位符写出失败、`OUT_DIR` 或
+/// 当 Tauri 构建失败、`OUT_DIR` 或
 /// `CARGO_MANIFEST_DIR` 缺失、base64 解码失败、本地证书读取失败，或
 /// REQUIRE_LAUNCHER_MTLS_IDENTITY 已设置但证书缺失时直接 panic。
 fn main() {
@@ -74,21 +73,9 @@ fn main() {
     // cargo:rustc-env 在编译期注入该值，运行时用 env! 宏读取。
     println!("cargo:rustc-env={LAUNCHER_UPDATE_URL_ENV}={launcher_update_url}");
 
-    // uv 引导二进制与 mTLS 证书统一写入 OUT_DIR，供运行时按路径内嵌。
+    // mTLS 证书写入 OUT_DIR，供运行时内嵌。
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR is set by Cargo");
     let out_dir = PathBuf::from(out_dir);
-
-    let bootstrap_uv_target = out_dir.join("bootstrap_uv.bin");
-    if let Ok(source) = env::var("AZURPILOT_BOOTSTRAP_UV") {
-        fs::copy(&source, &bootstrap_uv_target).expect("copy AZURPILOT_BOOTSTRAP_UV");
-        println!("cargo:rerun-if-env-changed=AZURPILOT_BOOTSTRAP_UV");
-        println!("cargo:rerun-if-changed={source}");
-    } else {
-        // 本地构建通常没有现成的 uv 二进制：写入空占位符，运行时检测到
-        // 空文件后回退到 PATH 中的 uv，保证开发流程不被阻断。
-        fs::write(&bootstrap_uv_target, []).expect("write empty bootstrap uv placeholder");
-        println!("cargo:warning=AZURPILOT_BOOTSTRAP_UV is not set; launcher will use PATH uv for local builds");
-    }
 
     let mtls_identity_target = out_dir.join("launcher_mtls_identity.pem");
     // mTLS 证书解析顺序：环境变量优先，其次仓库根目录的本地证书文件，

@@ -21,3 +21,5 @@ AzurLaneAutoScript.app/
 # React launcher build outputs.
 /frontend/node_modules/
 /frontend/dist/
+
+/tools/__pycache__/

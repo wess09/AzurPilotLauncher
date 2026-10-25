@@ -28,6 +28,7 @@ export interface Snapshot {
   update_version: string | null;
   update_checked: boolean;
   backend_running: boolean;
+  deployment_required: boolean;
   progress: Progress | null;
   error: string | null;
   error_code: number | null;
@@ -50,6 +51,9 @@ export interface LauncherSettings {
   autoStartService: boolean;
   keepWebviewOnTray: boolean;
   language: string | null;
+  downloadSource: "auto" | "cnb" | "github";
+  pythonSource: "auto" | "nju" | "ustc" | "npmmirror" | "aliyun" | "cnb" | "astral";
+  pypiSource: "auto" | "pypi" | "tsinghua" | "ustc" | "aliyun" | "tencent" | "huawei" | "nju";
 }
 export const busy = (s: Snapshot) =>
   [

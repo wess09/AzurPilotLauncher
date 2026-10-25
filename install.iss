@@ -24,6 +24,7 @@
 #endif
 
 [Setup]
+SetupIconFile=icons\icon.ico
 AppName=AzurPilot
 AppVersion={#AppVersion}
 AppPublisher=AzurPilot Team
@@ -60,9 +61,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Dirs]
 Name: "{app}";          Permissions: users-modify
 Name: "{app}\config";   Permissions: users-modify
-Name: "{app}\deploy";   Permissions: users-modify
 Name: "{app}\.venv";    Permissions: users-modify
-Name: "{app}\bootstrap";  Permissions: users-modify
 
 
 ; --------------------------------------------------------------------------
@@ -71,9 +70,6 @@ Name: "{app}\bootstrap";  Permissions: users-modify
 [Files]
 ; 应用本体
 Source: "{#PackageRoot}\AzurPilot.exe";      DestDir: "{app}";          Flags: ignoreversion; Permissions: users-modify
-Source: "{#PackageRoot}\config\*";           DestDir: "{app}\config";   Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-modify
-Source: "{#PackageRoot}\deploy\*";           DestDir: "{app}\deploy";   Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-modify
-Source: "{#PackageRoot}\bootstrap\*";        DestDir: "{app}\bootstrap";  Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-modify
 
 ; 运行时安装器（释放到临时目录，安装后自动清理）
 Source: "{#SetupRoot}\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist

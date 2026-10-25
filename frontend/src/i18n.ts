@@ -2,6 +2,23 @@ import dictionaries from "virtual:launcher-locales";
 
 // The four Rust YAML files remain the only production translation source.
 const keys = [
+  "settings_download_source",
+  "settings_python_source",
+  "settings_pypi_source",
+  "settings_sources_hint",
+  "source_auto",
+  "source_cnb",
+  "source_github",
+  "source_nju",
+  "source_ustc",
+  "source_npmmirror",
+  "source_aliyun",
+  "source_astral",
+  "source_pypi",
+  "source_tsinghua",
+  "source_tencent",
+  "source_huawei",
+
   "home",
   "version",
   "status",
@@ -37,6 +54,8 @@ const keys = [
   "settings_keep_webview_tray",
   "packing_log",
   "start",
+  "deploy",
+  "deploy_hint",
   "open_webui",
   "stop",
   "repair",

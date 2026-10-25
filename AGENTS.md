@@ -6,7 +6,7 @@
 
 ## 项目概述
 
-AzurPilot Launcher：[AzurLaneAutoScript](https://github.com/LmeSzinc/AzurLaneAutoScript) 的跨平台（Windows/macOS/Linux）桌面启动器，**Tauri 2 + Rust**，`frontend/` 使用 React + TypeScript + Vite，生产静态资源由 Tauri 内嵌。内嵌 `uv` 管理 Python 3.14.6 可重定位 `.venv`，经 git 更新仓库后启动 Python 后端 `gui.py`。
+AzurPilot Launcher：[AzurLaneAutoScript](https://github.com/LmeSzinc/AzurLaneAutoScript) 的跨平台（Windows/macOS/Linux）桌面启动器，**Tauri 2 + Rust**，`frontend/` 使用 React + TypeScript + Vite，生产静态资源由 Tauri 内嵌。独立启动后从同一份 `stable.json` 下载 CI 预构建的源码、资源、前端、最新稳定 Python 3.14.x、依赖与 ADB，再启动 `gui.py`；用户无需 Git、uv 或 Node.js。组件协议见 `docs/runtime-components.md`。
 
 ## 常用命令
 
@@ -23,7 +23,6 @@ cargo check            # 仅检查编译
 
 ### 构建脚本环境变量（build.rs）
 
-- `AZURPILOT_BOOTSTRAP_UV`：指向要内嵌的 uv 二进制。未设置时用空占位符（本地开发正常，运行时回退到 PATH 中的 uv）。
 - `AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64`：launcher 自更新的 mTLS 客户端证书（base64 PEM）。未设置时回退读取仓库根目录的 `证书.txt`（不入库）。
 - `LAUNCHER_UPDATE_URL`：覆盖自更新源，默认 `https://launcher-api.azurpilot.com/updata/stable.json`。
 
@@ -36,12 +35,14 @@ cargo check            # 仅检查编译
 - `src/updater.rs`：检查更新、用户显式更新、mTLS/摘要校验、平台替换与参数恢复。
 - `src/windows.rs`：窗口恢复、React 连接错误路由、保留的 WebUI 标题栏注入。
 - `src/main.rs`：模块入口、日志、信任登录、时间炸弹及通用窗口/文件命令。
-- `src/setup.rs`：工具安装、Git 更新、uv 同步、配置迁移与用户主动环境修复。
+- `src/components.rs`：组件清单、按需下载、ZIP 校验、事务提交/恢复及镜像备用安装。
+- `src/setup.rs`：定位空的便携目录、配置迁移与用户主动环境修复。
+- `src/sources.rs`：自动下载平台选择、Python/PyPI 镜像预设；系统简体中文且北京时间才优先 CNB，否则 GitHub。
 - `src/backend.rs` / `backend_process.rs`：后端进程组与 Windows Job，退出不连带关闭独立模拟器。
 - `src/backend_env.rs`：同时注入 `AP_` / `ALAS_` 后端环境协议，双归属标记均匹配时才兜底清理子进程。
 - `src/task_process.rs` / `cancel.rs`：安装任务进程组与可取消 HTTP，不在取消时删除环境。
 - `src/notify.rs` / `launcher_control.rs`：每次后端会话独立的单条 WS 通道、原生通知与停止标志。
-- `src/nodejs.rs`、`autostart.rs`、`i18n.rs`、`window_util.rs`：Node.js 安装、自启、多语言和子进程窗口控制。
+- `src/settings.rs`、`autostart.rs`、`i18n.rs`、`window_util.rs`：设置/下载源、自启、多语言和子进程窗口控制。
 
 详细开发流程及 IPC 见 [启动器界面与生命周期](docs/launcher-ui.md)。
 
@@ -51,12 +52,12 @@ cargo check            # 仅检查编译
 - **平台兼容**：改动涉及进程/窗口/通知/路径时必须考虑三平台，用 `#[cfg(target_os = "...")]` 分支；平台依赖在 `Cargo.toml` 的 `[target.'cfg(...)'.dependencies]`。子进程命令一律套 `CreateNoWindow`（Windows）避免黑窗。
 - **日志**：用 `tracing`（info!/warn! 等），初始化后写入 `log/{date}_launcher.txt`，不要用 `println!`。
 - **版本号**：发布需同步 `Cargo.toml`、`tauri.conf.json`、`CHANGELOG.md` 三处。
-- **CI 打包**：仅 `.github/workflows/package.yml`（tag push / 手动触发，三平台矩阵，产 tar.xz）。六个 `deploy.*.yaml` 是运行时部署配置，`-cn` 后缀用国内镜像，改动 `setup.rs` 的依赖安装逻辑时需兼顾两种变体。`stable.json` 由 `deploy-launcher-update` 发布到 Cloudflare Worker（`cf-worker/`，纯静态资源、无自定义 Worker 脚本，不消耗 Workers 请求配额）；启动器载荷同时上传到 R2 和 CNB Release `1.0.0`，清单 URL 走 `launcher-download.azurpilot.com` 302。
-- **CI 测试**：`.github/workflows/test.yml` 在推送 `main`、PR 和手动触发时运行，覆盖 Linux、macOS、Windows x64/ARM64，执行 `cargo check --locked --all-targets` 和 `cargo test --locked --all-targets`，无需发布密钥。Windows 本地测试需在管理员终端运行（manifest 与 Node.js 私有目录 ACL 均要求提权）。
+- **CI 打包**：仅 `.github/workflows/package.yml`。tag/手动打包轻量启动器；三平台运行组件支持 main 相关变更、后端 dispatch、手动和六小时定时构建。所有线上元数据只写启动器既有 `stable.json` 的 `runtime` 字段；GitHub/CNB 仅存下载包。启动器载荷字段同时写 `url` 与 `github_url`。两类清单发布共用并发锁，合并时必须保留另一部分。沿用纯静态 `cf-worker/` 和现有发布凭据，详见组件协议文档。
+- **CI 测试**：`.github/workflows/test.yml` 在推送 `main`、PR 和手动触发时运行，覆盖 Linux、macOS、Windows x64/ARM64，执行 `cargo check --locked --all-targets` 和 `cargo test --locked --all-targets`，无需发布密钥。Windows manifest 要求提权，测试通常在管理员终端运行；纯组件测试也可对当前测试命令设置 `__COMPAT_LAYER=RunAsInvoker`。
 
 ## 关键常量
 
-WebUI 端口 `22267`；Python `3.14.6`；后端端口等待 60s；WS 心跳 15s、重连 1/2/5/10/30s。时间炸弹配置在 `Cargo.toml` 的 `[package.metadata.azurpilot.time-bomb]`（运行时由 `main.rs` 解析，当前 `enabled = false`）。
+WebUI 端口 `22267`；Python `3.14.x`（CI 解析最新稳定补丁版）；后端端口等待 60s；WS 心跳 15s、重连 1/2/5/10/30s。时间炸弹配置在 `Cargo.toml` 的 `[package.metadata.azurpilot.time-bomb]`（运行时由 `main.rs` 解析，当前 `enabled = false`）。
 
-- **环境修复**：关闭/取消/后端超时均不得自动删除 `.venv` 或缓存。仅首页确认后的修复重建 `.venv`，运行中必须先停止服务。
+- **环境修复**：关闭/取消/后端超时均不得自动删除 `.venv` 或缓存。仅首页确认后的修复强制重新部署运行组件，运行中必须先停止服务。
 - **前端通信**：新管理命令验证本地 `launcher` 窗口；页面先订阅 `launcher://state` 再取快照，按 `sequence` 去重，按 `task_id` 隔离任务。不要重新引入 Rust HTML 拼接或全局 JS 回调。

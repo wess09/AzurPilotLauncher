@@ -22,7 +22,7 @@ A cross-platform desktop launcher for [AzurPilot](https://github.com/wess09/Azur
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=flat-square" alt="License: GPL-3.0"></a>
   <a href="https://www.tauri.app/"><img src="https://img.shields.io/badge/Framework-Tauri%202-24C8DB.svg?style=flat-square&logo=tauri&logoColor=white" alt="Framework: Tauri 2"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-DEA584.svg?style=flat-square&logo=rust&logoColor=white" alt="Language: Rust"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.14.6-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.14.6"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.14.x-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.14.x"></a>
   <a href="https://github.com/astral-sh/uv"><img src="https://img.shields.io/badge/Packaging-uv-DE5FE9.svg?style=flat-square" alt="Packaging: uv"></a>
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-181717.svg?style=flat-square&logo=github&logoColor=white" alt="Platform: Windows / macOS / Linux">
 </p>
@@ -87,7 +87,7 @@ A cross-platform desktop launcher for [AzurPilot](https://github.com/wess09/Azur
     <tr>
       <td width="25%"><b>Repository Size</b><br><img src="https://img.shields.io/github/repo-size/wess09/AzurPilotLauncher?style=flat-square&color=586069" alt="Repo Size"></td>
       <td width="25%"><b>Code Language</b><br><img src="https://img.shields.io/badge/Language-Rust%20%7C%20Tauri-DEA584?style=flat-square&logo=rust&logoColor=white" alt="Language"></td>
-      <td width="25%"><b>Runtime</b><br><img src="https://img.shields.io/badge/Python-3.14.6%20%2B%20uv-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python Runtime"></td>
+      <td width="25%"><b>Runtime</b><br><img src="https://img.shields.io/badge/Python-3.14.x%20%2B%20uv-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python Runtime"></td>
       <td width="25%"><b>UI Languages</b><br><img src="https://img.shields.io/badge/i18n-%E7%AE%80%E4%BD%93%20%7C%20%E7%B9%81%E9%AB%94%20%7C%20%E6%97%A5%E6%9C%AC%E8%AA%9E%20%7C%20En-blueviolet?style=flat-square" alt="i18n"></td>
     </tr>
     <tr>
@@ -109,7 +109,7 @@ A cross-platform desktop launcher for [AzurPilot](https://github.com/wess09/Azur
 
 **AzurPilot Launcher** makes the full-featured Azur Lane automation assistant **AzurPilot** run natively with one click on Windows, macOS and Linux — whether on an Apple Silicon Mac Mini or a classic x86 machine, with no translation layers, no Docker, and no pollution of your system environment.
 
-The launcher embeds the `uv` package manager and, on first run, automatically creates a relocatable `.venv` (Python 3.14.6), pulls the latest code via git, syncs dependencies, then starts the Python WebUI backend inside a native WebView shell — complete with a splash screen, system tray, desktop notifications and a custom title bar. The UI supports four languages (Simplified Chinese, Traditional Chinese, Japanese and English), selected automatically from the system locale.
+The launcher downloads CI-built code, resources, frontend, the latest stable Python 3.14 patch, dependencies, and ADB from one `stable.json`. Missing components change Run to Deploy. Auto prefers CNB only for a Simplified Chinese system using Beijing time; otherwise GitHub. Component, Python, and PyPI sources can be selected by mirror name. No preinstalled Git, uv, Python, or Node.js is required. See [component deployment](docs/runtime-components.md).
 
 ---
 
@@ -179,9 +179,9 @@ This project works closely with the following core projects in its ecosystem:
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/Module-Deployment-0052cc?style=flat-square" alt="Tag"><br>
       <h3>Zero-Config Environment Setup</h3>
-      <p>The launcher embeds <code>uv</code>. On first run it automatically downloads Python 3.14.6 and creates a <b>relocatable <code>.venv</code></b>, deploying uv, git and adb into the same virtual environment. No pre-installed Python, uv or Git required — it just works out of the box.</p>
+      <p>CI builds independent components. The launcher downloads missing components and reuses completed installations and cached archives, including the latest stable Python 3.14 patch.</p>
       <div>
-        <img src="https://img.shields.io/badge/Runtime-Python%203.14.6-orange?style=flat-square" alt="Python">
+        <img src="https://img.shields.io/badge/Runtime-Python%203.14.x-orange?style=flat-square" alt="Python">
         <img src="https://img.shields.io/badge/Dependencies-Embedded%20uv-blueviolet?style=flat-square" alt="uv">
         <img src="https://img.shields.io/badge/Experience-Ready%20to%20Run-brightgreen?style=flat-square" alt="Ready">
       </div>
@@ -201,7 +201,7 @@ This project works closely with the following core projects in its ecosystem:
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/Module-Update%20System-403294?style=flat-square" alt="Tag"><br>
       <h3>Automated Update System</h3>
-      <p>On launch, the latest code is pulled via git (up to 20 retries), then dependencies are synced exactly with <code>uv sync --frozen</code> against <code>uv.lock</code>. The launcher itself self-updates over an mTLS-secured channel with multi-mirror fallback.</p>
+      <p>One stable.json contains launcher and runtime updates. Component archives are content-addressed; launcher binaries have both CNB and GitHub download URLs.</p>
       <div>
         <img src="https://img.shields.io/badge/Code%20Update-Git%20Retry%20Mechanism-purple?style=flat-square" alt="Git Update">
         <img src="https://img.shields.io/badge/Locking-uv.lock-blue?style=flat-square" alt="Lock">
@@ -224,7 +224,7 @@ This project works closely with the following core projects in its ecosystem:
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/Module-Network%20Strategy-de350b?style=flat-square" alt="Tag"><br>
       <h3>Dual Mirrors &amp; Direct-Connect Policy</h3>
-      <p>Two deployment profiles are provided: the international build and the <code>-cn</code> China-mirror build. Python standalone downloads are accelerated via npmmirror by default. Code updates, embedded Python, uv and dependency installs, plus WebView-to-WebUI connections all bypass the system proxy for a cleaner environment.</p>
+      <p>Automatic source selection prefers CNB only for Simplified Chinese systems using Beijing time, otherwise GitHub. Settings offer named component, Python, and PyPI mirrors.</p>
       <div>
         <img src="https://img.shields.io/badge/Profiles-International%20%2F%20CN%20Mirror-red?style=flat-square" alt="Mirrors">
         <img src="https://img.shields.io/badge/Acceleration-npmmirror-red?style=flat-square" alt="npmmirror">
@@ -260,8 +260,8 @@ graph TD
     end
 
     subgraph Venv [".venv Runtime (uv-managed · Relocatable)"]
-        PYTHON["CPython 3.14.6 Interpreter"]
-        TOOLS["Embedded uv / git / adb Toolchain"]
+        PYTHON["CPython 3.14.x Interpreter"]
+        TOOLS["Embedded Python / dependencies / ADB Toolchain"]
         SYNC["uv sync --frozen Dependency Sync (uv.lock)"]
     end
 
@@ -391,7 +391,7 @@ Compared with the bundled Electron launcher of [AzurLaneAutoScript](https://gith
 | 2 | **Reworked update strategy** | Only the git repo is updated, and dependencies are synced with the uv embedded in `.venv`; relaunching merely refocuses the existing window instead of doing destructive cleanup |
 | 3 | **Pinned dependency versions** | Python package versions are locked by `pyproject.toml` and `uv.lock`, with auto-sync enabled by default to prevent environment drift |
 | 4 | **adb policy** | adb is no longer restarted or replaced |
-| 5 | **Adjusted directory layout** | Python / uv / git / adb all live inside `.venv` — see the layout below |
+| 5 | **Adjusted directory layout** | Python / Python / dependencies / ADB all live inside `.venv` — see the layout below |
 | 6 | **Node.js automation (Windows)** | Detects system-level Node.js; if absent, offers to download and install it automatically after confirmation |
 
 ---
@@ -503,7 +503,7 @@ An adaptive light/dark Star-History chart reflecting the project's growth:
 | **Tauri 2** | <img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-brightgreen?style=flat-square" alt="MIT / Apache-2.0"> | Cross-platform desktop shell, WebView hosting and system integration |
 | **Rust** | <img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-brightgreen?style=flat-square" alt="MIT / Apache-2.0"> | Systems programming language powering all native launcher logic |
 | **uv** | <img src="https://img.shields.io/badge/License-Apache--2.0%20%7C%20MIT-brightgreen?style=flat-square" alt="Apache-2.0 / MIT"> | Embedded Python package manager building the relocatable `.venv` |
-| **CPython 3.14.6** | <img src="https://img.shields.io/badge/License-PSF--2.0-blue?style=flat-square" alt="PSF-2.0"> | The Python runtime for the automation engine |
+| **CPython 3.14.x** | <img src="https://img.shields.io/badge/License-PSF--2.0-blue?style=flat-square" alt="PSF-2.0"> | The Python runtime for the automation engine |
 | **Git** | <img src="https://img.shields.io/badge/License-GPL--2.0-blue?style=flat-square" alt="GPL-2.0"> | Repository updates (compiled from source on Unix / MinGit on Windows) |
 | **Android platform-tools** | <img src="https://img.shields.io/badge/License-Apache--2.0-brightgreen?style=flat-square" alt="Apache-2.0"> | The adb bridge for emulator and device communication |
 

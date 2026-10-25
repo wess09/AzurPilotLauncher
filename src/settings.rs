@@ -21,6 +21,8 @@ pub struct Settings {
     pub keep_webview_on_tray: bool,
     /// UI 语言偏好；None 表示跟随系统。
     pub language: Option<String>,
+    #[serde(flatten)]
+    pub sources: crate::sources::Preferences,
 }
 
 /// SQLite 设置存储：内部互斥锁保护连接。
@@ -35,8 +37,8 @@ impl Store {
             Ok(store) => store,
             Err(e) => {
                 warn!("Failed to open settings database, falling back to memory: {e:#}");
-                let connection =
-                    rusqlite::Connection::open_in_memory().expect("in-memory sqlite");
+                let connection = rusqlite::Connection::open_in_memory().expect("in-memory sqlite");
+                Self::ensure_table(&connection).expect("in-memory settings schema");
                 Self {
                     connection: Mutex::new(connection),
                 }
@@ -83,11 +85,9 @@ impl Store {
         let connection = self.connection.lock().unwrap();
         let raw = |key: &str| -> Option<rusqlite::types::Value> {
             connection
-                .query_row(
-                    "SELECT value FROM settings WHERE key = ?1",
-                    [key],
-                    |row| row.get::<_, rusqlite::types::Value>(0),
-                )
+                .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+                    row.get::<_, rusqlite::types::Value>(0)
+                })
                 .ok()
         };
         let as_bool = |value: Option<rusqlite::types::Value>| -> bool {
@@ -106,6 +106,11 @@ impl Store {
             auto_start_service: as_bool(raw("autoStartService")),
             keep_webview_on_tray: as_bool(raw("keepWebviewOnTray")),
             language,
+            sources: crate::sources::Preferences {
+                download_source: read_source(raw("downloadSource")),
+                python_source: read_source(raw("pythonSource")),
+                pypi_source: read_source(raw("pypiSource")),
+            },
         }
     }
 
@@ -114,9 +119,10 @@ impl Store {
     /// # Errors
     /// SQLite 写入失败时返回错误。
     pub fn set(&self, settings: &Settings) -> Result<()> {
-        let connection = self.connection.lock().unwrap();
-        let mut upsert = |key: &str, value: &str| -> Result<()> {
-            connection
+        let mut connection = self.connection.lock().unwrap();
+        let transaction = connection.transaction()?;
+        let upsert = |key: &str, value: &str| -> Result<()> {
+            transaction
                 .execute(
                     "INSERT INTO settings (key, value) VALUES (?1, ?2)
                      ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -131,20 +137,48 @@ impl Store {
         )?;
         upsert(
             "autoStartService",
-            if settings.auto_start_service { "1" } else { "0" },
+            if settings.auto_start_service {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         upsert(
             "keepWebviewOnTray",
-            if settings.keep_webview_on_tray { "1" } else { "0" },
+            if settings.keep_webview_on_tray {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         match settings.language.as_deref() {
             Some(language) => upsert("language", language)?,
             None => {
-                connection
+                transaction
                     .execute("DELETE FROM settings WHERE key = 'language'", [])
                     .map_err(anyhow::Error::from)?;
             }
         }
+        for (key, value) in [
+            (
+                "downloadSource",
+                serde_json::to_value(settings.sources.download_source)?,
+            ),
+            (
+                "pythonSource",
+                serde_json::to_value(settings.sources.python_source)?,
+            ),
+            (
+                "pypiSource",
+                serde_json::to_value(settings.sources.pypi_source)?,
+            ),
+        ] {
+            upsert(
+                key,
+                value.as_str().expect("source enum serializes as string"),
+            )?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -184,12 +218,43 @@ mod tests {
             auto_start_service: false,
             keep_webview_on_tray: true,
             language: Some("zh-CN".to_string()),
+            sources: crate::sources::Preferences::default(),
         };
         store.set(&next).expect("save settings");
         let read = store.get();
         assert!(read.launch_on_startup);
         assert!(read.keep_webview_on_tray);
         assert_eq!(read.language.as_deref(), Some("zh-CN"));
+    }
+    #[test]
+    fn mirror_preferences_round_trip_and_legacy_records_default_to_auto() {
+        use crate::sources::*;
+        let store = Store::in_memory();
+        assert_eq!(store.get().sources.download_source, DownloadSource::Auto);
+        let mut next = store.get();
+        next.sources = Preferences {
+            download_source: DownloadSource::Github,
+            python_source: PythonSource::Npmmirror,
+            pypi_source: PypiSource::Ustc,
+        };
+        store.set(&next).unwrap();
+        let read = store.get().sources;
+        assert_eq!(read.download_source, DownloadSource::Github);
+        assert_eq!(read.python_source, PythonSource::Npmmirror);
+        assert_eq!(read.pypi_source, PypiSource::Ustc);
+        store
+            .connection
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE settings SET value = 'invalid' WHERE key = 'pythonSource'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(store.get().sources.python_source, PythonSource::Auto);
+        let mut serialized = serde_json::to_value(next).unwrap();
+        serialized["pythonSource"] = "https://example.com/script".into();
+        assert!(serde_json::from_value::<Settings>(serialized).is_err());
     }
 }
 
@@ -202,8 +267,12 @@ fn database_path() -> Result<PathBuf> {
 
 /// Tauri 命令：读取全部设置。
 #[tauri::command]
-pub(crate) fn settings_get(store: tauri::State<'_, Arc<Store>>) -> Settings {
-    store.get()
+pub(crate) fn settings_get(
+    window: tauri::WebviewWindow,
+    store: tauri::State<'_, Arc<Store>>,
+) -> Result<Settings, String> {
+    crate::launcher::authorize(&window, false)?;
+    Ok(store.get())
 }
 
 /// Tauri 命令：保存设置并应用开机自启副作用。
@@ -213,16 +282,30 @@ pub(crate) fn settings_get(store: tauri::State<'_, Arc<Store>>) -> Settings {
 /// 返回错误字符串，前端据此回滚开关。
 #[tauri::command]
 pub(crate) fn settings_set(
+    window: tauri::WebviewWindow,
     store: tauri::State<'_, Arc<Store>>,
     settings: Settings,
 ) -> Result<Settings, String> {
+    crate::launcher::authorize(&window, true)?;
     let previous = store.get();
     store.set(&settings).map_err(|e| e.to_string())?;
-    // 语言覆盖同步到 Rust 侧，保证启动器自身消息与前端界面一致。
-    crate::i18n::apply_override(settings.language.as_deref());
     if previous.launch_on_startup != settings.launch_on_startup {
-        crate::autostart::set_enabled(settings.launch_on_startup)
-            .map_err(|e| e.to_string())?;
+        if let Err(error) = crate::autostart::set_enabled(settings.launch_on_startup) {
+            let _ = store.set(&previous);
+            return Err(error.to_string());
+        }
     }
+    crate::i18n::apply_override(settings.language.as_deref());
     Ok(store.get())
+}
+
+fn read_source<T: serde::de::DeserializeOwned + Default>(
+    value: Option<rusqlite::types::Value>,
+) -> T {
+    match value {
+        Some(rusqlite::types::Value::Text(text)) => {
+            serde_json::from_value(serde_json::Value::String(text)).unwrap_or_default()
+        }
+        _ => T::default(),
+    }
 }
