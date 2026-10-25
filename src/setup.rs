@@ -466,6 +466,7 @@ pub fn setup_azurpilot_repo(
                 .with_subtitle(t!("setup.syncing", tip = get_tip())),
         );
         git_update(&mut status_updater, &bootstrap_uv, &cancel_requested)?;
+        ensure_repository_files()?;
     }
     sync_dependencies_and_frontend(
         &mut status_updater,
@@ -1117,6 +1118,23 @@ fn dependency_wait_update(
     SplashUpdate::loading(t!("setup.installing_deps"), detail, progress)
         .with_subtitle(t!("setup.syncing_deps", tip = get_tip()))
         .with_uv_progress(uv_progress.progress(), uv_progress.detail())
+}
+
+/// 校验仓库标志文件已就位：git 更新后 `pyproject.toml` 仍缺失说明拉取
+/// 异常（例如旧环境残留导致上游脚本跳过 clone），此时给出明确指引，
+/// 避免后续 uv sync 报出晦涩的 “No pyproject.toml found”。
+///
+/// # Errors
+/// 仓库根缺少 pyproject.toml 时返回带目录提示的错误。
+fn ensure_repository_files() -> Result<()> {
+    let manifest = azurpilot_repo_dir().join("pyproject.toml");
+    if !manifest.is_file() {
+        bail!(t!(
+            "setup.repo_incomplete",
+            dir = azurpilot_repo_dir().display().to_string()
+        ));
+    }
+    Ok(())
 }
 
 /// 经内嵌 Python 脚本调用 `deploy.git.GitManager` 拉取最新仓库代码。

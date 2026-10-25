@@ -48,6 +48,7 @@ setup:
   fallback_mirror: "備用來源"
   skipping_update: "跳過更新"
   skipping_update_detail: "已透過啟動參數跳過儲存庫更新，正在使用本機檔案繼續啟動。"
+  repo_incomplete: "儲存庫不完整：%{dir} 缺少 pyproject.toml，無法同步依賴。請在首頁使用環境修復重新部署。"
   preview_mode: "預覽模式中... | Tips：%{tip}"
   checking_python_version: "正在檢查 Python %{version}。"
   connecting: "正在連線本機服務..."

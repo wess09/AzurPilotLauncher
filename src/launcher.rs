@@ -791,7 +791,10 @@ pub(crate) fn is_local_page(app: &tauri::AppHandle, window: &WebviewWindow) -> b
     let Ok(local) = local_page_url(app, "") else {
         return false;
     };
-    same_local_origin(&url, &local) && (url.path() == "/" || url.path() == "/index.html")
+    // 只比对 origin：自定义协议域名下全部是启动器内嵌资产，不存在外部
+    // 页面；不再限定路径形式（macOS WKWebView 可能对路径做规范化变体，
+    // 曾导致本地页面被误判为非本地而拒绝 IPC）。
+    same_local_origin(&url, &local)
 }
 
 // url::Origin treats custom schemes as opaque; compare explicit components so
@@ -808,6 +811,13 @@ pub(crate) fn authorize(window: &WebviewWindow, home_only: bool) -> Result<(), S
     if (window.label() != "launcher" && (home_only || window.label() != "main"))
         || !is_local_page(window.app_handle(), window)
     {
+        // 记录被拒窗口的实际 URL，便于定位各平台 WebView 的 URL 形式差异。
+        warn!(
+            "Rejected IPC from window '{}': url={:?}, expected local origin, home_only={}",
+            window.label(),
+            window.url().map(|url| url.to_string()),
+            home_only
+        );
         return Err(t!("launcher.forbidden").to_string());
     }
     Ok(())
@@ -1128,6 +1138,10 @@ mod tests {
         ] {
             let url = tauri::Url::parse(base).unwrap();
             assert!(same_local_origin(&url, &tauri::Url::parse(base).unwrap()));
+            // 同 origin 下路径差异不影响判定：is_local_page 不再限定路径，
+            // 以兼容 WKWebView 对本地资源 URL 的规范化变体。
+            let variant = url.join("some/route").unwrap();
+            assert!(same_local_origin(&variant, &url));
             assert!(!same_local_origin(
                 &tauri::Url::parse("https://example.com/index.html").unwrap(),
                 &url

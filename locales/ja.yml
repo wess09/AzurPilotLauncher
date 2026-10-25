@@ -48,6 +48,7 @@ setup:
   fallback_mirror: "フォールバックミラー"
   skipping_update: "アップデートをスキップ"
   skipping_update_detail: "起動パラメータによりリポジトリの更新をスキップしました。ローカルファイルを使用して起動を続行します。"
+  repo_incomplete: "リポジトリが不完全です：%{dir} に pyproject.toml がなく、依存関係を同期できません。ホーム画面の環境修復で再デプロイしてください。"
   preview_mode: "プレビューモード中... | Tips：%{tip}"
   checking_python_version: "Python %{version} を確認中です。"
   connecting: "ローカルサービスに接続中..."

@@ -48,6 +48,7 @@ setup:
   fallback_mirror: "备用源"
   skipping_update: "跳过更新"
   skipping_update_detail: "已通过启动参数跳过仓库更新，正在使用本地文件继续启动。"
+  repo_incomplete: "仓库不完整：%{dir} 缺少 pyproject.toml，无法同步依赖。请在首页使用环境修复重新部署。"
   preview_mode: "预览模式中... | Tips：%{tip}"
   checking_python_version: "正在检查 Python %{version}。"
   connecting: "正在连接本地服务..."

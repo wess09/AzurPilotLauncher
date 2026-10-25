@@ -48,6 +48,7 @@ setup:
   fallback_mirror: "fallback source"
   skipping_update: "Skipping update"
   skipping_update_detail: "Repository update skipped via launch parameter. Continuing with local files."
+  repo_incomplete: "Repository incomplete: pyproject.toml is missing in %{dir}, cannot sync dependencies. Run environment repair from the home page to redeploy."
   preview_mode: "Preview mode... | Tips: %{tip}"
   checking_python_version: "Checking Python %{version}."
   connecting: "Connecting to local service..."
