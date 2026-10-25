@@ -1200,6 +1200,9 @@ mod tests {
                             Err(error) => panic!("{error}"),
                         }
                     };
+                    // Windows accepted sockets inherit the listener's mode.
+                    // Wait for the HTTP request instead of racing its arrival.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(2)))
                         .unwrap();
