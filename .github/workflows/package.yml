@@ -575,6 +575,8 @@ jobs:
         env:
           VERSION: ${{ github.ref_type == 'tag' && github.ref_name || needs.package.outputs.canary-version }}
           RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'canary' }}
+          # CDN 域绑定 R2 桶根，载荷键为 updata/{version}/{name}（R2_PREFIX）。
+          CLOUDFLARE_CDN_BASE_URL: https://launcher-cloudflare-cdn-download.azurpilot.com
         run: |
           python - <<'PY'
           import hashlib
@@ -625,7 +627,7 @@ jobs:
               platforms[key] = {
                   "url": f"{base_url}/{dest_name}",
                   "github_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{release_tag}/{dest_name}",
-                  "cloudflare_url": f"https://launcher-cloudflare-cdn-download.azurpilot.com/{dest_name}",
+                  "cloudflare_url": f"{os.environ['CLOUDFLARE_CDN_BASE_URL'].rstrip('/')}/{os.environ['R2_PREFIX'].strip('/')}/{version}/{dest_name}",
                   "sha256": digest,
               }
 
