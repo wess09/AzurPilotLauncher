@@ -23,3 +23,6 @@ AzurLaneAutoScript.app/
 /frontend/dist/
 
 /tools/__pycache__/
+
+# 本地多 AI 协作登记，不入库。
+交流.txt
