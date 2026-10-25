@@ -469,7 +469,7 @@ jobs:
           name: package-${{ matrix.os }}
           compression-level: 0
           path: |
-            AzurLaneAutoScript-${{ runner.os }}-*
+            AzurPilot-${{ runner.os }}-*
             AP-${{ runner.os }}-*
             AzurPilot_Setup_*.exe
       - name: Upload artifacts (CN)
@@ -479,7 +479,7 @@ jobs:
           name: package-CN-${{ matrix.os }}
           compression-level: 0
           path: |
-            AzurLaneAutoScript-CN-${{ runner.os }}-*
+            AzurPilot-CN-${{ runner.os }}-*
             AP-CN-${{ runner.os }}-*
       - name: Release
         uses: softprops/action-gh-release@v2
@@ -487,8 +487,8 @@ jobs:
         with:
           prerelease: false
           files: |
-            AzurLaneAutoScript-${{ runner.os }}-*
-            AzurLaneAutoScript-CN-${{ runner.os }}-*
+            AzurPilot-${{ runner.os }}-*
+            AzurPilot-CN-${{ runner.os }}-*
             AP-${{ runner.os }}-*
             AP-CN-${{ runner.os }}-*
             AzurPilot_Setup_*.exe

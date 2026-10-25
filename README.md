@@ -265,7 +265,7 @@ graph TD
         SYNC["uv sync 依赖同步 (uv.lock)"]
     end
 
-    subgraph Repo ["AzurLaneAutoScript 仓库"]
+    subgraph Repo ["AzurPilot 后端仓库"]
         GIT["deploy.git 仓库更新"]
         GUI["gui.py WebUI 后端"]
         WEB["WebUI 控制台 (127.0.0.1:22267)"]
@@ -400,14 +400,14 @@ graph TD
 
 ```
 AzurPilot 根目录
-* Windows: AzurLaneAutoScript
-* macOS:   AzurPilot.app/Contents/AzurLaneAutoScript
-* Linux:   AzurLaneAutoScript
+* Windows: AzurPilot
+* macOS:   AzurPilot.app/Contents/AzurPilot
+* Linux:   AzurPilot
 
 AzurPilot 启动器
-* Windows: AzurLaneAutoScript/AzurPilot.exe
+* Windows: AzurPilot/AzurPilot.exe
 * macOS:   AzurPilot.app/Contents/MacOS/AzurPilot
-* Linux:   AzurLaneAutoScript/AzurPilot
+* Linux:   AzurPilot/AzurPilot
 
 Python
 * Windows: .venv/Scripts/python.exe

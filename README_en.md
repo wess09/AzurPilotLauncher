@@ -265,7 +265,7 @@ graph TD
         SYNC["uv sync --frozen Dependency Sync (uv.lock)"]
     end
 
-    subgraph Repo ["AzurLaneAutoScript Repository"]
+    subgraph Repo ["AzurPilot backend repository"]
         GIT["Git Auto-Update (deploy.git.GitManager · 20 Retries)"]
         GUI["gui.py WebUI Backend"]
         WEB["WebUI Console (127.0.0.1:22267)"]
@@ -400,14 +400,14 @@ Compared with the bundled Electron launcher of [AzurLaneAutoScript](https://gith
 
 ```
 AzurPilot root directory
-* Windows: AzurLaneAutoScript
-* macOS:   AzurPilot.app/Contents/AzurLaneAutoScript
-* Linux:   AzurLaneAutoScript
+* Windows: AzurPilot
+* macOS:   AzurPilot.app/Contents/AzurPilot
+* Linux:   AzurPilot
 
 AzurPilot launcher
-* Windows: AzurLaneAutoScript/AzurPilot.exe
+* Windows: AzurPilot/AzurPilot.exe
 * macOS:   AzurPilot.app/Contents/MacOS/AzurPilot
-* Linux:   AzurLaneAutoScript/AzurPilot
+* Linux:   AzurPilot/AzurPilot
 
 Python / uv
 * All systems: .venv

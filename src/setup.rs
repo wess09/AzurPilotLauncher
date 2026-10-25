@@ -1,7 +1,7 @@
 //! 环境搭建模块：负责 AzurPilot 运行所需的完整环境生命周期。
 //!
 //! 主要职责（由启动器在启动任务的后台线程调用）：
-//! - 定位 AzurLaneAutoScript 仓库目录并切换工作目录；
+//! - 定位后端仓库目录并切换工作目录；
 //! - 部署引导物（[`crate::components::deploy`]：git/adb 组件与 deploy 脚本）；
 //! - 通过内嵌 uv 安装最新稳定 Python 3.14.x、创建可重定位 `.venv`，
 //!   并安装 deploy 脚本的引导依赖 requests（`ensure_runtime_tools`）；
@@ -184,12 +184,13 @@ fn platform_git_config_path() -> &'static str {
     }
 }
 
-/// 定位 AzurLaneAutoScript 仓库根目录。
+/// 定位后端仓库根目录。
 ///
 /// 优先按"便携式同目录发行"查找：启动器可执行文件所在目录即仓库根
 /// （首次运行允许目录为空，部署阶段再落入引导物）。macOS 额外支持
 /// `.app` 包布局：从 `AzurPilot.app/Contents/MacOS` 回退到
-/// `AzurPilot.app/Contents/AzurLaneAutoScript`。
+/// `AzurPilot.app/Contents/AzurPilot`（取代旧版历史目录，旧目录由
+/// [`migrate_legacy_macos_repo_layout`] 在启动时自动迁移）。
 pub fn azurpilot_repo_dir() -> PathBuf {
     #[cfg(debug_assertions)]
     if let Some(root) = std::env::var_os("AZURPILOT_REPO_DIR") {
@@ -201,7 +202,7 @@ pub fn azurpilot_repo_dir() -> PathBuf {
         .parent()
         .expect("launcher directory")
         .to_path_buf();
-    // macOS 需额外考虑 .app 包布局：AzurPilot.app/Contents/AzurLaneAutoScript
+    // macOS 需额外考虑 .app 包布局：AzurPilot.app/Contents/AzurPilot
     #[cfg(target_os = "macos")]
     {
         use std::ffi::OsStr;
@@ -209,11 +210,54 @@ pub fn azurpilot_repo_dir() -> PathBuf {
             let repo_folder = exe_folder
                 .parent()
                 .expect("app Contents directory")
-                .join("AzurLaneAutoScript");
+                .join("AzurPilot");
             return repo_folder;
         }
     }
     exe_folder
+}
+
+/// macOS 旧布局迁移入口：`.app` 布局下把仓库数据从旧的
+/// `Contents/AzurLaneAutoScript` 迁到 `Contents/AzurPilot`。
+#[cfg(target_os = "macos")]
+fn migrate_legacy_macos_repo_layout() {
+    use std::ffi::OsStr;
+    let Some(exe_folder) = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+    else {
+        return;
+    };
+    if exe_folder.file_name() != Some(OsStr::new("MacOS")) {
+        return;
+    }
+    if let Some(contents) = exe_folder.parent() {
+        migrate_legacy_repo_layout(contents);
+    }
+}
+
+/// 目录迁移核心：旧目录存在且新目录未建立时整体改名（同卷原子操作，
+/// 保留仓库、`.venv` 与组件等全部数据）；其余情况不动，失败仅记日志，
+/// 由后续部署/修复流程在新目录重建。
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn migrate_legacy_repo_layout(contents_dir: &Path) {
+    let legacy = contents_dir.join("AzurLaneAutoScript");
+    let target = contents_dir.join("AzurPilot");
+    if !legacy.is_dir() || target.exists() {
+        return;
+    }
+    match fs::rename(&legacy, &target) {
+        Ok(()) => info!(
+            "Migrated legacy repository layout: {} -> {}",
+            legacy.display(),
+            target.display()
+        ),
+        Err(error) => warn!(
+            "Failed to migrate legacy repository layout {}: {error}; the launcher will redeploy under {}",
+            legacy.display(),
+            target.display()
+        ),
+    }
 }
 
 /// 把给定路径前插到指定环境变量（PATH 类）的首位，使其优先级最高。
@@ -340,6 +384,10 @@ fn find_on_path(executable: &str) -> Option<PathBuf> {
 /// # Errors
 /// 仓库目录不存在或切换工作目录失败时返回 Err。
 pub fn setup_environment() -> Result<()> {
+    // 仓库布局迁移必须在定位与 chdir 之前完成，保证后续所有子进程
+    // 直接工作在新目录 `Contents/AzurPilot`。
+    #[cfg(target_os = "macos")]
+    migrate_legacy_macos_repo_layout();
     let dir = azurpilot_repo_dir();
     info!("AzurPilot dir is {:?}", &dir);
     fs::create_dir_all(&dir)?;
@@ -2747,6 +2795,25 @@ fn find_percentage(s: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_macos_repo_layout_migrates_once_and_keeps_data() {
+        let contents = tempfile::tempdir().expect("create app Contents directory");
+        let legacy = contents.path().join("AzurLaneAutoScript");
+        fs::create_dir_all(legacy.join("deploy")).expect("create legacy repository");
+        fs::write(legacy.join("pyproject.toml"), "[project]\n").expect("write marker");
+        migrate_legacy_repo_layout(contents.path());
+        // 整体改名：仓库数据完整进入新目录，旧目录消失。
+        assert!(contents.path().join("AzurPilot/pyproject.toml").is_file());
+        assert!(contents.path().join("AzurPilot/deploy").is_dir());
+        assert!(!legacy.exists());
+        // 新目录已存在时不再迁移，旧目录残迹保持原样等待用户处理。
+        fs::create_dir_all(&legacy).expect("recreate legacy directory");
+        fs::write(legacy.join("marker"), "").expect("write marker");
+        migrate_legacy_repo_layout(contents.path());
+        assert!(legacy.join("marker").is_file());
+        assert!(contents.path().join("AzurPilot/pyproject.toml").is_file());
+    }
 
     #[test]
     fn explicit_repair_removes_only_venv() {

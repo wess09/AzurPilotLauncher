@@ -265,7 +265,7 @@ graph TD
         SYNC["uv sync --frozen 依存同期 (uv.lock 固定)"]
     end
 
-    subgraph Repo ["AzurLaneAutoScript リポジトリ"]
+    subgraph Repo ["AzurPilot バックエンドリポジトリ"]
         GIT["Git 自動更新 (deploy.git.GitManager · 20 回リトライ)"]
         GUI["gui.py WebUI バックエンド"]
         WEB["WebUI コンソール (127.0.0.1:22267)"]
@@ -400,14 +400,14 @@ graph TD
 
 ```
 AzurPilot ルートディレクトリ
-* Windows: AzurLaneAutoScript
-* macOS:   AzurPilot.app/Contents/AzurLaneAutoScript
-* Linux:   AzurLaneAutoScript
+* Windows: AzurPilot
+* macOS:   AzurPilot.app/Contents/AzurPilot
+* Linux:   AzurPilot
 
 AzurPilot ランチャー
-* Windows: AzurLaneAutoScript/AzurPilot.exe
+* Windows: AzurPilot/AzurPilot.exe
 * macOS:   AzurPilot.app/Contents/MacOS/AzurPilot
-* Linux:   AzurLaneAutoScript/AzurPilot
+* Linux:   AzurPilot/AzurPilot
 
 Python / uv
 * 全システム共通: .venv
