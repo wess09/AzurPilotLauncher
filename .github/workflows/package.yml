@@ -103,6 +103,9 @@ jobs:
           persist-credentials: false
       - name: Package git/adb components and deploy bootstrap manifest
         shell: bash
+        env:
+          # GitHub API 请求携带令牌，规避 runner 共享 IP 的匿名限流（403）。
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           python tools/build_components.py --source backend-source --output runtime-artifacts --platform '${{ matrix.platform }}'

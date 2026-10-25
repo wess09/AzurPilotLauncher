@@ -72,6 +72,16 @@ def tree(root, prefix):
             yield path, f'{prefix}/{path.relative_to(root).as_posix()}'
 
 
+def github_api(url):
+    """请求 GitHub API；CI 环境携带 GITHUB_TOKEN，规避 runner 共享
+    IP 触发的匿名限流（每小时 60 次，定时构建常撞 403）。"""
+    headers = {'Accept': 'application/vnd.github+json'}
+    token = os.environ.get('GITHUB_TOKEN')
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    return urllib.request.urlopen(urllib.request.Request(url, headers=headers))
+
+
 def git_component_files(stage, platform):
     """收集当前平台的 git 二进制布局，返回归档文件表。
 
@@ -80,7 +90,7 @@ def git_component_files(stage, platform):
     与初始化模板。
     """
     if platform.startswith('windows-'):
-        release = json.load(urllib.request.urlopen(
+        release = json.load(github_api(
             'https://api.github.com/repos/git-for-windows/git/releases/latest'))
         asset = next(
             asset for asset in release['assets']
