@@ -3,13 +3,14 @@ export type Phase =
   | "update_available"
   | "updating"
   | "idle"
+  | "deploying"
   | "starting"
   | "running"
   | "stopping"
   | "repairing"
   | "cancelling"
   | "error";
-export type Operation = "check" | "update" | "start" | "stop" | "repair";
+export type Operation = "check" | "update" | "deploy" | "start" | "stop" | "repair";
 export interface Progress {
   title: string;
   detail: string;
@@ -35,6 +36,7 @@ export interface Snapshot {
   connection_error: string | null;
   message: string | null;
   can_start: boolean;
+  can_deploy: boolean;
   can_repair: boolean;
   can_stop: boolean;
   can_check: boolean;
@@ -59,6 +61,7 @@ export const busy = (s: Snapshot) =>
   [
     "checking",
     "updating",
+    "deploying",
     "starting",
     "stopping",
     "repairing",

@@ -24,6 +24,7 @@ let simulated: Snapshot = {
   connection_error: null,
   message: null,
   can_start: true,
+  can_deploy: false,
   can_repair: true,
   can_stop: false,
   can_check: true,
@@ -31,7 +32,11 @@ let simulated: Snapshot = {
   can_cancel: false,
 };
 const scenario = new URLSearchParams(location.search).get("preview");
-if (preview && scenario === "deploy") simulated.deployment_required = true;
+if (preview && scenario === "deploy") {
+  simulated.deployment_required = true;
+  simulated.can_start = false;
+  simulated.can_deploy = true;
+}
 if (preview && scenario) {
   const phase = (
     {
@@ -96,15 +101,31 @@ export async function command<T = void>(
       phase: "starting",
       operation: "start",
       can_start: false,
+      can_deploy: false,
       can_repair: false,
       can_cancel: true,
     };
+  if (name === "launcher_deploy") {
+    simulated = {
+      ...simulated, task_id: simulated.task_id + 1,
+      phase: "deploying", operation: "deploy",
+      can_start: false, can_deploy: false, can_repair: false, can_check: false, can_cancel: true,
+    };
+    setTimeout(() => {
+      simulated = {
+        ...simulated, phase: "idle", operation: "deploy", deployment_required: false,
+        can_start: true, can_deploy: false, can_repair: true, can_check: true, can_cancel: false, progress: null,
+      };
+      previewListener?.({ ...simulated, sequence: ++simulated.sequence });
+    }, 500);
+  }
   if (name === "launcher_stop" || name === "launcher_back")
     simulated = {
       ...simulated,
       phase: "idle",
       backend_running: false,
-  deployment_required: false,
+      deployment_required: false,
+      can_deploy: false,
       can_start: true,
       can_repair: true,
       can_stop: false,

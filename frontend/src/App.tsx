@@ -32,6 +32,7 @@ import styles from "./launcher.module.css";
 
 const mainIcons: Record<string, ComponentType> = {
   launcher_start: Play16Filled,
+  launcher_deploy: ArrowDownload16Regular,
   launcher_open_webui: Open16Filled,
   launcher_install_update: ArrowClockwise16Filled,
   launcher_check_update: ArrowClockwise16Filled,
@@ -159,7 +160,9 @@ export function App() {
           ? "launcher_open_webui"
           : phase === "error" && state?.operation === "repair"
             ? "launcher_repair"
-            : "launcher_start";
+            : state?.deployment_required
+              ? "launcher_deploy"
+              : "launcher_start";
   const mainLabel = connection
     ? "retry_connection"
     : state?.can_update
@@ -180,6 +183,7 @@ export function App() {
     state?.can_update ||
     (state?.backend_running && phase === "running") ||
     state?.can_start ||
+    state?.can_deploy ||
     (phase === "error" && state?.can_check) ||
     (mainAction === "launcher_repair" && state?.can_repair);
   const handleMain = () =>
@@ -229,11 +233,13 @@ export function App() {
         ? t("error")
         : state.operation === "repair"
           ? t("repair_failed")
-          : state.operation === "update"
-            ? t("update_failed")
-            : state.operation === "check"
-              ? t("check_failed")
-              : t("launch_failed"));
+          : state.operation === "deploy"
+            ? t("deploy_failed")
+            : state.operation === "update"
+              ? t("update_failed")
+              : state.operation === "check"
+                ? t("check_failed")
+                : t("launch_failed"));
   const handleLaunchClick = () => {
     if (armCancel) {
       setArmCancel(false);

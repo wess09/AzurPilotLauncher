@@ -38,6 +38,8 @@ deploy 引导文件按清单逐项检查，只下载缺失或为空的脚本和�
 1. 读取 stable.json `runtime`，下载/校验/解压 `git`、`adb` 组件并成组提交；
 2. 按清单补齐 deploy 脚本与当前系统模板，确认全部就绪后提交组件和部署记录。
 
+部署完成后回到首页，按钮变为“启动”，等待用户再次点击。部署任务不安装 Python、不运行 deploy 脚本，也不拉取仓库、构建前端或启动后端。
+
 启动（首页"启动"按钮触发，完成其余一切）：
 
 1. 内嵌 uv（编译期经 `AZURPILOT_BOOTSTRAP_UV` 嵌入，空占位时回退 `UV` 环境变量或 PATH）安装最新稳定 Python 3.14.x 并创建可重定位 `.venv`；
@@ -49,11 +51,15 @@ deploy 引导文件按清单逐项检查，只下载缺失或为空的脚本和�
 
 启动 gui.py 时清除旧的 `AZURPILOT_PREBUILT` 标记，只设置 `AZURPILOT_NO_UV_BOOTSTRAP=1`。后端使用正常源码模式，不再检查旧六组件协议。Git/ADB 保存在 `.azurpilot/tools/`，与 Python 的 `.venv` 生命周期分开。
 
-环境修复（首页确认后）：强制重下 git/adb 组件、删除并重建 `.venv`（Python + requests + uv sync），保留代码、配置、日志与缓存；运行中必须先停止服务。普通关闭、取消和启动失败不删除 `.venv` 或缓存。
+环境修复（首页确认后）：优先读取当前线上清单，忽略现有组件和 ZIP 缓存，重新联网下载 git/adb ZIP，经原有 ZIP SHA-256 校验后覆盖安装，再删除并重建 `.venv`（Python + requests + uv sync）。保留代码、配置、日志；下载失败或取消不会预先删除原组件和有效缓存。运行中必须先停止服务，修复完成后等待用户点击启动。
 
 ## 校验、取消与恢复
 
-组件 ZIP 下载经 SHA-256 与大小校验，缓存于 `.azurpilot/cache/<sha256>.zip` 复用。解压前拒绝路径穿越、绝对路径、符号链接、Windows 保留名与重复路径；写入前检查既有路径的链接与 reparse point。`.azurpilot/installed.json` 记录已部署组件与文件清单；持久化 `journal.json` 保证提交阶段中断后可回滚恢复。`deployment_required` 判定：事务未恢复、git/adb 组件缺失或损坏，或者部署记录中的任一引导文件缺失/为空。
+组件 ZIP 下载经 SHA-256 与大小校验，正常部署可复用 `.azurpilot/cache/<sha256>.zip`，显式修复强制重新下载。启动前只检查所需文件是否齐全，不逐文件计算 SHA-256，也不按旧记录的文件长度判断版本变化。文件内容损坏时由用户执行环境修复重新下载覆盖。
+
+`.azurpilot/installed.json` 记录已部署文件，但不是显示“启动”的必需条件。没有安装记录的已有目录，会根据更新检查时缓存的 `runtime.deploy.files` 检查实际脚本，并识别现有模板或 `config/deploy.yaml`、Git/ADB 可执行文件；兼容旧 `.venv` 工具路径及已有配置中的有效路径。首次离线且没有清单缓存时使用启动必需脚本列表。Python、后端源码、资源与构建后的前端不属于“部署”按钮的就绪条件。
+
+解压前拒绝路径穿越、绝对路径、符号链接、Windows 保留名与重复路径；写入前检查既有路径的链接与 reparse point。持久化 `journal.json` 保证提交阶段中断后可回滚恢复。
 
 ## CI 与发布顺序
 

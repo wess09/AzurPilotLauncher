@@ -59,6 +59,8 @@ struct LauncherUpdateManifest {
     version: String,
     /// 平台标识（如 windows-x86_64）到对应载荷的映射。
     platforms: HashMap<String, LauncherUpdatePlatform>,
+    #[serde(default)]
+    runtime: Option<serde_json::Value>,
 }
 
 /// 单个平台的更新载荷信息。
@@ -238,6 +240,13 @@ pub(crate) fn check_update(cancel: &Arc<AtomicBool>) -> Result<Option<AvailableU
         }
     };
     crate::launcher::ensure_not_cancelled(cancel)?;
+    if let Some(runtime) = manifest.runtime.clone() {
+        if let Err(error) =
+            crate::components::remember_manifest(&crate::setup::azurpilot_repo_dir(), runtime)
+        {
+            tracing::warn!("Unable to cache runtime file manifest: {error:#}");
+        }
+    }
     let update_available = launcher_version_is_newer(current_version, &manifest.version)
         .ok_or_else(|| {
             tracing::warn!(

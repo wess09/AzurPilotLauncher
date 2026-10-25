@@ -265,16 +265,19 @@ fn venv_uv() -> PathBuf {
 
 /// git 的 `GIT_EXEC_PATH` 目录（Windows/Unix 发行包布局均含 `libexec/git-core`）。
 fn venv_git_exec_path() -> PathBuf {
-    azurpilot_repo_dir()
-        .join(crate::components::TOOLS_DIR)
-        .join("git/libexec/git-core")
+    git_tool_root().join("libexec/git-core")
 }
 
 /// git 模板目录（`share/git-core/templates`），供 `GIT_TEMPLATE_DIR` 使用。
 fn venv_git_template_dir() -> PathBuf {
-    azurpilot_repo_dir()
-        .join(crate::components::TOOLS_DIR)
-        .join("git/share/git-core/templates")
+    git_tool_root().join("share/git-core/templates")
+}
+
+fn git_tool_root() -> PathBuf {
+    let root = azurpilot_repo_dir();
+    crate::components::available_tool(&root, "git")
+        .and_then(|path| path.parent().and_then(Path::parent).map(Path::to_owned))
+        .unwrap_or_else(|| root.join(crate::components::TOOLS_DIR).join("git"))
 }
 
 /// 取得本次进程用于引导的 uv 可执行文件路径。
@@ -372,6 +375,13 @@ pub fn setup_environment() -> Result<()> {
 ///
 /// 仅在对应目录真实存在时设置，避免把不存在的路径传给 git。
 fn refresh_git_environment() {
+    for id in ["git", "adb"] {
+        if let Some(path) = crate::components::available_tool(&azurpilot_repo_dir(), id) {
+            if let Some(directory) = path.parent() {
+                prepend_path_to_env("PATH", directory.to_owned());
+            }
+        }
+    }
     let git_exec_path = venv_git_exec_path();
     if git_exec_path.exists() {
         std::env::set_var("GIT_EXEC_PATH", git_exec_path);
@@ -398,11 +408,11 @@ fn setup_git_ca_bundle() {
     }
 }
 
-/// 环境搭建总入口：部署引导物 → 工具安装 → 配置迁移 → 仓库更新 →
+/// 启动环境入口：确认引导物齐备 → 工具安装 → 配置迁移 → 仓库更新 →
 /// 依赖同步 → 前端构建。
 ///
-/// 部署阶段只下载 git/adb 组件与 deploy 引导脚本（见 [`crate::components`]）；
-/// Python、源码、依赖与前端全部在本入口内经 uv 与 deploy 脚本自行完成。
+/// 缺少引导物时返回首页执行独立部署。Python、源码、依赖与前端全部在
+/// 本入口内经 uv 与 deploy 脚本自行完成。
 /// 各阶段经 `status_updater` 上报启动画面进度；`cancel_requested` 允许
 /// 取消窗口随时中止全流程。
 ///
@@ -424,13 +434,9 @@ pub fn setup_azurpilot_repo(
         )
         .with_subtitle(t!("setup.checking_env", tip = get_tip())),
     );
-    crate::components::deploy(
-        &azurpilot_repo_dir(),
-        &mut status_updater,
-        cancel_requested.clone(),
-        skip_repository_update,
-        sources,
-    )?;
+    if crate::components::deployment_required(&azurpilot_repo_dir()) {
+        bail!(t!("launcher.deploy_hint"));
+    }
     refresh_git_environment();
     #[cfg(target_os = "linux")]
     setup_git_ca_bundle();
@@ -1485,8 +1491,8 @@ fn uv_lock_command_with_paths(
 
 /// 迁移 `config/deploy.yaml` 到"自包含 .venv"的配置形态。
 ///
-/// 逐行重写：可执行文件路径（Python/Adb/Git）强制指向 `.venv` 内的
-/// 平台路径；移除已废弃的 `RequirementsFile`（依赖改由 uv.lock 管理）；
+/// 逐行重写：Python 指向 `.venv`；Git/ADB 优先使用已部署的独立工具，
+/// 同时保留旧安装和配置中的有效工具路径。移除已废弃的 `RequirementsFile`；
 /// 强制 `InstallDependencies: true`；缺失的键按内置平台模板补齐。
 /// 文件为空（首次启动）时直接写入内置 deploy.yaml 基线。
 ///
@@ -1498,6 +1504,19 @@ fn migrate_dependency_config(sources: &Preferences) -> Result<()> {
 
 fn migrate_dependency_config_at(root: &Path, sources: &Preferences) -> Result<()> {
     let path = root.join("config/deploy.yaml");
+    let tool_config = |id, fallback: &str| {
+        crate::components::available_tool(root, id)
+            .map(|path| {
+                let value = match path.strip_prefix(root) {
+                    Ok(relative) => format!("./{}", relative.display()),
+                    Err(_) => path.display().to_string(),
+                };
+                serde_json::to_string(&value.replace('\\', "/")).unwrap()
+            })
+            .unwrap_or_else(|| fallback.to_owned())
+    };
+    let git_executable = tool_config("git", platform_git_config_path());
+    let adb_executable = tool_config("adb", platform_adb_config_path());
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -1539,13 +1558,13 @@ fn migrate_dependency_config_at(root: &Path, sources: &Preferences) -> Result<()
             found_adb_executable = true;
             output.push_str(indent);
             output.push_str("AdbExecutable: ");
-            output.push_str(platform_adb_config_path());
+            output.push_str(&adb_executable);
             changed = true;
         } else if trimmed.starts_with("GitExecutable:") {
             found_git_executable = true;
             output.push_str(indent);
             output.push_str("GitExecutable: ");
-            output.push_str(platform_git_config_path());
+            output.push_str(&git_executable);
             changed = true;
         } else if trimmed.starts_with("InstallDependencies:") {
             found_install_dependencies = true;
@@ -1564,7 +1583,7 @@ fn migrate_dependency_config_at(root: &Path, sources: &Preferences) -> Result<()
 
     if !found_git_executable {
         output.push_str("\nGitExecutable: ");
-        output.push_str(platform_git_config_path());
+        output.push_str(&git_executable);
         output.push('\n');
         changed = true;
     }
@@ -1576,7 +1595,7 @@ fn migrate_dependency_config_at(root: &Path, sources: &Preferences) -> Result<()
     }
     if !found_adb_executable {
         output.push_str("AdbExecutable: ");
-        output.push_str(platform_adb_config_path());
+        output.push_str(&adb_executable);
         output.push('\n');
         changed = true;
     }
@@ -2768,6 +2787,31 @@ mod tests {
         assert!(fs::read_to_string(root.path().join("config/deploy.yaml"))
             .unwrap()
             .contains("# user configuration"));
+    }
+
+    #[test]
+    fn existing_legacy_tool_paths_are_preserved_until_repair() {
+        let root = tempfile::tempdir().unwrap();
+        let (git, adb) = if cfg!(windows) {
+            (".venv/Scripts/git/cmd/git.exe", ".venv/Scripts/adb.exe")
+        } else {
+            (".venv/bin/git", ".venv/bin/adb")
+        };
+        for name in [git, adb] {
+            let path = root.path().join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "existing tool").unwrap();
+        }
+        migrate_dependency_config_at(root.path(), &Preferences::default()).unwrap();
+        let config: JsonValue = serde_yaml::from_str(
+            &fs::read_to_string(root.path().join("config/deploy.yaml")).unwrap(),
+        )
+        .unwrap();
+        for pointer in ["/Deploy/Git/GitExecutable", "/Deploy/Adb/AdbExecutable"] {
+            let path = config.pointer(pointer).unwrap().as_str().unwrap();
+            assert!(root.path().join(path).is_file());
+            assert!(path.contains(".venv/"));
+        }
     }
 
     /// 显式运行：cargo test real_uv_empty_install_and_repair -- --ignored --test-threads=1

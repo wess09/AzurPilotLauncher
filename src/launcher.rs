@@ -44,6 +44,7 @@ pub(crate) enum Phase {
     UpdateAvailable,
     Updating,
     Idle,
+    Deploying,
     Starting,
     Running,
     Stopping,
@@ -57,6 +58,7 @@ pub(crate) enum Phase {
 pub(crate) enum Operation {
     Check,
     Update,
+    Deploy,
     Start,
     Stop,
     Repair,
@@ -78,6 +80,7 @@ pub(crate) struct Snapshot {
     pub connection_error: Option<String>,
     pub message: Option<String>,
     pub can_start: bool,
+    pub can_deploy: bool,
     pub can_repair: bool,
     pub can_stop: bool,
     pub can_check: bool,
@@ -114,6 +117,7 @@ impl Model {
                 connection_error: None,
                 message: None,
                 can_start: false,
+                can_deploy: false,
                 can_repair: false,
                 can_stop: false,
                 can_check: true,
@@ -134,7 +138,8 @@ impl Model {
         let mut view = self.view.clone();
         let free = !self.active && !self.exiting;
         let ready = free && view.update_checked && self.update.is_none() && !view.backend_running;
-        view.can_start = ready;
+        view.can_start = ready && !view.deployment_required;
+        view.can_deploy = ready && view.deployment_required;
         view.can_repair = ready;
         view.can_stop = free && view.backend_running;
         view.can_check = free && !view.backend_running;
@@ -154,6 +159,7 @@ impl Model {
             Operation::Check => view.can_check,
             Operation::Update => view.can_update,
             Operation::Start => view.can_start,
+            Operation::Deploy => view.can_deploy,
             Operation::Repair => view.can_repair,
             Operation::Stop => view.can_stop,
         };
@@ -169,6 +175,7 @@ impl Model {
             Operation::Check => Phase::Checking,
             Operation::Update => Phase::Updating,
             Operation::Start => Phase::Starting,
+            Operation::Deploy => Phase::Deploying,
             Operation::Stop => Phase::Stopping,
             Operation::Repair => Phase::Repairing,
         };
@@ -373,7 +380,7 @@ impl Launcher {
             let view = controller.snapshot();
             if auto_start && success && view.can_start {
                 let _ = controller.start();
-            } else if view.update_version.is_some() {
+            } else if view.update_version.is_some() || view.deployment_required {
                 let _ = show_launcher_home(&controller.app);
             }
         });
@@ -424,7 +431,46 @@ impl Launcher {
         Ok(())
     }
 
+    fn deploy(self: &Arc<Self>) -> Result<()> {
+        let (task, cancel) = self.begin(Operation::Deploy)?;
+        let controller = self.clone();
+        thread::spawn(move || {
+            let result = (|| {
+                crate::components::deploy(
+                    &setup::azurpilot_repo_dir(),
+                    &mut |mut update: SplashUpdate| {
+                        update.progress =
+                            ((update.progress - 5.0) / 19.0 * 100.0).clamp(0.0, 100.0);
+                        controller.publish(task, update);
+                    },
+                    cancel.clone(),
+                    controller.skip_update,
+                    &controller
+                        .app
+                        .state::<Arc<crate::settings::Store>>()
+                        .get()
+                        .sources,
+                )?;
+                ensure_not_cancelled(&cancel)?;
+                controller.change(|model| {
+                    if model.accepts(task) {
+                        model.view.message = Some(t!("launcher.deploy_done").to_string());
+                    }
+                });
+                Ok(())
+            })();
+            controller.finish(task, result);
+        });
+        Ok(())
+    }
+
     fn start(self: &Arc<Self>) -> Result<()> {
+        let deployment_required =
+            crate::components::deployment_required(&setup::azurpilot_repo_dir());
+        self.change(|model| {
+            model.view.deployment_required = deployment_required;
+            model.touch();
+        });
         let (task, cancel) = self.begin(Operation::Start)?;
         let controller = self.clone();
         thread::spawn(move || {
@@ -798,6 +844,7 @@ macro_rules! action_command {
     };
 }
 action_command!(launcher_start, start);
+action_command!(launcher_deploy, deploy);
 action_command!(launcher_stop, stop);
 action_command!(launcher_repair, repair);
 action_command!(launcher_install_update, install_update);
@@ -892,7 +939,7 @@ pub(crate) fn run() -> Result<()> {
             else { let _ = show_launcher_home(app); }
         }))
         .invoke_handler(tauri::generate_handler![
-            launcher_context, launcher_snapshot, launcher_start, launcher_stop, launcher_repair,
+            launcher_context, launcher_snapshot, launcher_start, launcher_deploy, launcher_stop, launcher_repair,
             launcher_check_update, launcher_install_update, launcher_open_webui, launcher_show_home,
             launcher_cancel_and_exit, launcher_cancel, launcher_back,
             crate::save_as, crate::download_today_gui_log, crate::download_today_launcher_log, crate::retry_backend_connection,
@@ -1084,6 +1131,7 @@ mod tests {
     fn ready() -> Model {
         let mut m = Model::new();
         m.view.update_checked = true;
+        m.view.deployment_required = false;
         m
     }
     #[test]
@@ -1101,12 +1149,35 @@ mod tests {
         assert!(m.begin(Operation::Repair).is_ok());
     }
     #[test]
+    fn deployment_finishes_idle_and_requires_a_separate_start() {
+        let mut model = ready();
+        model.view.deployment_required = true;
+        assert!(model.snapshot().can_deploy);
+        assert!(!model.snapshot().can_start);
+        assert!(model.begin(Operation::Start).is_err());
+        let (task, _) = model.begin(Operation::Deploy).unwrap();
+        assert_eq!(model.view.phase, Phase::Deploying);
+        assert!(model.snapshot().can_cancel);
+        assert!(model.begin(Operation::Start).is_err());
+        model.view.deployment_required = false;
+        model.finish(task, Ok(()));
+        assert_eq!(model.view.phase, Phase::Idle);
+        assert!(!model.view.backend_running);
+        assert!(model.snapshot().can_start);
+        assert!(!model.snapshot().can_deploy);
+        assert_eq!(model.view.operation, Some(Operation::Deploy));
+        model.begin(Operation::Start).unwrap();
+        assert_eq!(model.view.phase, Phase::Starting);
+    }
+    #[test]
     fn update_gate_and_failed_checks_cannot_be_bypassed() {
         let mut m = Model::new();
         assert!(m.begin(Operation::Start).is_err());
+        assert!(m.begin(Operation::Deploy).is_err());
         let (task, _) = m.begin(Operation::Check).unwrap();
         m.finish(task, Err(anyhow!("offline")));
         assert!(!m.snapshot().can_start);
+        assert!(!m.snapshot().can_deploy);
         assert!(!m.snapshot().can_repair);
         assert!(m.snapshot().can_check);
     }

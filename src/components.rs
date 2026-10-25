@@ -30,13 +30,14 @@ use tracing::{info, warn};
 
 const IDS: [&str; 2] = ["git", "adb"];
 const RECEIPT: &str = ".azurpilot/installed.json";
+const CACHED_MANIFEST: &str = ".azurpilot/runtime.json";
 const TRANSACTION: &str = ".azurpilot/transaction";
 pub(crate) const TOOLS_DIR: &str = ".azurpilot/tools";
 const MANIFEST_URLS: [&str; 2] = [
     crate::updater::LAUNCHER_UPDATE_URL,
     crate::updater::LAUNCHER_UPDATE_FALLBACK_URL,
 ];
-/// 部署引导脚本就绪的判定文件：核心 deploy 脚本到位即视为引导完成。
+/// 引导清单必须包含的入口文件；是否齐备仍按完整文件清单判定。
 const BOOTSTRAP_MARKER: &str = "deploy/installer.py";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -122,8 +123,9 @@ fn read_receipt(root: &Path) -> Result<Receipt> {
 fn intact(root: &Path, installed: &InstalledComponent) -> bool {
     !installed.files.is_empty()
         && installed.files.iter().all(|(name, size)| {
-            secure_target(root, name)
-                .is_ok_and(|path| fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() == *size))
+            secure_target(root, name).is_ok_and(|path| {
+                fs::metadata(path).is_ok_and(|m| m.is_file() && (*size == 0 || m.len() > 0))
+            })
         })
 }
 
@@ -133,16 +135,142 @@ pub(crate) fn deployment_required(root: &Path) -> bool {
         return true;
     }
     let Ok(receipt) = read_receipt(root) else {
-        return true;
+        return !existing_install_complete(root);
     };
-    receipt.bootstrap_files.is_empty()
-        || receipt
+    let bootstrap_missing = if receipt.bootstrap_files.is_empty() {
+        !existing_install_complete(root)
+    } else {
+        receipt
             .bootstrap_files
             .iter()
             .any(|name| !bootstrap_file_ready(root, name))
+    };
+    bootstrap_missing
         || IDS
             .iter()
             .any(|id| !receipt.components.get(*id).is_some_and(|c| intact(root, c)))
+}
+
+pub(crate) fn remember_manifest(root: &Path, value: serde_json::Value) -> Result<()> {
+    let manifest: Manifest = serde_json::from_value(value)?;
+    manifest.validate(&platform())?;
+    let target = secure_target(root, CACHED_MANIFEST)?;
+    fs::create_dir_all(target.parent().unwrap())?;
+    let mut temporary = tempfile::NamedTempFile::new_in(target.parent().unwrap())?;
+    temporary.write_all(&serde_json::to_vec(&manifest)?)?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(target).map_err(|e| e.error)?;
+    Ok(())
+}
+
+fn cached_manifest(root: &Path) -> Option<Manifest> {
+    let manifest: Manifest =
+        serde_json::from_slice(&fs::read(secure_target(root, CACHED_MANIFEST).ok()?).ok()?).ok()?;
+    manifest.validate(&platform()).ok()?;
+    Some(manifest)
+}
+
+/// Existing installations do not need a launcher-specific receipt. Check their
+/// actual bootstrap files and configured tools without hashing their contents.
+fn existing_install_complete(root: &Path) -> bool {
+    let scripts_ready = if let Some(manifest) = cached_manifest(root) {
+        manifest
+            .deploy
+            .files
+            .iter()
+            .filter(|name| name.starts_with("deploy/"))
+            .all(|name| bootstrap_file_ready(root, name))
+    } else {
+        [
+            "deploy/installer.py",
+            "deploy/git.py",
+            "deploy/app.py",
+            "deploy/config.py",
+            "deploy/atomic.py",
+            "deploy/utils.py",
+            "deploy/logger.py",
+            "deploy/geo.py",
+            "deploy/config_transaction.py",
+            "deploy/frontend.py",
+            "deploy/uv.py",
+            "deploy/git_over_cdn/client.py",
+            "deploy/git_over_cdn/endpoints.py",
+        ]
+        .iter()
+        .all(|name| bootstrap_file_ready(root, name))
+    };
+    let templates = if cfg!(windows) {
+        [
+            "config/deploy.template.yaml",
+            "config/deploy.template-cn.yaml",
+        ]
+    } else {
+        [
+            "config/deploy.template-linux.yaml",
+            "config/deploy.template-linux-cn.yaml",
+        ]
+    };
+    scripts_ready
+        && (bootstrap_file_ready(root, "config/deploy.yaml")
+            || templates
+                .iter()
+                .any(|name| bootstrap_file_ready(root, name)))
+        && IDS.iter().all(|id| available_tool(root, id).is_some())
+}
+
+/// Prefer the managed tool layout, while retaining working paths from older
+/// .venv installations and user configuration until an explicit repair.
+pub(crate) fn available_tool(root: &Path, id: &str) -> Option<PathBuf> {
+    let (managed, legacy, section, key) = match (id, cfg!(windows)) {
+        ("git", true) => (
+            ".azurpilot/tools/git/cmd/git.exe",
+            ".venv/Scripts/git/cmd/git.exe",
+            "Git",
+            "GitExecutable",
+        ),
+        ("git", false) => (
+            ".azurpilot/tools/git/bin/git",
+            ".venv/bin/git",
+            "Git",
+            "GitExecutable",
+        ),
+        ("adb", true) => (
+            ".azurpilot/tools/adb/adb.exe",
+            ".venv/Scripts/adb.exe",
+            "Adb",
+            "AdbExecutable",
+        ),
+        ("adb", false) => (
+            ".azurpilot/tools/adb/adb",
+            ".venv/bin/adb",
+            "Adb",
+            "AdbExecutable",
+        ),
+        _ => return None,
+    };
+    let ready = |path: &Path| fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0);
+    let managed_path = root.join(managed);
+    if ready(&managed_path) {
+        return Some(managed_path);
+    }
+    if let Some(config) = fs::read_to_string(root.join("config/deploy.yaml"))
+        .ok()
+        .and_then(|text| serde_yaml::from_str::<serde_json::Value>(&text).ok())
+    {
+        if let Some(value) = config
+            .get("Deploy")
+            .and_then(|d| d.get(section))
+            .and_then(|s| s.get(key))
+            .and_then(|v| v.as_str())
+        {
+            let path = root.join(value);
+            if ready(&path) {
+                return Some(path);
+            }
+        }
+    }
+    let legacy_path = root.join(legacy);
+    ready(&legacy_path).then_some(legacy_path)
 }
 
 fn bootstrap_file_ready(root: &Path, name: &str) -> bool {
@@ -297,7 +425,7 @@ pub(crate) fn repair(
     cancel: Arc<AtomicBool>,
     sources: &Preferences,
 ) -> Result<()> {
-    install(root, progress, cancel, true, true, sources)
+    install(root, progress, cancel, false, true, sources)
 }
 
 fn install(
@@ -329,10 +457,12 @@ fn install(
                     warn!("Using complete installed runtime offline: {error:#}");
                     return Ok(());
                 }
-                old.as_ref().map(|r| r.manifest.clone()).ok_or(error)?
+                old.as_ref().map(|r| r.manifest.clone())
+                    .or_else(|| cached_manifest(root)).ok_or(error)?
             }
         }
     };
+    remember_manifest(root, serde_json::to_value(&manifest)?)?;
     apply_manifest(
         root, progress, cancel, manifest, old, &client, repair, sources,
     )
@@ -366,6 +496,7 @@ fn apply_manifest(
             client,
             cancel.clone(),
             sources.download_source,
+            repair,
             |percent| {
                 progress(SplashUpdate::loading(
                     t!("components.downloading"),
@@ -582,11 +713,14 @@ fn download(
     client: &Client,
     cancel: Arc<AtomicBool>,
     source: DownloadSource,
+    force_download: bool,
     mut progress: impl FnMut(f64),
 ) -> Result<PathBuf> {
     let cache = secure_target(root, &format!(".azurpilot/cache/{}.zip", component.sha256))?;
     fs::create_dir_all(cache.parent().unwrap())?;
-    if cache.is_file() && file_hash(&cache, &cancel)? == (component.sha256.clone(), component.size)
+    if !force_download
+        && cache.is_file()
+        && file_hash(&cache, &cancel)? == (component.sha256.clone(), component.size)
     {
         return Ok(cache);
     }
@@ -1001,6 +1135,128 @@ mod tests {
     }
 
     #[test]
+    fn complete_existing_files_do_not_require_an_install_receipt() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = fixture(root.path(), 1);
+        apply(root.path(), manifest.clone()).unwrap();
+        remember_manifest(root.path(), serde_json::to_value(&manifest).unwrap()).unwrap();
+        fs::remove_file(root.path().join(RECEIPT)).unwrap();
+        assert!(!root.path().join("gui.py").exists());
+        assert!(!root.path().join(".venv").exists());
+        assert!(!deployment_required(root.path()));
+        fs::remove_file(root.path().join("deploy/git.py")).unwrap();
+        assert!(deployment_required(root.path()));
+    }
+
+    #[test]
+    fn existing_legacy_tools_are_accepted_without_a_receipt() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = fixture(root.path(), 1);
+        for name in &manifest.deploy.files {
+            let path = root.path().join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "bootstrap").unwrap();
+        }
+        let (git, adb) = if cfg!(windows) {
+            (".venv/Scripts/git/cmd/git.exe", ".venv/Scripts/adb.exe")
+        } else {
+            (".venv/bin/git", ".venv/bin/adb")
+        };
+        for name in [git, adb] {
+            let path = root.path().join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "existing tool").unwrap();
+        }
+        remember_manifest(root.path(), serde_json::to_value(manifest).unwrap()).unwrap();
+        assert!(!deployment_required(root.path()));
+        fs::remove_file(root.path().join(adb)).unwrap();
+        assert!(deployment_required(root.path()));
+    }
+
+    #[test]
+    fn explicit_repair_redownloads_cached_components_and_overwrites_existing_files() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manifest = fixture(root.path(), 1);
+        apply(root.path(), manifest.clone()).unwrap();
+        let receipt = read_receipt(root.path()).unwrap();
+        let git = receipt.components["git"].files.keys().next().unwrap();
+        let original = fs::read(root.path().join(git)).unwrap();
+        fs::write(
+            root.path().join(git),
+            "modified binary with a different length",
+        )
+        .unwrap();
+        // Ordinary readiness checks never compare file contents or digests.
+        assert!(!deployment_required(root.path()));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let payloads: Vec<_> = manifest.platforms[&platform()]
+            .iter()
+            .map(|c| {
+                fs::read(
+                    root.path()
+                        .join(format!(".azurpilot/cache/{}.zip", c.sha256)),
+                )
+                .unwrap()
+            })
+            .collect();
+        for component in manifest.platforms.get_mut(&platform()).unwrap() {
+            component.urls = vec![format!("http://{address}/{}", component.id)];
+        }
+        let server = thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let mut requests = Vec::new();
+            for payload in payloads {
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(
+                                std::time::Instant::now() < deadline,
+                                "repair did not redownload a cached component"
+                            );
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("{error}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = [0; 4096];
+                let length = stream.read(&mut request).unwrap();
+                requests.push(String::from_utf8_lossy(&request[..length]).into_owned());
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    payload.len()
+                )
+                .unwrap();
+                stream.write_all(&payload).unwrap();
+            }
+            requests
+        });
+        apply_manifest(
+            root.path(),
+            &mut |_| {},
+            Arc::new(AtomicBool::new(false)),
+            manifest,
+            Some(receipt.clone()),
+            &client().unwrap(),
+            true,
+            &Preferences::default(),
+        )
+        .unwrap();
+        let requests = server.join().unwrap();
+        assert!(requests[0].starts_with("GET /git "));
+        assert!(requests[1].starts_with("GET /adb "));
+        assert_eq!(fs::read(root.path().join(git)).unwrap(), original);
+        assert!(!deployment_required(root.path()));
+    }
+
+    #[test]
     fn updates_remove_only_old_managed_files_and_keep_user_data() {
         let root = tempfile::tempdir().unwrap();
         let first = fixture(root.path(), 1);
@@ -1128,6 +1384,7 @@ mod tests {
             &client().unwrap(),
             Arc::new(AtomicBool::new(false)),
             DownloadSource::Cnb,
+            false,
             |_| {},
         )
         .unwrap();

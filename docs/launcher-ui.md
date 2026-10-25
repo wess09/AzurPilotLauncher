@@ -26,29 +26,29 @@ cargo test --locked --all-targets
 cargo build --locked --release --features custom-protocol
 ```
 
-Windows 的 Rust 测试和启动器均需要管理员终端。发布必须先构建前端并启用 `custom-protocol`，否则 debug 配置会使用开发服务器。`build.rs` 不执行 npm 安装。生产字体、视频、JS 和 CSS 均由 Tauri 内嵌，用户运行首页不需要 Node.js；后端 WebUI 同样由 CI 编译，无运行时 Node.js 安装引导。
+Windows 的 Rust 测试和启动器均需要管理员终端。发布必须先构建前端并启用 `custom-protocol`，否则 debug 配置会使用开发服务器。`build.rs` 不执行 npm 安装。生产字体、视频、JS 和 CSS 均由 Tauri 内嵌，用户运行首页不需要 Node.js；后端 WebUI 在点击启动后由 deploy 脚本构建，需要本机 Node.js。
 
 ## 用户流程
 
 普通打开先检查启动器更新，检查失败不能启动或修复。发现新版本后等待用户点击更新；下载和校验结束后才开始原子替换并重启。语言与最小化启动参数跨自更新保留。
 
-缺少引导物时按钮显示“部署”，齐备后显示“启动”。点击后读取统一 `stable.json` 下载 git/adb 组件并补齐缺失的 deploy 引导脚本，随后由内嵌 uv 与 deploy 脚本安装 Python、拉取仓库、同步依赖后构建前端，最后启动后端。成功后显示 WebUI，隐藏首页；Linux 无托盘时将首页最小化到任务栏。托盘可分别打开首页或显示/隐藏 WebUI。`--start-minimized` 自动启动服务且保持窗口隐藏，需要点击更新或发生错误时显示首页。
+缺少引导物时按钮显示“部署”，文件齐备后显示“启动”，已有完整目录不因缺少启动器安装记录而显示部署。“部署”只下载 git/adb 组件及缺失的 deploy 脚本、模板，完成后返回首页，等待用户点击“启动”。点击“启动”才由内嵌 uv 与 deploy 脚本安装 Python、拉取仓库、同步依赖、构建前端并启动后端。成功后显示 WebUI，隐藏首页；Linux 无托盘时将首页最小化到任务栏。托盘可分别打开首页或显示/隐藏 WebUI。`--start-minimized` 仅在引导物齐备时自动启动；缺少引导物、需要更新或发生错误时显示首页。
 
 运行时首页提供“打开 WebUI”和“停止服务”，禁止修复。停止后回收当前后端、工作进程和该会话的 WS 会话，再允许重新启动或修复；已显式脱离后端 Job 的模拟器继续运行。
 
-修复需要确认：强制重下 git/adb 组件、删除并重建 `.venv`（Python、requests 与依赖重新安装），不更新源码或配置，不清空组件与 uv 缓存，完成后返回首页。部署/修复失败会回滚。详见 [部署引导组件](runtime-components.md)。
+修复需要确认：绕过已有 ZIP 缓存，重新联网下载并覆盖 git/adb 组件，删除并重建 `.venv`（Python、requests 与依赖重新安装），完成后返回首页。下载 ZIP 保留 SHA-256 校验；普通启动不逐文件校验内容。部署/修复失败会回滚。详见 [部署引导组件](runtime-components.md)。
 
 首页未开始任务时关闭直接退出，运行中关闭只隐藏首页。启动或修复期间关闭需确认“取消任务并退出”，取消操作只回收任务及其子进程，不删除环境、配置或缓存。自更新进入替换交接阶段后不可中断。Windows WebUI 原有“退出 / 最小化到托盘”菜单保持原样。
 
 ## 状态与 IPC
 
-`launcher::Launcher` 持有唯一的状态控制器；React 按 `can_*` 显示操作，Rust 同时校验任务槽位、更新门禁及后端状态。阶段为 `checking`、`update_available`、`updating`、`idle`、`starting`、`running`、`stopping`、`repairing`、`cancelling`、`error`。
+`launcher::Launcher` 持有唯一的状态控制器；React 按 `can_*` 显示操作，Rust 同时校验任务槽位、更新门禁及后端状态。阶段为 `checking`、`update_available`、`updating`、`idle`、`deploying`、`starting`、`running`、`stopping`、`repairing`、`cancelling`、`error`。`can_deploy` 与 `can_start` 根据文件就绪状态互斥。
 
 | 接口 | 用途 |
 | --- | --- |
 | `launcher_context` / `launcher_snapshot` | 当前语言、版本、平台与完整状态 |
 | `launcher_check_update` / `launcher_install_update` | 检查更新 / 显式下载安装 |
-| `launcher_start` / `launcher_stop` / `launcher_repair` | 启动 / 停止 / 修复 |
+| `launcher_deploy` / `launcher_start` / `launcher_stop` / `launcher_repair` | 仅部署 / 启动 / 停止 / 修复 |
 | `launcher_open_webui` / `launcher_show_home` / `launcher_back` | 打开 WebUI / 返回首页 / 清除可恢复错误 |
 | `launcher_cancel_and_exit` | 确认取消并退出 |
 | `launcher://state` | 窗口定向的完整快照事件 |
@@ -75,4 +75,4 @@ Windows 的 Rust 测试和启动器均需要管理员终端。发布必须先构
 
 控制、通知和免密登录统一使用 [启动器 WS v2](launcher-protocol-v2.md)，旧 SSE/HTTP 接口已移除。
 
-状态快照的 `deployment_required` 由 Rust 扫描组件安装记录、git/adb 完整性与 deploy 脚本存在性生成。设置弹窗提供组件、Python、PyPI 下载源，全部显示镜像名。自动选源读取系统原始语言与 IANA 时区，界面语言覆盖不改变自动判断。
+状态快照的 `deployment_required` 由 Rust 检查实际文件是否齐备生成；安装记录缺失时使用缓存清单及已有配置，不以缺少记录本身判定需要部署。设置弹窗提供组件、Python、PyPI 下载源，全部显示镜像名。自动选源读取系统原始语言与 IANA 时区，界面语言覆盖不改变自动判断。

@@ -63,4 +63,5 @@ cargo check            # 仅检查编译
 WebUI 端口 `22267`；Python `3.14.x`（启动时由内嵌 uv 解析最新稳定补丁版，不写死补丁号）；后端端口等待 60s；WS 心跳 15s、重连 1/2/5/10/30s。时间炸弹配置在 `Cargo.toml` 的 `[package.metadata.azurpilot.time-bomb]`（运行时由 `main.rs` 解析，当前 `enabled = false`）。
 
 - **环境修复**：关闭/取消/后端超时均不得自动删除 `.venv` 或缓存。仅首页确认后的修复强制重新部署运行组件，运行中必须先停止服务。
+- **部署与启动**：`launcher_deploy` 只下载引导物，完成后回到首页等待点击“启动”；已有完整文件不因缺少安装记录而强制部署。普通启动不逐文件校验内容；显式修复须绕过 ZIP 缓存重新下载并覆盖 Git/ADB，下载 ZIP 继续校验 SHA-256。
 - **前端通信**：新管理命令验证本地 `launcher` 窗口；页面先订阅 `launcher://state` 再取快照，按 `sequence` 去重，按 `task_id` 隔离任务。不要重新引入 Rust HTML 拼接或全局 JS 回调。

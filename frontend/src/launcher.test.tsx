@@ -32,6 +32,7 @@ const ready = (): Snapshot => ({
   connection_error: null,
   message: null,
   can_start: true,
+  can_deploy: false,
   can_repair: true,
   can_stop: false,
   can_check: true,
@@ -95,13 +96,17 @@ describe("launcher actions", () => {
   });
   it("shows Deploy for missing components and Run after deployment", async () => {
     await mount();
-    await send({ deployment_required: true });
+    await send({ deployment_required: true, can_start: false, can_deploy: true });
     fireEvent.click(screen.getByRole("button", { name: /Deploy$/ }));
-    expect(bridge.command).toHaveBeenCalledWith("launcher_start");
-    expect(screen.getByRole("button", { name: /Deploy$/ }).getAttribute("title")).toBe("Download missing runtime components, then open WebUI.");
+    expect(bridge.command).toHaveBeenCalledWith("launcher_deploy");
+    expect(bridge.command).not.toHaveBeenCalledWith("launcher_start");
+    expect(screen.getByRole("button", { name: /Deploy$/ }).getAttribute("title")).toBe("Download missing components. Click Run after deployment finishes.");
     await send({ sequence: 3, deployment_required: false });
     expect(screen.getByRole("button", { name: /Run$/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Deploy$/ })).toBeNull();
+    expect(bridge.command).not.toHaveBeenCalledWith("launcher_start");
+    fireEvent.click(screen.getByRole("button", { name: /Run$/ }));
+    await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("launcher_start"));
   });
   it("launches only when the Rust snapshot permits it", async () => {
     await mount();
