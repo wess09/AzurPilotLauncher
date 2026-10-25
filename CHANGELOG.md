@@ -1,5 +1,18 @@
 # 更新日志
 
+## 3.0.3 - 2026-10-26
+
+- 设置新增“减弱动态效果”开关：暂停首页背景视频并停用界面动画，恢复系统正常息屏节奏（背景视频的播放会让 WebView 持显示器唤醒锁导致 Windows 不息屏）。
+- 设置新增“阻止计算机自动睡眠”开关：三平台电源锁（Windows `SetThreadExecutionState` / macOS `IOPMAssertion` / Linux `systemd-inhibit`），只阻止空闲睡眠、不影响息屏；启动器重启后自动恢复。
+- 新增金丝雀更新通道：每次 main 分支构建自动发布（版本号 `Cargo 版本-canary.{提交哈希}.{UTC 时间戳}`），stable.json 新增顶层 `canary` 字段；设置中可切换正式/金丝雀通道，切换后立即检查更新；同主版本号下正式版恒高于金丝雀，切回正式通道即可平滑覆盖升级。
+- 更新载荷新增三源下载：`url`（官方）/ `github_url` / `cloudflare_url`（Cloudflare CDN 国际源）；设置新增“更新下载源”（自动/官方/GitHub/Cloudflare CDN），自动模式沿用国内判定（简体中文+北京时间走官方源，海外 GitHub 优先、Cloudflare 回退）。
+- 启动器每 10 分钟静默检查更新：发现新版本时首页主按钮由“打开 WebUI”变为“更新”，并发送一条原生通知（同一版本只提醒一次，点击唤起首页）。
+- 修复 macOS 上 IPC 误报“此操作仅允许从启动器本地页面执行”：本地页校验改为仅比较 origin，不再限定路径形式；拒绝时记录窗口实际 URL 便于排查。
+- 启动流程新增仓库完整性防呆：git 更新后 `pyproject.toml` 仍缺失时明确提示使用环境修复，不再由 uv sync 抛出晦涩错误。
+- macOS 数据目录改为 `AzurPilot.app/Contents/AzurPilot`，旧版目录启动时自动整体迁移；Windows/Linux 便携包目录、tar 产物与 CI 发布命名全面改为 AzurPilot。
+- README（四语言）全面更新：当前 UI 单图预览、架构图与目录结构对齐现行实现。
+- CI 修复：组件打包访问 GitHub API 携带 `github.token` 规避 runner 共享 IP 匿名限流；更换更新服务 mTLS 客户端证书。
+
 ## 3.0.2 - 2026-10-25
 
 - 更新用户提供的 Windows ICO 图标，并用于 Windows 启动器和安装程序。
