@@ -74,7 +74,7 @@ export function ErrorDialog({
         <DialogBody>
           <DialogTitle id="error-dialog-title">{title}</DialogTitle>
           <DialogContent>
-            <pre className={styles.errorLog}>{log}</pre>
+            <pre className={styles.errorLog} data-selectable>{log}</pre>
             <p className={styles.dialogHint}>{hint}</p>
             {packing && (
               <div className={styles.packProgress}>

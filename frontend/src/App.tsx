@@ -57,6 +57,7 @@ export function App() {
   const video = useRef<HTMLVideoElement>(null);
   const [localeOverride, setLocaleOverride] = useState<string | null>(null);
   const [reducedMotion, setReducedMotion] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(false);
   const t = useMemo(
     () => translator(localeOverride ?? context.locale),
     [localeOverride, context.locale],
@@ -73,15 +74,16 @@ export function App() {
         }
       })
       .catch((e) => setBridgeError(String(e)));
-    // 语言偏好（设置里选定的 UI 语言）覆盖系统语言；同时恢复减弱动效偏好。
+    // 语言偏好（设置里选定的 UI 语言）覆盖系统语言；同时恢复动效与音频偏好。
     command<LauncherSettings>("settings_get")
       .then((s) => {
         if (disposed) return;
         if (s?.language) setLocaleOverride(s.language);
         setReducedMotion(!!s?.reducedMotion);
+        setAudioEnabled(!!s?.audioEnabled);
       })
       .catch(() => {
-        /* 设置读取失败时沿用系统语言与默认动效 */
+        /* 设置读取失败时沿用系统语言与默认偏好 */
       });
     subscribe(
       (s) => {
@@ -108,12 +110,16 @@ export function App() {
   }, []);
   // 背景视频受三层控制：页面隐藏、系统或设置任一开启“减弱动态效果”。
   // 视频持续可见播放会让 WebView2 持有显示器唤醒锁，导致系统无法息屏。
+  // 静音状态由设置的音频开关驱动（默认静音；React 的 muted 属性对
+  // video 元素不可靠，必须直接写 property）。
   useEffect(() => {
     const motion = matchMedia("(prefers-reduced-motion: reduce)");
     const sync = () => {
-      if (document.hidden || motion.matches || reducedMotion)
-        video.current?.pause();
-      else void video.current?.play().catch(() => {});
+      const element = video.current;
+      if (!element) return;
+      element.muted = !audioEnabled;
+      if (document.hidden || motion.matches || reducedMotion) element.pause();
+      else void element.play().catch(() => {});
     };
     sync();
     document.addEventListener("visibilitychange", sync);
@@ -122,11 +128,41 @@ export function App() {
       document.removeEventListener("visibilitychange", sync);
       motion.removeEventListener("change", sync);
     };
-  }, [reducedMotion]);
+  }, [reducedMotion, audioEnabled]);
   // CSS 动画（步骤文字淡入、进度填充过渡）随设置一并停用。
   useEffect(() => {
     document.documentElement.classList.toggle("reduced-motion", reducedMotion);
   }, [reducedMotion]);
+  // 主页屏蔽浏览器默认交互：右键菜单、拖拽与文本选择（错误弹窗的日志
+  // 块标注 data-selectable 保持可复制），以及 F5 / Ctrl+R 触发的刷新。
+  useEffect(() => {
+    const blockUnlessSelectable = (event: Event) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("[data-selectable]")
+      )
+        return;
+      event.preventDefault();
+    };
+    const blockReload = (event: KeyboardEvent) => {
+      if (
+        event.key === "F5" ||
+        (event.ctrlKey && event.key.toLowerCase() === "r")
+      )
+        event.preventDefault();
+    };
+    document.addEventListener("contextmenu", blockUnlessSelectable);
+    document.addEventListener("selectstart", blockUnlessSelectable);
+    document.addEventListener("dragstart", blockUnlessSelectable);
+    document.addEventListener("keydown", blockReload);
+    return () => {
+      document.removeEventListener("contextmenu", blockUnlessSelectable);
+      document.removeEventListener("selectstart", blockUnlessSelectable);
+      document.removeEventListener("dragstart", blockUnlessSelectable);
+      document.removeEventListener("keydown", blockReload);
+    };
+  }, []);
   useEffect(() => {
     if (!connection || !state?.backend_running) return;
     let stopped = false;
@@ -267,7 +303,6 @@ export function App() {
         src={background}
         poster={backgroundPoster}
         autoPlay
-        muted
         loop
         playsInline
         aria-hidden="true"
@@ -598,6 +633,7 @@ export function App() {
           keepWebviewOnTrayLabel={t("settings_keep_webview_tray")}
           reducedMotionLabel={t("settings_reduced_motion")}
           preventSleepLabel={t("settings_prevent_sleep")}
+          audioEnabledLabel={t("settings_audio")}
           closeLabel={t("close")}
           unsupportedLabel={t("not_supported")}
           onLanguageChange={(locale) => {
@@ -605,6 +641,7 @@ export function App() {
             document.documentElement.lang = locale ?? context.locale;
           }}
           onReducedMotionChange={setReducedMotion}
+          onAudioChange={setAudioEnabled}
           onClose={() => setSettingsOpen(false)}
         />
       )}

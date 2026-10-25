@@ -292,6 +292,7 @@ launcher:
   settings_keep_webview_tray: "トレイ格納時にメモリを解放しない（WebView を閉じない）"
   settings_reduced_motion: "視覚効果を減らす"
   settings_prevent_sleep: "コンピューターの自動スリープを防止"
+  settings_audio: "BGM を再生"
   settings_update_channel: "アップデートチャネル"
   channel_stable: "正式版"
   channel_canary: "カナリア版（毎回のビルド）"

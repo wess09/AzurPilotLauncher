@@ -54,6 +54,7 @@ export interface LauncherSettings {
   keepWebviewOnTray: boolean;
   reducedMotion: boolean;
   preventSleep: boolean;
+  audioEnabled: boolean;
   updateChannel: "stable" | "canary";
   updateSource: "auto" | "official" | "github" | "cloudflare";
   language: string | null;

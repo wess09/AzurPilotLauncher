@@ -54,6 +54,7 @@ const keys = [
   "settings_keep_webview_tray",
   "settings_reduced_motion",
   "settings_prevent_sleep",
+  "settings_audio",
   "settings_update_channel",
   "channel_stable",
   "channel_canary",

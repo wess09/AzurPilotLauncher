@@ -23,6 +23,8 @@ pub struct Settings {
     pub reduced_motion: bool,
     /// 阻止计算机自动睡眠（持有系统电源锁）。
     pub prevent_sleep: bool,
+    /// 背景视频播放音频（默认关闭）。
+    pub audio_enabled: bool,
     /// UI 语言偏好；None 表示跟随系统。
     pub language: Option<String>,
     /// 更新通道：正式版或金丝雀版（每次 main 构建）。
@@ -115,6 +117,7 @@ impl Store {
             keep_webview_on_tray: as_bool(raw("keepWebviewOnTray")),
             reduced_motion: as_bool(raw("reducedMotion")),
             prevent_sleep: as_bool(raw("preventSleep")),
+            audio_enabled: as_bool(raw("audioEnabled")),
             update_channel: match raw("updateChannel") {
                 Some(rusqlite::types::Value::Text(ref text)) if text == "canary" => {
                     crate::updater::UpdateChannel::Canary
@@ -183,6 +186,10 @@ impl Store {
         upsert(
             "preventSleep",
             if settings.prevent_sleep { "1" } else { "0" },
+        )?;
+        upsert(
+            "audioEnabled",
+            if settings.audio_enabled { "1" } else { "0" },
         )?;
         upsert(
             "updateChannel",
@@ -264,12 +271,14 @@ mod tests {
         assert!(!store.get().keep_webview_on_tray);
         assert!(!store.get().reduced_motion);
         assert!(!store.get().prevent_sleep);
+        assert!(!store.get().audio_enabled);
         let next = Settings {
             launch_on_startup: true,
             auto_start_service: false,
             keep_webview_on_tray: true,
             reduced_motion: true,
             prevent_sleep: true,
+            audio_enabled: true,
             update_channel: crate::updater::UpdateChannel::Canary,
             update_source: crate::updater::UpdateSource::Cloudflare,
             language: Some("zh-CN".to_string()),
@@ -281,6 +290,7 @@ mod tests {
         assert!(read.keep_webview_on_tray);
         assert!(read.reduced_motion);
         assert!(read.prevent_sleep);
+        assert!(read.audio_enabled);
         assert_eq!(read.update_channel, crate::updater::UpdateChannel::Canary);
         assert_eq!(read.update_source, crate::updater::UpdateSource::Cloudflare);
         assert_eq!(read.language.as_deref(), Some("zh-CN"));

@@ -48,11 +48,13 @@ export function SettingsDialog({
   keepWebviewOnTrayLabel,
   reducedMotionLabel,
   preventSleepLabel,
+  audioEnabledLabel,
   closeLabel,
   unsupportedLabel,
   sourceLabels,
   onLanguageChange,
   onReducedMotionChange,
+  onAudioChange,
   onClose,
 }: {
   title: string;
@@ -69,11 +71,13 @@ export function SettingsDialog({
   keepWebviewOnTrayLabel: string;
   reducedMotionLabel: string;
   preventSleepLabel: string;
+  audioEnabledLabel: string;
   closeLabel: string;
   unsupportedLabel: string;
   sourceLabels: Record<SourceLabel, string>;
   onLanguageChange?: (locale: string | null) => void;
   onReducedMotionChange?: (reduced: boolean) => void;
+  onAudioChange?: (enabled: boolean) => void;
   onClose: () => void;
 }) {
   const [settings, setSettings] = useState<LauncherSettings | null>(null);
@@ -86,6 +90,7 @@ export function SettingsDialog({
       keepWebviewOnTray: false,
       reducedMotion: false,
       preventSleep: false,
+      audioEnabled: false,
       updateChannel: "stable",
       updateSource: "auto",
       language: null,
@@ -120,6 +125,8 @@ export function SettingsDialog({
         onReducedMotionChange?.(
           saved?.reducedMotion ?? patch.reducedMotion ?? false,
         );
+      if (patch.audioEnabled !== undefined)
+        onAudioChange?.(saved?.audioEnabled ?? patch.audioEnabled ?? false);
     } catch {
       setSettings(settings);
     } finally { setSaving(false); }
@@ -261,6 +268,12 @@ export function SettingsDialog({
                   checked={settings.preventSleep}
                   label={preventSleepLabel}
                   onChange={(_e, data) => void update({ preventSleep: data.checked })}
+                />
+                <Switch
+                  disabled={saving}
+                  checked={settings.audioEnabled}
+                  label={audioEnabledLabel}
+                  onChange={(_e, data) => void update({ audioEnabled: data.checked })}
                 />
               </div>
             )}
