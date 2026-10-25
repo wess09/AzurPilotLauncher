@@ -56,6 +56,8 @@ cargo check            # 仅检查编译
 - **CI 打包**：仅 `.github/workflows/package.yml`。tag/手动打包轻量启动器（构建时经 `AZURPILOT_BOOTSTRAP_UV` 内嵌 uv）；三平台运行组件（git/adb ZIP + deploy 引导清单）支持 main 相关变更、后端 dispatch、手动和六小时定时构建，**不运行 npm、uv 或 Python 安装**。所有线上元数据只写启动器既有 `stable.json` 的 `runtime` 字段（schema 2）；GitHub/CNB 仅存下载包。启动器载荷字段同时写 `url` 与 `github_url`。两类清单发布共用并发锁，合并时必须保留另一部分。沿用纯静态 `cf-worker/` 和现有发布凭据，详见组件协议文档。
 - **CI 测试**：`.github/workflows/test.yml` 在推送 `main`、PR 和手动触发时运行，覆盖 Linux、macOS、Windows x64/ARM64，执行 `cargo check --locked --all-targets` 和 `cargo test --locked --all-targets`，无需发布密钥。Windows manifest 要求提权，测试通常在管理员终端运行；纯组件测试也可对当前测试命令设置 `__COMPAT_LAYER=RunAsInvoker`。
 
+- **Windows 签名**：发布包通过 `tools/ci/sign-windows.ps1` 签署启动器、Inno 安装包与卸载程序。私钥仅从 GitHub Secrets 在内存中加载，禁止打印或入库，不修改 Windows 信任存储；自签名需要显式启用且不代表公开信任，详见 `docs/windows-signing.md`。
+
 ## 关键常量
 
 WebUI 端口 `22267`；Python `3.14.x`（启动时由内嵌 uv 解析最新稳定补丁版，不写死补丁号）；后端端口等待 60s；WS 心跳 15s、重连 1/2/5/10/30s。时间炸弹配置在 `Cargo.toml` 的 `[package.metadata.azurpilot.time-bomb]`（运行时由 `main.rs` 解析，当前 `enabled = false`）。

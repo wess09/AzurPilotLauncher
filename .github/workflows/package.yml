@@ -368,6 +368,14 @@ jobs:
           REQUIRE_LAUNCHER_MTLS_IDENTITY: "1"
           LAUNCHER_UPDATE_URL: https://launcher-api.azurpilot.com/updata/stable.json
         run: cargo build --locked --release --features custom-protocol
+      - name: Sign and verify Windows launcher
+        if: runner.os == 'Windows' && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_PFX_B64: ${{ secrets.WINDOWS_SIGNING_PFX_B64 }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+          WINDOWS_SIGNING_ALLOW_SELF_SIGNED: ${{ vars.WINDOWS_SIGNING_ALLOW_SELF_SIGNED || 'false' }}
+        run: ./tools/ci/sign-windows.ps1 -Path target/release/azurpilot.exe
       - name: Package standalone launcher
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         run: python tools/package_launcher.py
@@ -380,7 +388,12 @@ jobs:
       - name: Build Windows installer (Windows x64 only)
         if: matrix.os == 'windows-latest' && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
         shell: pwsh
+        env:
+          WINDOWS_SIGNING_PFX_B64: ${{ secrets.WINDOWS_SIGNING_PFX_B64 }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+          WINDOWS_SIGNING_ALLOW_SELF_SIGNED: ${{ vars.WINDOWS_SIGNING_ALLOW_SELF_SIGNED || 'false' }}
         run: |
+          $ErrorActionPreference = 'Stop'
           $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
           if (-not $iscc) {
             $candidates = @(
@@ -394,11 +407,16 @@ jobs:
           if (-not $iscc) {
             throw "ISCC.exe was not found after installing Inno Setup"
           }
+          $signingScript = (Resolve-Path tools/ci/sign-windows.ps1).Path
+          $signingCommand = 'pwsh.exe -NoProfile -NonInteractive -File $q' + $signingScript + '$q -Path $f'
           & $iscc install.iss `
+            '/DCodeSigning' `
+            "/Sazurpilot=$signingCommand" `
             "/DAppVersion=$env:PACKAGE_VERSION" `
             "/DOutputBaseFilename=AzurPilot_Setup_$env:PACKAGE_VERSION" `
             "/DPackageRoot=package-root\AzurLaneAutoScript" `
             "/DSetupRoot=setup"
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation or code signing failed.' }
       - name: Prepare launcher updater payload
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         uses: knicknic/os-specific-run@v1.0.3

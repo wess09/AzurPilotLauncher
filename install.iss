@@ -49,6 +49,11 @@ ExtraDiskSpaceRequired=1510725938
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\AzurPilot.exe
 
+#ifdef CodeSigning
+SignTool=azurpilot
+SignedUninstaller=yes
+#endif
+
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "{#ChineseMessagesFile}"
 
