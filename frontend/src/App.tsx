@@ -583,6 +583,16 @@ export function App() {
           platform={context.platform}
           languageLabel={t("settings_language")}
           autoLanguageLabel={t("lang_auto")}
+          updateChannelLabel={t("settings_update_channel")}
+          channelStableLabel={t("channel_stable")}
+          channelCanaryLabel={t("channel_canary")}
+          updateSourceLabel={t("settings_update_source")}
+          updateSourceLabels={{
+            auto: t("update_source_auto"),
+            official: t("update_source_official"),
+            github: t("update_source_github"),
+            cloudflare: t("update_source_cloudflare"),
+          }}
           launchOnStartupLabel={t("settings_launch_on_startup")}
           autoStartServiceLabel={t("settings_auto_start_service")}
           keepWebviewOnTrayLabel={t("settings_keep_webview_tray")}

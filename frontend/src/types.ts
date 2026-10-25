@@ -54,6 +54,8 @@ export interface LauncherSettings {
   keepWebviewOnTray: boolean;
   reducedMotion: boolean;
   preventSleep: boolean;
+  updateChannel: "stable" | "canary";
+  updateSource: "auto" | "official" | "github" | "cloudflare";
   language: string | null;
   downloadSource: "auto" | "cnb" | "github";
   pythonSource: "auto" | "nju" | "ustc" | "npmmirror" | "aliyun" | "cnb" | "astral";

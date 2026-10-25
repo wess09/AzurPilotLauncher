@@ -70,7 +70,8 @@ deploy 引导文件按清单逐项检查，只下载缺失或为空的脚本和�
 3. 合并三平台片段，校验 revision 与 deploy 清单一致、平台完整。
 4. 上传 ZIP 到启动器 GitHub `runtime` Release 和 CNB `1.0.0` Release，保留旧摘要包供旧清单下载。
 5. 读取线上 stable.json，仅替换其 `runtime` 字段，经现有纯静态 Worker 发布。
-6. tag 发布同时构建启动器：CI 先经 `astral-sh/setup-uv` 安装 uv 并以 `AZURPILOT_BOOTSTRAP_UV` 嵌入 exe；启动器更新字段发布时保留最新 `runtime`。
+6. tag 发布同时构建启动器：CI 先经 `astral-sh/setup-uv` 安装 uv 并以 `AZURPILOT_BOOTSTRAP_UV` 嵌入 exe；启动器更新字段发布时保留最新 `runtime`。载荷地址含 `url`（launcher-download）、`github_url`（GitHub Release）与 `cloudflare_url`（Cloudflare CDN 域名，映射同一 R2 存储路径），启动器按设置的更新下载源排序尝试。
+7. push 到 `main` 时同一 job 产金丝雀构建：版本号为 `Cargo 版本-canary.{提交哈希前 8 位}.{UTC 时间戳}`，写入 Cargo.toml / tauri.conf.json / Info.plist / Cargo.lock 后构建；载荷滚动上传到 GitHub `canary` Release（prerelease）与 R2 同路径，stable.json 仅增写顶层 `canary` 字段（`--canary` 合并，互不覆盖 launcher/runtime）。金丝雀发布后只清理历史 `-canary.` R2 目录、绝不触碰正式版载荷；CNB 上传仅正式版执行。
 
 两种清单发布任务共用 `launcher-stable-manifest` 并发锁。组件构建支持手动触发、启动器 `main` 相关变更、外部 `repository_dispatch` 与六小时定时检查；AP 仓库不需要新增通知工作流。
 

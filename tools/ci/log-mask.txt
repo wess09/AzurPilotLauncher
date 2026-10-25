@@ -52,3 +52,4 @@ launcher-download.azurpilot.com
 azurpilot.com
 api.cnb.cool
 cnb.cool
+launcher-cloudflare-cdn-download.azurpilot.com

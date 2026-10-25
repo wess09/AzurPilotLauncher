@@ -25,6 +25,10 @@ pub struct Settings {
     pub prevent_sleep: bool,
     /// UI 语言偏好；None 表示跟随系统。
     pub language: Option<String>,
+    /// 更新通道：正式版或金丝雀版（每次 main 构建）。
+    pub update_channel: crate::updater::UpdateChannel,
+    /// 更新下载源：自动 / 官方源 / GitHub / Cloudflare CDN。
+    pub update_source: crate::updater::UpdateSource,
     #[serde(flatten)]
     pub sources: crate::sources::Preferences,
 }
@@ -111,6 +115,21 @@ impl Store {
             keep_webview_on_tray: as_bool(raw("keepWebviewOnTray")),
             reduced_motion: as_bool(raw("reducedMotion")),
             prevent_sleep: as_bool(raw("preventSleep")),
+            update_channel: match raw("updateChannel") {
+                Some(rusqlite::types::Value::Text(ref text)) if text == "canary" => {
+                    crate::updater::UpdateChannel::Canary
+                }
+                _ => crate::updater::UpdateChannel::Stable,
+            },
+            update_source: match raw("updateSource") {
+                Some(rusqlite::types::Value::Text(ref text)) => match text.as_str() {
+                    "official" => crate::updater::UpdateSource::Official,
+                    "github" => crate::updater::UpdateSource::Github,
+                    "cloudflare" => crate::updater::UpdateSource::Cloudflare,
+                    _ => crate::updater::UpdateSource::Auto,
+                },
+                _ => crate::updater::UpdateSource::Auto,
+            },
             language,
             sources: crate::sources::Preferences {
                 download_source: read_source(raw("downloadSource")),
@@ -164,6 +183,22 @@ impl Store {
         upsert(
             "preventSleep",
             if settings.prevent_sleep { "1" } else { "0" },
+        )?;
+        upsert(
+            "updateChannel",
+            match settings.update_channel {
+                crate::updater::UpdateChannel::Stable => "stable",
+                crate::updater::UpdateChannel::Canary => "canary",
+            },
+        )?;
+        upsert(
+            "updateSource",
+            match settings.update_source {
+                crate::updater::UpdateSource::Auto => "auto",
+                crate::updater::UpdateSource::Official => "official",
+                crate::updater::UpdateSource::Github => "github",
+                crate::updater::UpdateSource::Cloudflare => "cloudflare",
+            },
         )?;
         match settings.language.as_deref() {
             Some(language) => upsert("language", language)?,
@@ -235,6 +270,8 @@ mod tests {
             keep_webview_on_tray: true,
             reduced_motion: true,
             prevent_sleep: true,
+            update_channel: crate::updater::UpdateChannel::Canary,
+            update_source: crate::updater::UpdateSource::Cloudflare,
             language: Some("zh-CN".to_string()),
             sources: crate::sources::Preferences::default(),
         };
@@ -244,6 +281,8 @@ mod tests {
         assert!(read.keep_webview_on_tray);
         assert!(read.reduced_motion);
         assert!(read.prevent_sleep);
+        assert_eq!(read.update_channel, crate::updater::UpdateChannel::Canary);
+        assert_eq!(read.update_source, crate::updater::UpdateSource::Cloudflare);
         assert_eq!(read.language.as_deref(), Some("zh-CN"));
     }
     #[test]
@@ -304,6 +343,7 @@ pub(crate) fn settings_get(
 pub(crate) fn settings_set(
     window: tauri::WebviewWindow,
     store: tauri::State<'_, Arc<Store>>,
+    controller: tauri::State<'_, Arc<crate::launcher::Launcher>>,
     settings: Settings,
 ) -> Result<Settings, String> {
     crate::launcher::authorize(&window, true)?;
@@ -320,6 +360,10 @@ pub(crate) fn settings_set(
             let _ = store.set(&previous);
             return Err(error.to_string());
         }
+    }
+    if previous.update_channel != settings.update_channel {
+        // 通道切换后立即静默检查一次更新，结果反映到首页，由用户手动确认安装。
+        controller.request_update_check();
     }
     crate::i18n::apply_override(settings.language.as_deref());
     Ok(store.get())

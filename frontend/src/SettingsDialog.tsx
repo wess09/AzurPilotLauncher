@@ -38,6 +38,11 @@ export function SettingsDialog({
   platform,
   languageLabel,
   autoLanguageLabel,
+  updateChannelLabel,
+  channelStableLabel,
+  channelCanaryLabel,
+  updateSourceLabel,
+  updateSourceLabels,
   launchOnStartupLabel,
   autoStartServiceLabel,
   keepWebviewOnTrayLabel,
@@ -54,6 +59,11 @@ export function SettingsDialog({
   platform: string;
   languageLabel: string;
   autoLanguageLabel: string;
+  updateChannelLabel: string;
+  channelStableLabel: string;
+  channelCanaryLabel: string;
+  updateSourceLabel: string;
+  updateSourceLabels: Record<"auto" | "official" | "github" | "cloudflare", string>;
   launchOnStartupLabel: string;
   autoStartServiceLabel: string;
   keepWebviewOnTrayLabel: string;
@@ -76,6 +86,8 @@ export function SettingsDialog({
       keepWebviewOnTray: false,
       reducedMotion: false,
       preventSleep: false,
+      updateChannel: "stable",
+      updateSource: "auto",
       language: null,
       downloadSource: "auto",
       pythonSource: "auto",
@@ -153,6 +165,50 @@ export function SettingsDialog({
                           : option.label}
                       </Option>
                     ))}
+                  </Dropdown>
+                </Field>
+                <Field label={updateChannelLabel}>
+                  <Dropdown
+                    disabled={saving}
+                    value={
+                      settings.updateChannel === "canary"
+                        ? channelCanaryLabel
+                        : channelStableLabel
+                    }
+                    selectedOptions={[settings.updateChannel ?? "stable"]}
+                    onOptionSelect={(_e, data) =>
+                      void update({
+                        updateChannel:
+                          data.optionValue === "canary" ? "canary" : "stable",
+                      })
+                    }
+                  >
+                    <Option value="stable">{channelStableLabel}</Option>
+                    <Option value="canary">{channelCanaryLabel}</Option>
+                  </Dropdown>
+                </Field>
+                <Field label={updateSourceLabel}>
+                  <Dropdown
+                    disabled={saving}
+                    value={updateSourceLabels[settings.updateSource ?? "auto"]}
+                    selectedOptions={[settings.updateSource ?? "auto"]}
+                    onOptionSelect={(_e, data) =>
+                      void update({
+                        updateSource: (data.optionValue === "official" ||
+                          data.optionValue === "github" ||
+                          data.optionValue === "cloudflare"
+                          ? data.optionValue
+                          : "auto") as LauncherSettings["updateSource"],
+                      })
+                    }
+                  >
+                    {(["auto", "official", "github", "cloudflare"] as const).map(
+                      (value) => (
+                        <Option key={value} value={value}>
+                          {updateSourceLabels[value]}
+                        </Option>
+                      ),
+                    )}
                   </Dropdown>
                 </Field>
                 <div className={styles.sourceSettings}>

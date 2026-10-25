@@ -7,7 +7,7 @@ use reqwest::{
     StatusCode,
 };
 use rust_i18n::t;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -59,8 +59,115 @@ struct LauncherUpdateManifest {
     version: String,
     /// 平台标识（如 windows-x86_64）到对应载荷的映射。
     platforms: HashMap<String, LauncherUpdatePlatform>,
+    /// 金丝雀通道载荷；与顶层正式版结构一致，缺失表示尚无金丝雀构建。
+    #[serde(default)]
+    canary: Option<LauncherUpdateChannelManifest>,
     #[serde(default)]
     runtime: Option<serde_json::Value>,
+}
+
+/// 金丝雀通道的版本与平台载荷，结构同清单顶层的正式版字段。
+#[derive(Debug, Deserialize)]
+struct LauncherUpdateChannelManifest {
+    /// 金丝雀版本号（时间戳+提交哈希后缀，如 `3.0.2-canary.20261026.1750.9f3a2b1c`）。
+    version: String,
+    /// 平台标识到对应载荷的映射。
+    platforms: HashMap<String, LauncherUpdatePlatform>,
+}
+
+/// 更新通道：正式版走清单顶层字段，金丝雀版走 `canary` 字段。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum UpdateChannel {
+    /// 正式版（默认）。
+    #[default]
+    Stable,
+    /// 金丝雀版：获取每次 main 分支构建的产物。
+    Canary,
+}
+
+/// 更新下载源：决定载荷下载地址（url / github_url / cloudflare_url）
+/// 的尝试顺序；清单始终从官方域名拉取，一份 json 包含全部源地址。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum UpdateSource {
+    /// 自动（默认）：国内（简体中文+北京时间）官方源优先；海外
+    /// GitHub 优先，不可达时回退 Cloudflare CDN，再回退官方源。
+    #[default]
+    Auto,
+    /// 官方源：launcher-download.azurpilot.com（国内 CNB 加速）。
+    Official,
+    /// GitHub Release（海外）。
+    Github,
+    /// Cloudflare CDN 国际源。
+    Cloudflare,
+}
+
+impl UpdateSource {
+    /// 按下载源返回载荷 URL 的尝试顺序。
+    fn order_payload_urls<'a>(
+        self,
+        url: &'a str,
+        github_url: Option<&'a str>,
+        cloudflare_url: Option<&'a str>,
+    ) -> Vec<&'a str> {
+        let mut official = vec![url];
+        let github = github_url.filter(|candidate| *candidate != url);
+        let cloudflare = cloudflare_url.filter(|candidate| *candidate != url);
+        match self {
+            UpdateSource::Official => UpdateSource::push_all(official, [github, cloudflare]),
+            UpdateSource::Github => {
+                let mut ordered = Vec::new();
+                if let Some(candidate) = github {
+                    ordered.push(candidate);
+                }
+                ordered.push(url);
+                if let Some(candidate) = cloudflare {
+                    ordered.push(candidate);
+                }
+                ordered
+            }
+            UpdateSource::Cloudflare => {
+                let mut ordered = Vec::new();
+                if let Some(candidate) = cloudflare {
+                    ordered.push(candidate);
+                }
+                ordered.push(url);
+                if let Some(candidate) = github {
+                    ordered.push(candidate);
+                }
+                ordered
+            }
+            UpdateSource::Auto => {
+                // 与组件下载源同一判定：简体中文且北京时间视为国内环境。
+                if crate::sources::DownloadSource::Auto.prefer_cnb() {
+                    UpdateSource::push_all(official, [github, cloudflare])
+                } else {
+                    official.clear();
+                    if let Some(candidate) = github {
+                        official.push(candidate);
+                    }
+                    if let Some(candidate) = cloudflare {
+                        official.push(candidate);
+                    }
+                    official.push(url);
+                    official
+                }
+            }
+        }
+    }
+
+    fn push_all<'a>(
+        mut urls: Vec<&'a str>,
+        extra: [Option<&'a str>; 2],
+    ) -> Vec<&'a str> {
+        for candidate in extra.into_iter().flatten() {
+            if !urls.contains(&candidate) {
+                urls.push(candidate);
+            }
+        }
+        urls
+    }
 }
 
 /// 单个平台的更新载荷信息。
@@ -71,6 +178,9 @@ struct LauncherUpdatePlatform {
     /// GitHub Release 的同一份载荷；兼容没有此字段的旧清单。
     #[serde(default)]
     github_url: Option<String>,
+    /// Cloudflare CDN 的同一份载荷；兼容没有此字段的旧清单。
+    #[serde(default)]
+    cloudflare_url: Option<String>,
     /// 载荷的 SHA-256 十六进制摘要，下载后用于完整性校验。
     sha256: String,
 }
@@ -207,7 +317,13 @@ fn launcher_version_is_mini(version: &str) -> bool {
 
 /// 仅检查清单与当前平台载荷；发现新版返回待用户确认的更新信息。
 /// 检查失败阻止启动；下载、校验与替换由 install_update 单独执行。
-pub(crate) fn check_update(cancel: &Arc<AtomicBool>) -> Result<Option<AvailableUpdate>> {
+///
+/// `channel` 决定读取清单的哪一组版本与载荷：正式版走顶层字段，
+/// 金丝雀版走 `canary` 字段（缺失视为暂无构建，等同“已是最新”）。
+pub(crate) fn check_update(
+    cancel: &Arc<AtomicBool>,
+    channel: UpdateChannel,
+) -> Result<Option<AvailableUpdate>> {
     crate::launcher::ensure_not_cancelled(cancel)?;
     // 自更新重启后的新一轮启动带有跳过标记：取下标记并直接放行。
     if std::env::var_os(LAUNCHER_UPDATE_SKIP_ENV).is_some() {
@@ -247,36 +363,53 @@ pub(crate) fn check_update(cancel: &Arc<AtomicBool>) -> Result<Option<AvailableU
             tracing::warn!("Unable to cache runtime file manifest: {error:#}");
         }
     }
-    let update_available = launcher_version_is_newer(current_version, &manifest.version)
+    let (latest_version, latest_platforms) = match channel {
+        UpdateChannel::Stable => (manifest.version.clone(), &manifest.platforms),
+        UpdateChannel::Canary => {
+            let Some(canary) = manifest.canary.as_ref() else {
+                tracing::info!("No canary payload in update manifest; treating as up to date");
+                if mini_launcher {
+                    return Err(anyhow!(t!(
+                        "launcher_update.mini_update_missing",
+                        current = current_version,
+                        latest = manifest.version.clone()
+                    )));
+                }
+                return Ok(None);
+            };
+            (canary.version.clone(), &canary.platforms)
+        }
+    };
+    let update_available = launcher_version_is_newer(current_version, &latest_version)
         .ok_or_else(|| {
             tracing::warn!(
                 "Launcher update manifest contains an invalid version: {}",
-                manifest.version
+                latest_version
             );
             anyhow!(t!(
                 "launcher_update.invalid_manifest_version",
-                version = manifest.version.clone()
+                version = latest_version.clone()
             ))
         })?;
     if !update_available {
         tracing::info!(
             "Launcher is up to date: current={}, latest={}",
             current_version,
-            manifest.version
+            latest_version
         );
         // 迷你版不允许停留：即使无更新也报错，提示安装正式版。
         if mini_launcher {
             return Err(anyhow!(t!(
                 "launcher_update.mini_update_missing",
                 current = current_version,
-                latest = manifest.version
+                latest = latest_version
             )));
         }
         return Ok(None);
     }
 
     // 清单中没有当前平台的载荷：无法更新，报错提示。
-    let Some(platform) = manifest.platforms.get(platform_key) else {
+    let Some(platform) = latest_platforms.get(platform_key) else {
         tracing::warn!("No launcher update payload for platform {platform_key}");
         return Err(anyhow!(t!(
             "launcher_update.payload_missing",
@@ -285,11 +418,14 @@ pub(crate) fn check_update(cancel: &Arc<AtomicBool>) -> Result<Option<AvailableU
     };
 
     validate_launcher_update_payload(&platform.url, &platform.sha256)?;
-    if let Some(url) = &platform.github_url {
+    for url in [&platform.github_url, &platform.cloudflare_url]
+        .into_iter()
+        .flatten()
+    {
         validate_launcher_update_payload(url, &platform.sha256)?;
     }
     Ok(Some(AvailableUpdate {
-        version: manifest.version.clone(),
+        version: latest_version,
         payload: platform.clone(),
     }))
 }
@@ -308,11 +444,12 @@ mod source_tests {
         let payload: LauncherUpdatePlatform = serde_json::from_value(serde_json::json!({
             "url": "https://launcher-download.azurpilot.com/a.exe",
             "github_url": "https://github.com/wess09/AzurPilotLauncher/releases/download/v3/a.exe",
+            "cloudflare_url": "https://launcher-cloudflare-cdn-download.azurpilot.com/a.exe",
             "sha256": "0".repeat(64)
         }))
         .unwrap();
         let mut requested = Vec::new();
-        download_from_sources(&payload, &AtomicBool::new(false), true, |url| {
+        download_from_sources(&payload, &AtomicBool::new(false), UpdateSource::Official, |url| {
             requested.push(url.to_owned());
             if requested.len() == 1 {
                 bail!("primary unavailable");
@@ -327,23 +464,55 @@ mod source_tests {
         )
         .unwrap();
         assert!(old.github_url.is_none());
+        assert!(old.cloudflare_url.is_none());
     }
     #[test]
     fn cancelling_primary_does_not_start_github_request() {
         let payload = LauncherUpdatePlatform {
             url: "https://example.com/a".into(),
             github_url: Some("https://github.com/a".into()),
+            cloudflare_url: None,
             sha256: "0".repeat(64),
         };
         let cancel = AtomicBool::new(false);
         let mut calls = 0;
-        assert!(download_from_sources(&payload, &cancel, true, |_| {
+        assert!(download_from_sources(&payload, &cancel, UpdateSource::Official, |_| {
             calls += 1;
             cancel.store(true, std::sync::atomic::Ordering::SeqCst);
             bail!("cancelled")
         })
         .is_err());
         assert_eq!(calls, 1);
+    }
+
+    /// 下载源排序：GitHub / Cloudflare / 海外自动按各自优先级排列载荷地址。
+    #[test]
+    fn payload_url_order_follows_update_source() {
+        let url = "https://launcher-download.azurpilot.com/a.exe";
+        let github = "https://github.com/wess09/AzurPilotLauncher/releases/download/v3/a.exe";
+        let cloudflare = "https://launcher-cloudflare-cdn-download.azurpilot.com/a.exe";
+        let order = |source: UpdateSource| {
+            source.order_payload_urls(url, Some(github), Some(cloudflare))
+        };
+        assert_eq!(
+            order(UpdateSource::Official),
+            vec![url, github, cloudflare]
+        );
+        assert_eq!(
+            order(UpdateSource::Github),
+            vec![github, url, cloudflare]
+        );
+        assert_eq!(
+            order(UpdateSource::Cloudflare),
+            vec![cloudflare, url, github]
+        );
+        // 自动模式按地区分流（本机与 CI 的地区不同），只断言全部地址
+        // 都在候选里且无重复。
+        let auto = order(UpdateSource::Auto);
+        assert_eq!(auto.len(), 3);
+        assert!(auto.contains(&url));
+        assert!(auto.contains(&github));
+        assert!(auto.contains(&cloudflare));
     }
 }
 
@@ -352,11 +521,11 @@ pub(crate) fn install_update(
     cancel: Arc<AtomicBool>,
     mut status_updater: impl FnMut(SplashUpdate),
     before_commit: impl FnOnce() -> Result<()>,
-    source: crate::sources::DownloadSource,
+    source: UpdateSource,
 ) -> Result<()> {
     let current_exe = std::env::current_exe()?;
     let update_path = launcher_update_temp_path(&current_exe);
-    download_from_sources(&update.payload, &cancel, source.prefer_cnb(), |url| {
+    download_from_sources(&update.payload, &cancel, source, |url| {
         download_launcher_update(
             url,
             &update_path,
@@ -376,22 +545,19 @@ pub(crate) fn install_update(
     replace_launcher_and_restart(&current_exe, &update_path)
 }
 
+/// 按下载源顺序尝试各载荷地址，全部失败时汇总报错。
 fn download_from_sources(
     payload: &LauncherUpdatePlatform,
     cancel: &AtomicBool,
-    prefer_cnb: bool,
+    source: UpdateSource,
     mut download: impl FnMut(&str) -> Result<()>,
 ) -> Result<()> {
     let mut failures = Vec::new();
-    let mut sources = vec![payload.url.as_str()];
-    if let Some(url) = &payload.github_url {
-        if !sources.contains(&url.as_str()) {
-            sources.push(url);
-        }
-    }
-    if !prefer_cnb && sources.len() > 1 {
-        sources.swap(0, 1);
-    }
+    let sources = source.order_payload_urls(
+        &payload.url,
+        payload.github_url.as_deref(),
+        payload.cloudflare_url.as_deref(),
+    );
     for url in sources {
         crate::launcher::ensure_not_cancelled(cancel)?;
         match download(url) {
@@ -1167,16 +1333,23 @@ fn parse_launcher_version(version: &str) -> Option<(u64, u64, u64, u64)> {
         return None;
     }
     // 后缀序号：取预发布段末尾连续数字并倒序重组（如 rc12 -> 12）。
-    let suffix_rank = suffix
-        .chars()
-        .rev()
-        .take_while(|c| c.is_ascii_digit())
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect::<String>()
-        .parse::<u64>()
-        .unwrap_or(0);
+    // 正式版（无预发布段）取 u64::MAX，保证同 core 版本下
+    // 3.0.2 > 3.0.2-canary.*（预发布不应高于正式发布，切换通道时能
+    // 从金丝雀回到同号正式版）。
+    let suffix_rank = if suffix.is_empty() {
+        u64::MAX
+    } else {
+        suffix
+            .chars()
+            .rev()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>()
+            .parse::<u64>()
+            .unwrap_or(0)
+    };
     Some((major, minor, patch, suffix_rank))
 }
 
@@ -1600,6 +1773,40 @@ mod tests {
         assert_eq!(launcher_version_is_newer("2.1.6", "not-a-version"), None);
         assert_eq!(launcher_version_is_newer("2.1", "2.1.7"), None);
         assert_eq!(launcher_version_is_newer("2.1.6", "2.1.7-"), None);
+    }
+
+    /// 金丝雀版本排序：时间戳后缀单调递增，正式版恒高于同 core 预发布。
+    #[test]
+    fn test_launcher_update_channel_version_ordering() {
+        let newer = |current: &str, latest: &str| launcher_version_is_newer(current, latest);
+        assert_eq!(
+            newer(
+                "3.0.2-canary.9f3a2b1c.20261026175030",
+                "3.0.2-canary.9f3a2b1c.20261026175102"
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            newer(
+                "3.0.2-canary.9f3a2b1c.20261026175102",
+                "3.0.2-canary.0a1b2c3d.20261026175030"
+            ),
+            Some(false)
+        );
+        // 正式版高于金丝雀：切回正式通道后能从金丝雀回到同号正式版。
+        assert_eq!(
+            newer("3.0.2-canary.9f3a2b1c.20261026175102", "3.0.2"),
+            Some(true)
+        );
+        assert_eq!(
+            newer("3.0.2", "3.0.2-canary.9f3a2b1c.20261026175102"),
+            Some(false)
+        );
+        // core 提升时先按 core 比较，不受通道后缀影响。
+        assert_eq!(
+            newer("3.0.2-canary.9f3a2b1c.20261026175102", "3.0.3"),
+            Some(true)
+        );
     }
 
     /// 主清单 URL 失败（503）时应回退到备用 URL 并成功解析。

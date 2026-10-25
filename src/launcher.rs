@@ -270,6 +270,8 @@ pub(crate) struct Launcher {
     session: Mutex<Option<Session>>,
     allow_exit: Arc<AtomicBool>,
     recreate: Arc<AtomicBool>,
+    /// 已通知过的更新版本号，避免轮询期间对同一版本重复发通知。
+    notified_update: Mutex<Option<String>>,
     port: u16,
     skip_update: bool,
     minimized: bool,
@@ -363,7 +365,12 @@ impl Launcher {
                 let update = if controller.skip_update {
                     None
                 } else {
-                    updater::check_update(&cancel)?
+                    let channel = controller
+                        .app
+                        .state::<Arc<crate::settings::Store>>()
+                        .get()
+                        .update_channel;
+                    updater::check_update(&cancel, channel)?
                 };
                 let mut model = controller.model.lock().unwrap();
                 if !model.accepts(task) {
@@ -378,6 +385,26 @@ impl Launcher {
             let success = result.is_ok();
             controller.finish(task, result);
             let view = controller.snapshot();
+            // 发现新版本且与上次通知的版本不同：发原生通知提醒（点击唤起
+            // 首页，由用户在主按钮上手动确认更新）。
+            if let Some(version) = view.update_version.clone() {
+                let mut notified = controller.notified_update.lock().unwrap();
+                if notified.as_deref() != Some(version.as_str()) {
+                    *notified = Some(version.clone());
+                    drop(notified);
+                    let click_app = controller.app.clone();
+                    let click: crate::notify::NotificationClickHandler = Arc::new(move || {
+                        let _ = crate::windows::show_launcher_home(&click_app);
+                    });
+                    let data = serde_json::json!({
+                        "content": t!("launcher_update.notify_body", version = version),
+                        "updata": "true",
+                    });
+                    if let Err(error) = crate::notify::display(&controller.app, data, &click) {
+                        warn!("Failed to show update notification: {error:#}");
+                    }
+                }
+            }
             if auto_start && success && view.can_start {
                 let _ = controller.start();
             } else if view.update_version.is_some() || view.deployment_required {
@@ -385,6 +412,13 @@ impl Launcher {
             }
         });
         Ok(())
+    }
+
+    /// 供设置切换与定期轮询触发的静默检查：任务互斥时跳过本轮。
+    pub(crate) fn request_update_check(self: &Arc<Self>) {
+        if let Err(error) = self.check(false) {
+            debug!("Skipped periodic update check: {error:#}");
+        }
     }
 
     fn install_update(self: &Arc<Self>) -> Result<()> {
@@ -418,8 +452,7 @@ impl Launcher {
                         .app
                         .state::<Arc<crate::settings::Store>>()
                         .get()
-                        .sources
-                        .download_source,
+                        .update_source,
                 )?;
                 controller.allow_exit.store(true, Ordering::SeqCst);
                 controller.changed.notify_all();
@@ -961,7 +994,7 @@ pub(crate) fn run() -> Result<()> {
         .setup(move |app| {
             let controller = Arc::new(Launcher { app: app.handle().clone(), model: Mutex::new(Model::new()), changed: Condvar::new(),
                 backend: Mutex::new(None), session: Mutex::new(None), allow_exit: allow_for_setup.clone(),
-                recreate: Arc::new(AtomicBool::new(false)), port, skip_update: preview_crash || preview_deploy || preview_no_update_arg_present(), minimized });
+                recreate: Arc::new(AtomicBool::new(false)), notified_update: Mutex::new(None), port, skip_update: preview_crash || preview_deploy || preview_no_update_arg_present(), minimized });
             app.manage(controller.clone());
             app.manage(settings_store.clone());
             let auto_start = auto_start || settings_store.auto_start_service();
@@ -983,6 +1016,13 @@ pub(crate) fn run() -> Result<()> {
             }
             create_tray(app)?;
             controller.dispatch();
+            // 每 10 分钟静默检查一次更新：发现新版本时首页主按钮变为
+            // “更新”，并经原生通知提醒一次（同一版本只提醒一遍）。
+            let poller = controller.clone();
+            thread::spawn(move || loop {
+                thread::sleep(std::time::Duration::from_secs(10 * 60));
+                poller.request_update_check();
+            });
             if !minimized { show_launcher_home(app.handle())?; }
             if preview_crash {
                 controller.change(|m| {
