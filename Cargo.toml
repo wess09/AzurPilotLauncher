@@ -47,7 +47,7 @@ network-time-url = "https://www.aliyun.com"
 message = "测试已结束，请安装正式版"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", features = ["signal"] }
+nix = { version = "0.30", features = ["signal", "process"] }
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["consoleapi", "fileapi", "handleapi", "jobapi2", "minwinbase", "processthreadsapi", "processenv", "sddl", "synchapi", "sysinfoapi", "tlhelp32", "winbase", "winnt", "winuser"] }

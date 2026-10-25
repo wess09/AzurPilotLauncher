@@ -108,11 +108,13 @@ mod imp {
             if guard.is_some() {
                 return Ok(());
             }
-            let create = |c_str: &'static [u8]| CFStringCreateWithCString(
-                ptr::null(),
-                c_str.as_ptr().cast(),
-                KCF_STRING_ENCODING_UTF8,
-            );
+            let create = |c_str: &'static [u8]| unsafe {
+                CFStringCreateWithCString(
+                    ptr::null(),
+                    c_str.as_ptr().cast(),
+                    KCF_STRING_ENCODING_UTF8,
+                )
+            };
             // SAFETY：传入的 CFString 均由本函数创建且非空；调用后立即释放，
             // 断言 ID 由 IOKit 持有，不受 CFString 释放影响。
             unsafe {
@@ -137,7 +139,7 @@ mod imp {
         } else {
             if let Some(id) = guard.take() {
                 // SAFETY：id 来自此前的 IOPMAssertionCreateWithName。
-                let status = IOPMAssertionRelease(id);
+                let status = unsafe { IOPMAssertionRelease(id) };
                 if status != KERN_SUCCESS {
                     tracing::warn!("IOPMAssertionRelease failed: {status}");
                 }
@@ -149,6 +151,7 @@ mod imp {
 
 #[cfg(target_os = "linux")]
 mod imp {
+    use std::os::unix::process::CommandExt;
     use std::process::{Child, Command, Stdio};
     use std::sync::{Mutex, OnceLock};
 

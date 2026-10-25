@@ -9,7 +9,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+#[cfg(windows)]
+use anyhow::anyhow;
 #[cfg(target_os = "linux")]
 use notify_rust::{Hint, Notification};
 use rust_i18n::t;
@@ -146,6 +148,10 @@ fn show_notification(
     let body = clean_text(content)
         .or_else(|| clean_text(instance).map(|instance| format!("Instance: {instance}")))
         .unwrap_or_else(|| t!("notify.default_body").to_string());
+
+    // 非 Windows 平台不按通知类型切换样式，显式消费避免未使用告警。
+    #[cfg(not(windows))]
+    let _ = &notify_type;
 
     // Windows 走独立路径：Toast 支持按通知类型切换 AUMID，且能挂点击回调。
     #[cfg(windows)]
