@@ -5,6 +5,15 @@ import urllib.request
 from pathlib import Path
 
 
+def fetch_manifest(url, *, timeout=30):
+    request = urllib.request.Request(url, headers={
+        'Cache-Control': 'no-cache',
+        'User-Agent': 'AzurPilot-CI/1',
+    })
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
 def merge(current, *, launcher=None, runtime=None):
     result = dict(current)
     if launcher is not None:
@@ -31,9 +40,7 @@ if __name__ == '__main__':
     runtime = json.loads(args.runtime.read_text(encoding='utf-8')) if args.runtime else None
     if runtime and args.expected_revision and runtime.get('revision') != args.expected_revision:
         raise SystemExit('Backend advanced while building; refusing to publish a stale runtime batch')
-    request = urllib.request.Request(args.current_url, headers={'Cache-Control': 'no-cache', 'User-Agent': 'AzurPilot-CI/1'})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        current = json.load(response)
+    current = fetch_manifest(args.current_url)
     result = merge(current,
                    launcher=json.loads(args.launcher.read_text(encoding='utf-8')) if args.launcher else None,
                    runtime=runtime)

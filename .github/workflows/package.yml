@@ -175,8 +175,6 @@ jobs:
           set -euo pipefail
           : "${CNB_TOKEN:?Set CNB_TOKEN secret}"
           cli="${RUNNER_TEMP}/git-cnb"
-          curl -fsSL "https://cnb.cool/looc/git-cnb/-/releases/download/${CNB_CLI_VERSION}/git-cnb_linux_amd64" -o "$cli"
-          chmod +x "$cli"
           auth=(-H "Authorization: token ${CNB_TOKEN}" -H 'Accept: application/vnd.cnb.api+json')
           release_json="$(curl -fsS "${auth[@]}" "${CNB_API}/${CNB_REPO}/-/releases/tags/${CNB_RELEASE_TAG}")"
           [[ -n "$(jq -r '.id // empty' <<<"$release_json")" ]]
@@ -186,6 +184,10 @@ jobs:
             # 内容摘要进入文件名，存在即复用；保留旧组件供旧清单和修复任务下载。
             if jq -e --arg name "$name" '.assets[]? | select(.name == $name)' <<<"$release_json" >/dev/null; then
               continue
+            fi
+            if [[ ! -x "$cli" ]]; then
+              curl -fsSL "https://cnb.cool/looc/git-cnb/-/releases/download/${CNB_CLI_VERSION}/git-cnb_linux_amd64" -o "$cli"
+              chmod +x "$cli"
             fi
             "$cli" --repo="$CNB_REPO" release asset-upload -t "$CNB_RELEASE_TAG" -f "$file"
           done
@@ -201,13 +203,18 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import json, time, urllib.request
+          import json, sys, time, urllib.error
+          sys.path.insert(0, 'tools')
+          from merge_stable_manifest import fetch_manifest
           expected = json.load(open('runtime-manifest.json'))
           for attempt in range(10):
-              with urllib.request.urlopen('https://launcher-api.azurpilot.com/updata/stable.json', timeout=15) as response:
-                  actual = json.load(response)
-              if actual.get('runtime') == expected:
-                  break
+              try:
+                  actual = fetch_manifest('https://launcher-api.azurpilot.com/updata/stable.json', timeout=15)
+                  if actual.get('runtime') == expected:
+                      break
+              except (urllib.error.URLError, OSError, ValueError):
+                  pass
+              print(f'Runtime manifest not visible yet (attempt {attempt + 1}/10)')
               time.sleep(3)
           else:
               raise SystemExit('Published stable.json does not contain the expected runtime components')

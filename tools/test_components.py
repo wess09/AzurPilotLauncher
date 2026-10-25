@@ -5,13 +5,23 @@ import tempfile
 import unittest
 import zipfile
 import subprocess
+import io
+from unittest.mock import patch
 from pathlib import Path
 
 from build_components import archive, merge as merge_components, deploy_files
-from merge_stable_manifest import merge
+from merge_stable_manifest import merge, fetch_manifest
 
 
 class ComponentPackagingTest(unittest.TestCase):
+    def test_manifest_requests_use_the_same_ci_headers_for_merge_and_verification(self):
+        with patch('urllib.request.urlopen', return_value=io.BytesIO(b'{"version":"3.0.2"}')) as opener:
+            self.assertEqual(fetch_manifest('https://example.com/stable.json', timeout=15), {'version': '3.0.2'})
+            request = opener.call_args.args[0]
+            self.assertEqual(request.get_header('User-agent'), 'AzurPilot-CI/1')
+            self.assertEqual(request.get_header('Cache-control'), 'no-cache')
+            self.assertEqual(opener.call_args.kwargs['timeout'], 15)
+
     def test_archive_is_deterministic_and_content_addressed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
