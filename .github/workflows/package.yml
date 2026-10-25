@@ -235,6 +235,10 @@ jobs:
           printf '%s' "$AZURPILOT_LOG_MASK_B64" | openssl base64 -d -A | while IFS= read -r value; do
             if [ -n "$value" ]; then echo "::add-mask::$value"; fi
           done
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Install Tauri dependencies (Ubuntu only)
         if: ${{ startsWith(matrix.os, 'ubuntu-') }}
         run: |
@@ -243,10 +247,6 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
           } 2>&1 | bash tools/ci/redact-urls.sh
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -349,7 +349,12 @@ jobs:
           set -euo pipefail
           mkdir -p bootstrap
           cp "$(command -v uv)" bootstrap/uv
-          echo "AZURPILOT_BOOTSTRAP_UV=$PWD/bootstrap/uv" >> "$GITHUB_ENV"
+          bootstrap_uv="$PWD/bootstrap/uv"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            bootstrap_uv="$(cygpath -m "$bootstrap_uv")"
+          fi
+          test -s "$bootstrap_uv"
+          echo "AZURPILOT_BOOTSTRAP_UV=$bootstrap_uv" >> "$GITHUB_ENV"
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
         with:
