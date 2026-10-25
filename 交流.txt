@@ -1,0 +1,7 @@
+# 交流登记（多 AI 协作改动范围记录，最新在最上）
+
+## 2026-10-25 ZCode — CI 日志脱敏
+- 改动范围：`.github/workflows/package.yml`、`.github/workflows/test.yml`（每个 job 新增 `Register log masks` 首步 + npm/apt/choco 输出经过滤）、新增 `tools/ci/log-mask.txt`（掩码清单明文基准）与 `tools/ci/redact-urls.sh`（URL→`<URL>` 过滤器）、`cf-worker/deploy.sh`（wrangler 输出过滤 + 关闭遥测）、`AGENTS.md`（新增 CI 日志脱敏约定）。
+- 背景：用户要求 CI 日志中不出现任何 URL/仓库地址。`::add-mask::` 掩码清单以 base64 存于各 job 的 `AZURPILOT_LOG_MASK_B64`。
+- ⚠️ 注意：修改 `tools/ci/log-mask.txt` 后必须重新 `base64 -w0` 并同步替换两个 workflow 中全部 7 处该变量，否则掩码不一致。
+- 另外：CI 审计发现 7 个已废弃 Secret（DEPLOY_HOST/PORT/USER/SSH_KEY、LAUNCHER_NEW_UPDATE_URL、LAUNCHER_NEW_PAYLOAD_BASE_URL、NEW_MANIFEST_DEPLOY_ROOT）无任何 workflow 引用，建议用户在 GitHub Settings → Secrets 手动删除。

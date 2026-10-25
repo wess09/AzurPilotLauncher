@@ -1,0 +1,54 @@
+# CI 日志掩码清单（明文基准）。
+# 每个 job 首步把它逐行注册为 ::add-mask::，GitHub 会把日志中命中的子串替换为 ***。
+# 修改后执行: base64 -w0 本文件（跳过注释行），把输出同步替换
+# .github/workflows/package.yml 与 test.yml 中所有 AZURPILOT_LOG_MASK_B64 的值。
+# 注意：本文件不会出现在日志里（掩码步骤只输出 add-mask 命令），改动请保持每行一个完整条目、不要留空行。
+http.https://github.com/.extraheader
+https://launcher-api.azurpilot.com/updata/stable.json
+https://launcher-api.azurpilot.com
+https://launcher-download.azurpilot.com
+https://api.cnb.cool
+https://cnb.cool
+https://github.com/wess09/AzurPilotLauncher
+https://github.com/wess09/AzurPilot
+https://api.github.com
+https://uploads.github.com
+https://objects.githubusercontent.com
+https://docs.github.com
+https://github.com/astral-sh/setup-uv
+https://raw.githubusercontent.com/astral-sh/setup-uv
+https://github.com/astral-sh/uv
+https://astral.sh
+https://github.com/actions/python-versions
+https://github.com/actions/setup-python
+https://github.com/actions/node-versions
+https://static.rust-lang.org
+https://sh.rustup.rs
+https://crates.io
+https://index.crates.io
+https://static.crates.io
+https://doc.rust-lang.org
+https://github.com/rust-lang
+https://v2.tauri.app
+https://tauri.app
+https://www.innosetup.com
+https://rollupjs.org
+https://vite.dev
+https://registry.npmjs.org
+https://docs.npmjs.com
+https://cli.github.com
+https://pypi.org
+https://files.pythonhosted.org
+https://dl.google.com
+https://packages.microsoft.com
+https://chocolatey.org
+https://community.chocolatey.org
+https://aka.ms
+https://github.com/cloudflare/workers-sdk
+https://example.com
+launcher-api.azurpilot.com/updata/*
+launcher-api.azurpilot.com
+launcher-download.azurpilot.com
+azurpilot.com
+api.cnb.cool
+cnb.cool

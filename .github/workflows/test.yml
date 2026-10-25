@@ -28,6 +28,17 @@ jobs:
         os: [ubuntu-22.04, macos-latest, windows-latest, windows-11-arm]
 
     steps:
+      # 日志脱敏：注册 URL 掩码清单（明文见 tools/ci/log-mask.txt；base64 藏在
+      # 环境变量里，避免本步骤自身的日志先出现 URL）。掩码对本 job 之后的全部
+      # 日志生效；修改清单后需重新 base64 并同步两个 workflow 的所有 job。
+      - name: Register log masks
+        shell: bash
+        env:
+          AZURPILOT_LOG_MASK_B64: "aHR0cC5odHRwczovL2dpdGh1Yi5jb20vLmV4dHJhaGVhZGVyCmh0dHBzOi8vbGF1bmNoZXItYXBpLmF6dXJwaWxvdC5jb20vdXBkYXRhL3N0YWJsZS5qc29uCmh0dHBzOi8vbGF1bmNoZXItYXBpLmF6dXJwaWxvdC5jb20KaHR0cHM6Ly9sYXVuY2hlci1kb3dubG9hZC5henVycGlsb3QuY29tCmh0dHBzOi8vYXBpLmNuYi5jb29sCmh0dHBzOi8vY25iLmNvb2wKaHR0cHM6Ly9naXRodWIuY29tL3dlc3MwOS9BenVyUGlsb3RMYXVuY2hlcgpodHRwczovL2dpdGh1Yi5jb20vd2VzczA5L0F6dXJQaWxvdApodHRwczovL2FwaS5naXRodWIuY29tCmh0dHBzOi8vdXBsb2Fkcy5naXRodWIuY29tCmh0dHBzOi8vb2JqZWN0cy5naXRodWJ1c2VyY29udGVudC5jb20KaHR0cHM6Ly9kb2NzLmdpdGh1Yi5jb20KaHR0cHM6Ly9naXRodWIuY29tL2FzdHJhbC1zaC9zZXR1cC11dgpodHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vYXN0cmFsLXNoL3NldHVwLXV2Cmh0dHBzOi8vZ2l0aHViLmNvbS9hc3RyYWwtc2gvdXYKaHR0cHM6Ly9hc3RyYWwuc2gKaHR0cHM6Ly9naXRodWIuY29tL2FjdGlvbnMvcHl0aG9uLXZlcnNpb25zCmh0dHBzOi8vZ2l0aHViLmNvbS9hY3Rpb25zL3NldHVwLXB5dGhvbgpodHRwczovL2dpdGh1Yi5jb20vYWN0aW9ucy9ub2RlLXZlcnNpb25zCmh0dHBzOi8vc3RhdGljLnJ1c3QtbGFuZy5vcmcKaHR0cHM6Ly9zaC5ydXN0dXAucnMKaHR0cHM6Ly9jcmF0ZXMuaW8KaHR0cHM6Ly9pbmRleC5jcmF0ZXMuaW8KaHR0cHM6Ly9zdGF0aWMuY3JhdGVzLmlvCmh0dHBzOi8vZG9jLnJ1c3QtbGFuZy5vcmcKaHR0cHM6Ly9naXRodWIuY29tL3J1c3QtbGFuZwpodHRwczovL3YyLnRhdXJpLmFwcApodHRwczovL3RhdXJpLmFwcApodHRwczovL3d3dy5pbm5vc2V0dXAuY29tCmh0dHBzOi8vcm9sbHVwanMub3JnCmh0dHBzOi8vdml0ZS5kZXYKaHR0cHM6Ly9yZWdpc3RyeS5ucG1qcy5vcmcKaHR0cHM6Ly9kb2NzLm5wbWpzLmNvbQpodHRwczovL2NsaS5naXRodWIuY29tCmh0dHBzOi8vcHlwaS5vcmcKaHR0cHM6Ly9maWxlcy5weXRob25ob3N0ZWQub3JnCmh0dHBzOi8vZGwuZ29vZ2xlLmNvbQpodHRwczovL3BhY2thZ2VzLm1pY3Jvc29mdC5jb20KaHR0cHM6Ly9jaG9jb2xhdGV5Lm9yZwpodHRwczovL2NvbW11bml0eS5jaG9jb2xhdGV5Lm9yZwpodHRwczovL2FrYS5tcwpodHRwczovL2dpdGh1Yi5jb20vY2xvdWRmbGFyZS93b3JrZXJzLXNkawpodHRwczovL2V4YW1wbGUuY29tCmxhdW5jaGVyLWFwaS5henVycGlsb3QuY29tL3VwZGF0YS8qCmxhdW5jaGVyLWFwaS5henVycGlsb3QuY29tCmxhdW5jaGVyLWRvd25sb2FkLmF6dXJwaWxvdC5jb20KYXp1cnBpbG90LmNvbQphcGkuY25iLmNvb2wKY25iLmNvb2wK"
+        run: |
+          printf '%s' "$AZURPILOT_LOG_MASK_B64" | openssl base64 -d -A | while IFS= read -r value; do
+            if [ -n "$value" ]; then echo "::add-mask::$value"; fi
+          done
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -41,13 +52,22 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install launcher UI dependencies
-        run: npm --prefix frontend ci
+        shell: bash
+        run: |
+          set -o pipefail
+          npm --prefix frontend ci 2>&1 | bash tools/ci/redact-urls.sh
 
       - name: Test launcher UI
-        run: npm --prefix frontend test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm --prefix frontend test 2>&1 | bash tools/ci/redact-urls.sh
 
       - name: Build launcher UI
-        run: npm --prefix frontend run build
+        shell: bash
+        run: |
+          set -o pipefail
+          npm --prefix frontend run build 2>&1 | bash tools/ci/redact-urls.sh
 
       - uses: actions/setup-python@v5
         with:
@@ -58,10 +78,13 @@ jobs:
       - name: Install Tauri dependencies (Ubuntu only)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libwebkit2gtk-4.1-dev libxdo-dev \
-            libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          set -o pipefail
+          {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              build-essential pkg-config libwebkit2gtk-4.1-dev libxdo-dev \
+              libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          } 2>&1 | bash tools/ci/redact-urls.sh
 
       - name: Install stable Rust
         run: |
@@ -93,6 +116,17 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      # 日志脱敏：注册 URL 掩码清单（明文见 tools/ci/log-mask.txt；base64 藏在
+      # 环境变量里，避免本步骤自身的日志先出现 URL）。掩码对本 job 之后的全部
+      # 日志生效；修改清单后需重新 base64 并同步两个 workflow 的所有 job。
+      - name: Register log masks
+        shell: bash
+        env:
+          AZURPILOT_LOG_MASK_B64: "aHR0cC5odHRwczovL2dpdGh1Yi5jb20vLmV4dHJhaGVhZGVyCmh0dHBzOi8vbGF1bmNoZXItYXBpLmF6dXJwaWxvdC5jb20vdXBkYXRhL3N0YWJsZS5qc29uCmh0dHBzOi8vbGF1bmNoZXItYXBpLmF6dXJwaWxvdC5jb20KaHR0cHM6Ly9sYXVuY2hlci1kb3dubG9hZC5henVycGlsb3QuY29tCmh0dHBzOi8vYXBpLmNuYi5jb29sCmh0dHBzOi8vY25iLmNvb2wKaHR0cHM6Ly9naXRodWIuY29tL3dlc3MwOS9BenVyUGlsb3RMYXVuY2hlcgpodHRwczovL2dpdGh1Yi5jb20vd2VzczA5L0F6dXJQaWxvdApodHRwczovL2FwaS5naXRodWIuY29tCmh0dHBzOi8vdXBsb2Fkcy5naXRodWIuY29tCmh0dHBzOi8vb2JqZWN0cy5naXRodWJ1c2VyY29udGVudC5jb20KaHR0cHM6Ly9kb2NzLmdpdGh1Yi5jb20KaHR0cHM6Ly9naXRodWIuY29tL2FzdHJhbC1zaC9zZXR1cC11dgpodHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vYXN0cmFsLXNoL3NldHVwLXV2Cmh0dHBzOi8vZ2l0aHViLmNvbS9hc3RyYWwtc2gvdXYKaHR0cHM6Ly9hc3RyYWwuc2gKaHR0cHM6Ly9naXRodWIuY29tL2FjdGlvbnMvcHl0aG9uLXZlcnNpb25zCmh0dHBzOi8vZ2l0aHViLmNvbS9hY3Rpb25zL3NldHVwLXB5dGhvbgpodHRwczovL2dpdGh1Yi5jb20vYWN0aW9ucy9ub2RlLXZlcnNpb25zCmh0dHBzOi8vc3RhdGljLnJ1c3QtbGFuZy5vcmcKaHR0cHM6Ly9zaC5ydXN0dXAucnMKaHR0cHM6Ly9jcmF0ZXMuaW8KaHR0cHM6Ly9pbmRleC5jcmF0ZXMuaW8KaHR0cHM6Ly9zdGF0aWMuY3JhdGVzLmlvCmh0dHBzOi8vZG9jLnJ1c3QtbGFuZy5vcmcKaHR0cHM6Ly9naXRodWIuY29tL3J1c3QtbGFuZwpodHRwczovL3YyLnRhdXJpLmFwcApodHRwczovL3RhdXJpLmFwcApodHRwczovL3d3dy5pbm5vc2V0dXAuY29tCmh0dHBzOi8vcm9sbHVwanMub3JnCmh0dHBzOi8vdml0ZS5kZXYKaHR0cHM6Ly9yZWdpc3RyeS5ucG1qcy5vcmcKaHR0cHM6Ly9kb2NzLm5wbWpzLmNvbQpodHRwczovL2NsaS5naXRodWIuY29tCmh0dHBzOi8vcHlwaS5vcmcKaHR0cHM6Ly9maWxlcy5weXRob25ob3N0ZWQub3JnCmh0dHBzOi8vZGwuZ29vZ2xlLmNvbQpodHRwczovL3BhY2thZ2VzLm1pY3Jvc29mdC5jb20KaHR0cHM6Ly9jaG9jb2xhdGV5Lm9yZwpodHRwczovL2NvbW11bml0eS5jaG9jb2xhdGV5Lm9yZwpodHRwczovL2FrYS5tcwpodHRwczovL2dpdGh1Yi5jb20vY2xvdWRmbGFyZS93b3JrZXJzLXNkawpodHRwczovL2V4YW1wbGUuY29tCmxhdW5jaGVyLWFwaS5henVycGlsb3QuY29tL3VwZGF0YS8qCmxhdW5jaGVyLWFwaS5henVycGlsb3QuY29tCmxhdW5jaGVyLWRvd25sb2FkLmF6dXJwaWxvdC5jb20KYXp1cnBpbG90LmNvbQphcGkuY25iLmNvb2wKY25iLmNvb2wK"
+        run: |
+          printf '%s' "$AZURPILOT_LOG_MASK_B64" | openssl base64 -d -A | while IFS= read -r value; do
+            if [ -n "$value" ]; then echo "::add-mask::$value"; fi
+          done
       - name: Checkout
         uses: actions/checkout@v4
         with:

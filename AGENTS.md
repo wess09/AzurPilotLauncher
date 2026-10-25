@@ -51,6 +51,7 @@ cargo check            # 仅检查编译
 - **i18n**：4 个语言文件 `locales/{zh-CN,zh-TW,ja,en}.yml`，`zh-CN.yml` 为基准。新增字符串要同时加 4 个文件，Rust 中用 `t!("module.key")`，React 中通过类型化 `translator()` 读取同一 YAML（Rust 常需 `.to_string()`），带参数用 `t!("k", p = v)` + YAML `%{p}`。
 - **平台兼容**：改动涉及进程/窗口/通知/路径时必须考虑三平台，用 `#[cfg(target_os = "...")]` 分支；平台依赖在 `Cargo.toml` 的 `[target.'cfg(...)'.dependencies]`。子进程命令一律套 `CreateNoWindow`（Windows）避免黑窗。
 - **日志**：用 `tracing`（info!/warn! 等），初始化后写入 `log/{date}_launcher.txt`，不要用 `println!`。
+- **CI 日志脱敏**：CI 日志不得出现任何 URL 与仓库地址。每个 job 首步 `Register log masks` 读取 `AZURPILOT_LOG_MASK_B64`（明文基准 `tools/ci/log-mask.txt`）逐行注册 `::add-mask::`；npm/apt/choco/wrangler 等易打印 URL 的输出统一经 `tools/ci/redact-urls.sh` 过滤为 `<URL>`。修改掩码清单后必须重新 `base64 -w0` 并同步两个 workflow 全部 job 的该变量。
 - **版本号**：发布需同步 `Cargo.toml`、`tauri.conf.json`、`CHANGELOG.md` 三处。
 - **CI 打包**：仅 `.github/workflows/package.yml`。tag/手动打包轻量启动器；三平台运行组件支持 main 相关变更、后端 dispatch、手动和六小时定时构建。所有线上元数据只写启动器既有 `stable.json` 的 `runtime` 字段；GitHub/CNB 仅存下载包。启动器载荷字段同时写 `url` 与 `github_url`。两类清单发布共用并发锁，合并时必须保留另一部分。沿用纯静态 `cf-worker/` 和现有发布凭据，详见组件协议文档。
 - **CI 测试**：`.github/workflows/test.yml` 在推送 `main`、PR 和手动触发时运行，覆盖 Linux、macOS、Windows x64/ARM64，执行 `cargo check --locked --all-targets` 和 `cargo test --locked --all-targets`，无需发布密钥。Windows manifest 要求提权，测试通常在管理员终端运行；纯组件测试也可对当前测试命令设置 `__COMPAT_LAYER=RunAsInvoker`。

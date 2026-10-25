@@ -62,4 +62,10 @@ if (manifest.runtime) {
 console.log(`准备发布 stable.json ${manifest.version}（${platforms.length} 个平台）`);
 JS
 
-exec npx --yes "wrangler@${wrangler_version}" deploy "$@"
+# Wrangler 会打印 Route 域名与遥测地址，统一把 URL 替换为 <URL>
+# （Route 行不带 https:// 前缀，需按本服务域名单独匹配）；
+# 顶部的 pipefail 保证失败时仍以 Wrangler 的退出码结束。
+WRANGLER_SEND_METRICS=false npx --yes "wrangler@${wrangler_version}" deploy "$@" 2>&1 |
+  sed -E -e 's@[a-zA-Z][a-zA-Z0-9+.-]*://[^[:space:]"<>()）」]+@<URL>@g' \
+         -e 's@([a-zA-Z0-9-]+\.)?azurpilot\.com[^[:space:]"<>()）」]*@<URL>@g' \
+         -e 's@([a-zA-Z0-9-]+\.)?cnb\.cool[^[:space:]"<>()）」]*@<URL>@g'
