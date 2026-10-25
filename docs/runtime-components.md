@@ -25,35 +25,35 @@
 
 | ID | 内容与安装位置 |
 | --- | --- |
-| `git` | Windows 为最新 MinGit（busybox 64-bit，经 git-for-windows latest release 解析）；macOS/Linux 为发行包布局。安装到 win `.venv/Scripts/git/**`，unix `.venv/bin/git` + `.venv/libexec/git-core/**` + `.venv/share/git-core/**` |
-| `adb` | Google platform-tools 的 adb 及其 DLL/许可，安装到 `.venv/Scripts/`（Windows）或 `.venv/bin/`（Unix） |
+| `git` | Windows 为最新 MinGit（busybox 64-bit，经 git-for-windows latest release 解析）；macOS/Linux 为发行包布局。安装到 `.azurpilot/tools/git/`，包含对应平台的命令、执行助手和模板 |
+| `adb` | Google platform-tools 的 adb 及其 DLL/许可，安装到 `.azurpilot/tools/adb/` |
 | `deploy` | 非组件：清单列出 `deploy/**` 部署脚本与 `config/deploy.template*.yaml` 四个分系统模板的 raw 下载路径。启动器按 `DownloadSource` 排序双源逐文件下载（非空校验、原子写入），`config/` 下的 json 等其余文件一律不下载、不修改 |
 
-deploy 引导文件只在 `deploy/installer.py` 缺失时下载（首次引导）；之后仓库由 git 拉取并接管更新，实现脚本热更新。模板选择与后端 `get_deploy_template` 一致：Windows 用 `deploy.template.yaml`、macOS/Linux 用 `deploy.template-linux.yaml`，国内网络环境（系统简体中文且北京时间，或显式选择 CNB）自动改用对应 `-cn` 变体。
+deploy 引导文件按清单逐项检查，只下载缺失或为空的脚本和当前系统模板。全部就绪后才提交部署记录；中途失败后再次点击会补齐剩余文件。已有非空文件由 git 更新接管，不被引导下载覆盖。模板选择与后端 `get_deploy_template` 一致：Windows 用 `deploy.template.yaml`、macOS/Linux 用 `deploy.template-linux.yaml`，国内网络环境（系统简体中文且北京时间，或显式选择 CNB）自动改用对应 `-cn` 变体。
 
 ## 部署与启动流程
 
 部署（首页"部署"按钮触发，只下载引导物）：
 
 1. 读取 stable.json `runtime`，下载/校验/解压 `git`、`adb` 组件并成组提交；
-2. `deploy/installer.py` 缺失时按清单逐文件下载 deploy 脚本与当前系统模板。
+2. 按清单补齐 deploy 脚本与当前系统模板，确认全部就绪后提交组件和部署记录。
 
 启动（首页"启动"按钮触发，完成其余一切）：
 
 1. 内嵌 uv（编译期经 `AZURPILOT_BOOTSTRAP_UV` 嵌入，空占位时回退 `UV` 环境变量或 PATH）安装最新稳定 Python 3.14.x 并创建可重定位 `.venv`；
 2. `uv pip install requests`（deploy 脚本的引导依赖，多镜像回退）；
-3. 迁移 `config/deploy.yaml`（优先以下载的平台模板为起点，写入 `.venv` 工具路径与 `InstallDependencies: true`）；
+3. 迁移 `config/deploy.yaml`（优先以下载的平台模板为起点，写入 Python、独立工具目录路径与 `InstallDependencies: true`）；
 4. 运行 `deploy.git.GitManager` 经 git/GitOverCDN 拉取仓库源码与资源；
-5. 运行 `deploy.app`（`ensure_frontend`）构建前端；无 Node.js 的机器明确报错进入错误页；
-6. `uv sync --no-dev --no-install-project` 按 `uv.lock` 同步依赖，多 PyPI 镜像重锁回退。
+5. `uv sync --no-dev --no-install-project` 按 `uv.lock` 同步依赖，多 PyPI 镜像重锁回退；
+6. 依赖安装完成后运行 `deploy.app`（`ensure_frontend`）构建前端；无 Node.js 的机器明确报错进入错误页。
 
-启动 gui.py 时注入 `AZURPILOT_PREBUILT=1` 与 `AZURPILOT_NO_UV_BOOTSTRAP=1`；部署子进程不注入 `AZURPILOT_PREBUILT`，以允许前端本地构建。
+启动 gui.py 时清除旧的 `AZURPILOT_PREBUILT` 标记，只设置 `AZURPILOT_NO_UV_BOOTSTRAP=1`。后端使用正常源码模式，不再检查旧六组件协议。Git/ADB 保存在 `.azurpilot/tools/`，与 Python 的 `.venv` 生命周期分开。
 
 环境修复（首页确认后）：强制重下 git/adb 组件、删除并重建 `.venv`（Python + requests + uv sync），保留代码、配置、日志与缓存；运行中必须先停止服务。普通关闭、取消和启动失败不删除 `.venv` 或缓存。
 
 ## 校验、取消与恢复
 
-组件 ZIP 下载经 SHA-256 与大小校验，缓存于 `.azurpilot/cache/<sha256>.zip` 复用。解压前拒绝路径穿越、绝对路径、符号链接、Windows 保留名与重复路径；写入前检查既有路径的链接与 reparse point。`.azurpilot/installed.json` 记录已部署组件与文件清单；持久化 `journal.json` 保证提交阶段中断后可回滚恢复。`deployment_required` 判定：事务未恢复、git/adb 组件缺失或损坏、`deploy/installer.py` 缺失。
+组件 ZIP 下载经 SHA-256 与大小校验，缓存于 `.azurpilot/cache/<sha256>.zip` 复用。解压前拒绝路径穿越、绝对路径、符号链接、Windows 保留名与重复路径；写入前检查既有路径的链接与 reparse point。`.azurpilot/installed.json` 记录已部署组件与文件清单；持久化 `journal.json` 保证提交阶段中断后可回滚恢复。`deployment_required` 判定：事务未恢复、git/adb 组件缺失或损坏，或者部署记录中的任一引导文件缺失/为空。
 
 ## CI 与发布顺序
 
@@ -66,7 +66,7 @@ deploy 引导文件只在 `deploy/installer.py` 缺失时下载（首次引导�
 5. 读取线上 stable.json，仅替换其 `runtime` 字段，经现有纯静态 Worker 发布。
 6. tag 发布同时构建启动器：CI 先经 `astral-sh/setup-uv` 安装 uv 并以 `AZURPILOT_BOOTSTRAP_UV` 嵌入 exe；启动器更新字段发布时保留最新 `runtime`。
 
-两种清单发布任务共用 `launcher-stable-manifest` 并发锁。组件构建支持手动触发、启动器 `main` 相关变更、后端 `repository_dispatch`（`launcher-components.yml` 经 `LAUNCHER_DISPATCH_TOKEN` 通知）与六小时定时兜底。
+两种清单发布任务共用 `launcher-stable-manifest` 并发锁。组件构建支持手动触发、启动器 `main` 相关变更、外部 `repository_dispatch` 与六小时定时检查；AP 仓库不需要新增通知工作流。
 
 ## 本地验证
 
@@ -76,6 +76,8 @@ npm --prefix frontend run build
 uv run --no-project python -m unittest discover -s tools -p "test_*.py"
 cargo check --locked --all-targets
 cargo test --locked --all-targets
+# 显式验证真实 uv 首次安装与修复（会下载 Python 和 requests）
+cargo test real_uv_empty_install_and_repair -- --ignored --test-threads=1
 ```
 
 Windows 的正式 manifest 保持 `requireAdministrator`；组件测试可用 `__COMPAT_LAYER=RunAsInvoker` 以当前权限运行。debug 构建可用 `AZURPILOT_REPO_DIR` 指定空的安装测试目录，用 `AZURPILOT_STABLE_MANIFEST` 指定包含 `runtime` 的本地 HTTP 测试清单；`AZURPILOT_BOOTSTRAP_UV` 指向本地 uv 二进制即可内嵌验证。

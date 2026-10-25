@@ -109,7 +109,7 @@
 
 **AzurPilot Launcher** 致力於讓全功能《碧藍航線》自動化助手 **AzurPilot** 在 Windows、macOS 與 Linux 上以原生方式一鍵執行——無論是 Apple Silicon 的 Mac Mini，還是傳統 x86 主機，都無需轉譯層、無需 Docker、不污染系統環境。
 
-啟動器從同一份 `stable.json` 按需下載 CI 預先建置的程式碼、遊戲資源、前端、最新穩定 Python 3.14 修補版、依賴與 ADB。缺少元件時顯示「部署」；系統為簡體中文且使用北京時間時優先 CNB，其餘優先 GitHub。設定可選擇元件、Python 與 PyPI 鏡像，僅顯示鏡像名稱。無需預裝 Git、uv、Python 或 Node.js。詳見[獨立元件部署](docs/runtime-components.md)。
+啟動器透過同一份 `stable.json` 按需下載 Git/ADB 二進位、deploy 腳本和設定範本，再由內建 uv 在本機安裝最新穩定 Python 3.14 修補版與 Python 依賴，透過 deploy 腳本更新倉庫和建置 WebUI。缺少引導檔案時顯示「部署」；系統為簡體中文且使用北京時間時優先 CNB，其餘優先 GitHub。設定可選擇元件、Python 與 PyPI 鏡像，僅顯示鏡像名稱。無需預裝 Git、uv 或 Python。詳見[部署引導元件](docs/runtime-components.md)。
 
 ---
 
@@ -179,7 +179,7 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/模組-部署形態-0052cc?style=flat-square" alt="Tag"><br>
       <h3>零設定環境建置</h3>
-      <p>CI 預先建置獨立元件，啟動器只下載缺少的元件，並重用已完成的安裝與快取，包括最新穩定 Python 3.14 修補版。</p>
+      <p>CI 僅打包 Git/ADB 部署工具。啟動器補齊引導檔案，由內建 uv 安裝 Python 與依賴，並重用已完成的安裝與快取。</p>
       <div>
         <img src="https://img.shields.io/badge/執行環境-Python%203.14.x-orange?style=flat-square" alt="Python">
         <img src="https://img.shields.io/badge/依賴管理-uv%20內建-blueviolet?style=flat-square" alt="uv">
@@ -413,12 +413,12 @@ Python / uv
 * 所有系統: .venv
 
 Git
-* Unix:    .venv/bin/git
-* Windows: .venv/Scripts/git/cmd/git.exe
+* Unix:    .azurpilot/tools/git/bin/git
+* Windows: .azurpilot/tools/git/cmd/git.exe
 
 Adb
-* Unix:    .venv/bin/adb
-* Windows: .venv/Scripts/adb.exe
+* Unix:    .azurpilot/tools/adb/adb
+* Windows: .azurpilot/tools/adb/adb.exe
 
 啟動器會附加的環境變數
 * Unix:    .venv/bin

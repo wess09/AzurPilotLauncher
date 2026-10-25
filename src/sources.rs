@@ -73,18 +73,17 @@ impl DownloadSource {
         }
     }
     pub fn order_urls(self, urls: &[String]) -> Vec<&str> {
-        let preferred = if self.prefer_cnb() {
-            "cnb.cool"
-        } else {
-            "github.com"
-        };
+        let prefer_cnb = self.prefer_cnb();
         let mut ordered = urls.iter().map(String::as_str).collect::<Vec<_>>();
         ordered.sort_by_key(|url| {
-            reqwest::Url::parse(url)
+            let host = reqwest::Url::parse(url)
                 .ok()
-                .and_then(|u| u.host_str().map(str::to_owned))
-                .as_deref()
-                != Some(preferred)
+                .and_then(|u| u.host_str().map(str::to_owned));
+            !matches!(
+                (prefer_cnb, host.as_deref()),
+                (true, Some("cnb.cool"))
+                    | (false, Some("github.com" | "raw.githubusercontent.com"))
+            )
         });
         ordered
     }
@@ -159,5 +158,15 @@ mod tests {
             DownloadSource::Cnb.order_urls(&urls),
             vec!["https://cnb.cool/a", "https://github.com/a"]
         );
+    }
+
+    #[test]
+    fn github_preference_applies_to_raw_bootstrap_downloads() {
+        let urls = vec![
+            "https://cnb.cool/repository/raw/master".into(),
+            "https://raw.githubusercontent.com/owner/repository/master".into(),
+        ];
+        assert_eq!(DownloadSource::Github.order_urls(&urls)[0], urls[1]);
+        assert_eq!(DownloadSource::Cnb.order_urls(&urls)[0], urls[0]);
     }
 }

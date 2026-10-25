@@ -43,9 +43,12 @@ if (!manifest.version || platforms.length === 0) {
 }
 if (manifest.runtime) {
   const runtime = manifest.runtime;
-  const ids = ['adb', 'dependencies', 'frontend', 'python', 'resources', 'source'];
-  if (runtime.schema !== 1 || !/^3\.14\.\d+$/.test(runtime.python) || !/^[a-f0-9]{40}$/.test(runtime.revision)) {
+  const ids = ['adb', 'git'];
+  if (runtime.schema !== 2 || !/^[a-f0-9]{40}$/.test(runtime.revision)) {
     throw new Error('runtime 清单格式不兼容');
+  }
+  if (!runtime.deploy?.bases?.length || !runtime.deploy?.files?.includes('deploy/installer.py') || runtime.deploy.bases.some(url => !url.startsWith('https://'))) {
+    throw new Error('runtime 缺少 deploy 引导清单');
   }
   if (!runtime.platforms || Object.keys(runtime.platforms).length === 0) throw new Error('runtime 缺少平台');
   for (const components of Object.values(runtime.platforms)) {

@@ -6,7 +6,7 @@
 
 ## 项目概述
 
-AzurPilot Launcher 是 [AzurPilot](https://github.com/wess09/AzurPilot) 的跨平台（Windows/macOS/Linux）桌面启动器，基于 **Tauri 2 + Rust** 构建。它从既有 `stable.json` 部署 git/adb 二进制组件与 deploy 引导脚本（仓库 raw 直连），启动时由内嵌 uv 安装最新稳定 Python 3.14.x 并运行 deploy 脚本拉取仓库、构建前端、同步依赖，随后启动 Python WebUI 后端（`gui.py`），并提供原生 webview 壳（含 React 启动首页、系统托盘、通知和自定义标题栏）。
+AzurPilot Launcher 是 [AzurPilot](https://github.com/wess09/AzurPilot) 的跨平台（Windows/macOS/Linux）桌面启动器，基于 **Tauri 2 + Rust** 构建。它从既有 `stable.json` 部署 git/adb 二进制组件与 deploy 引导脚本（仓库 raw 直连），启动时由内嵌 uv 安装最新稳定 Python 3.14.x 并运行 deploy 脚本拉取仓库、同步依赖后构建前端，随后启动 Python WebUI 后端（`gui.py`），并提供原生 webview 壳（含 React 启动首页、系统托盘、通知和自定义标题栏）。
 
 ## 构建与开发命令
 
@@ -148,7 +148,7 @@ AzurPilot 启动模拟器时根据 `AP_LAUNCHER_JOB_BREAKAWAY=1` 或兼容别名
 
 ### 部署配置
 
-`config/deploy.yaml` 保留后端 WebUI/ADB 等业务选项。启动器不依赖后端 deploy 安装器定位目录。配置迁移写入 `.venv/runtime` 解释器路径、ADB 路径和选定 PyPI 源，关闭后端自动安装依赖/Git 更新。前端在 CI 构建并附内容指纹。
+`config/deploy.yaml` 保留后端 WebUI/ADB 等业务选项。启动器不依赖后端 deploy 安装器定位目录。配置迁移写入 `.venv` 解释器路径及 `.azurpilot/tools/` 下的 Git/ADB 路径，保留用户其他配置。Python 与依赖由启动器的 uv 安装，前端在依赖就绪后由 deploy 脚本构建；不使用旧六组件预构建模式。
 
 ### 时间炸弹机制
 

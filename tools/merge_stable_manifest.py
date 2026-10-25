@@ -12,13 +12,8 @@ def merge(current, *, launcher=None, runtime=None):
             raise ValueError('Launcher manifest is incomplete')
         result.update({key: value for key, value in launcher.items() if key != 'runtime'})
     if runtime is not None:
-        if runtime.get('schema') != 1 or not runtime.get('platforms'):
+        if runtime.get('schema') != 2 or not runtime.get('platforms'):
             raise ValueError('Runtime manifest is incomplete')
-        previous = current.get('runtime', {})
-        if previous.get('revision') == runtime.get('revision') and previous.get('python'):
-            patch = lambda value: tuple(map(int, value.split('.')))
-            if patch(previous['python']) > patch(runtime['python']):
-                raise ValueError('Refusing to downgrade an already published Python patch')
         result['runtime'] = runtime
     if not result.get('version') or not result.get('platforms'):
         raise ValueError('Current stable.json has no launcher version/platforms; refusing to replace it')

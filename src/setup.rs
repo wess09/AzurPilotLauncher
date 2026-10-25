@@ -6,9 +6,8 @@
 //! - 通过内嵌 uv 安装最新稳定 Python 3.14.x、创建可重定位 `.venv`，
 //!   并安装 deploy 脚本的引导依赖 requests（`ensure_runtime_tools`）；
 //! - 迁移与校验 `config/deploy.yaml` 部署配置（`migrate_dependency_config`）；
-//! - 运行 deploy 脚本拉取仓库代码（`git_update`，最多重试 20 次）与
-//!   构建前端（`app_update`）；
-//! - 按 `uv.lock` 同步 Python 依赖（`uv_sync_project`）；
+//! - 运行 deploy 脚本拉取仓库代码（`git_update`，最多重试 20 次）；
+//! - 按 `uv.lock` 同步 Python 依赖，再构建前端（`app_update`）；
 //! - 用户主动修复时，重下组件并仅重建 `.venv`，保留代码、配置与缓存。
 //!
 //! 阶段进度通过 [`SplashUpdate`] 回调上报启动画面；所有长时间操作均支持
@@ -170,18 +169,18 @@ fn platform_python_config_path() -> &'static str {
 /// 返回 deploy.yaml 中 adb 可执行文件的平台约定路径。
 fn platform_adb_config_path() -> &'static str {
     if cfg!(windows) {
-        "./.venv/Scripts/adb.exe"
+        "./.azurpilot/tools/adb/adb.exe"
     } else {
-        "./.venv/bin/adb"
+        "./.azurpilot/tools/adb/adb"
     }
 }
 
 /// 返回 deploy.yaml 中 git 可执行文件的平台约定路径。
 fn platform_git_config_path() -> &'static str {
     if cfg!(windows) {
-        "./.venv/Scripts/git/cmd/git.exe"
+        "./.azurpilot/tools/git/cmd/git.exe"
     } else {
-        "./.venv/bin/git"
+        "./.azurpilot/tools/git/bin/git"
     }
 }
 
@@ -211,9 +210,7 @@ pub fn azurpilot_repo_dir() -> PathBuf {
                 .parent()
                 .expect("app Contents directory")
                 .join("AzurLaneAutoScript");
-            if repo_folder.is_dir() {
-                return repo_folder;
-            }
+            return repo_folder;
         }
     }
     exe_folder
@@ -268,12 +265,16 @@ fn venv_uv() -> PathBuf {
 
 /// git 的 `GIT_EXEC_PATH` 目录（Windows/Unix 发行包布局均含 `libexec/git-core`）。
 fn venv_git_exec_path() -> PathBuf {
-    venv_dir().join("libexec").join("git-core")
+    azurpilot_repo_dir()
+        .join(crate::components::TOOLS_DIR)
+        .join("git/libexec/git-core")
 }
 
 /// git 模板目录（`share/git-core/templates`），供 `GIT_TEMPLATE_DIR` 使用。
 fn venv_git_template_dir() -> PathBuf {
-    venv_dir().join("share").join("git-core").join("templates")
+    azurpilot_repo_dir()
+        .join(crate::components::TOOLS_DIR)
+        .join("git/share/git-core/templates")
 }
 
 /// 取得本次进程用于引导的 uv 可执行文件路径。
@@ -338,14 +339,32 @@ fn find_on_path(executable: &str) -> Option<PathBuf> {
 pub fn setup_environment() -> Result<()> {
     let dir = azurpilot_repo_dir();
     info!("AzurPilot dir is {:?}", &dir);
+    fs::create_dir_all(&dir)?;
     set_current_dir(&dir)?;
     prepend_path_to_env("PATH", venv_bin_dir());
     if cfg!(windows) {
         // Windows MinGit 布局的 git.exe 藏在 git/cmd 下，需单独加入 PATH
-        prepend_path_to_env("PATH", venv_bin_dir().join("git").join("cmd"));
+        prepend_path_to_env(
+            "PATH",
+            azurpilot_repo_dir()
+                .join(crate::components::TOOLS_DIR)
+                .join("git/cmd"),
+        );
     } else {
+        prepend_path_to_env(
+            "PATH",
+            azurpilot_repo_dir()
+                .join(crate::components::TOOLS_DIR)
+                .join("git/bin"),
+        );
         refresh_git_environment();
     }
+    prepend_path_to_env(
+        "PATH",
+        azurpilot_repo_dir()
+            .join(crate::components::TOOLS_DIR)
+            .join("adb"),
+    );
     Ok(())
 }
 
@@ -380,7 +399,7 @@ fn setup_git_ca_bundle() {
 }
 
 /// 环境搭建总入口：部署引导物 → 工具安装 → 配置迁移 → 仓库更新 →
-/// 前端构建 → 依赖同步。
+/// 依赖同步 → 前端构建。
 ///
 /// 部署阶段只下载 git/adb 组件与 deploy 引导脚本（见 [`crate::components`]）；
 /// Python、源码、依赖与前端全部在本入口内经 uv 与 deploy 脚本自行完成。
@@ -397,9 +416,6 @@ pub fn setup_azurpilot_repo(
     sources: &Preferences,
 ) -> Result<()> {
     info!("Starting setup for AzurPilot repository...");
-    // Linux 的内嵌 git 需要显式指定 CA 证书，必须最先配置
-    #[cfg(target_os = "linux")]
-    setup_git_ca_bundle();
     status_updater(
         SplashUpdate::loading(
             t!("setup.preparing_workspace"),
@@ -415,11 +431,19 @@ pub fn setup_azurpilot_repo(
         skip_repository_update,
         sources,
     )?;
+    refresh_git_environment();
+    #[cfg(target_os = "linux")]
+    setup_git_ca_bundle();
 
     let bootstrap_uv = bootstrap_uv_path()?;
-    ensure_runtime_tools(&bootstrap_uv, &cancel_requested, &mut status_updater, sources)?;
+    ensure_runtime_tools(
+        &bootstrap_uv,
+        &cancel_requested,
+        &mut status_updater,
+        sources,
+    )?;
     atomic_failure_cleanup("./config", &cancel_requested)?;
-    migrate_dependency_config()?;
+    migrate_dependency_config(sources)?;
     if skip_repository_update {
         info!("Skipping AzurPilot repository update because preview no-update mode is enabled");
         status_updater(
@@ -437,22 +461,13 @@ pub fn setup_azurpilot_repo(
         );
         git_update(&mut status_updater, &bootstrap_uv, &cancel_requested)?;
     }
-    if !skip_repository_update {
-        status_updater(
-            SplashUpdate::loading(
-                t!("setup.building_frontend"),
-                t!("setup.building_frontend_detail"),
-                60,
-            )
-            .with_subtitle(t!("setup.syncing", tip = get_tip())),
-        );
-        app_update(&mut status_updater, &cancel_requested)?;
-    }
-    status_updater(
-        SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.verifying_deps"), 70)
-            .with_subtitle(t!("setup.syncing_deps", tip = get_tip())),
-    );
-    uv_sync_project(&mut status_updater, &bootstrap_uv, &cancel_requested, sources)?;
+    sync_dependencies_and_frontend(
+        &mut status_updater,
+        &bootstrap_uv,
+        &cancel_requested,
+        sources,
+        !skip_repository_update,
+    )?;
     status_updater(
         SplashUpdate::loading(t!("setup.finishing"), t!("setup.ready_to_launch"), 94)
             .with_subtitle(t!("setup.launching", tip = get_tip())),
@@ -485,10 +500,16 @@ pub fn repair_environment(
         cancel_requested.clone(),
         sources,
     )?;
+    refresh_git_environment();
     remove_venv_for_repair(&cancel_requested)?;
 
     let bootstrap_uv = bootstrap_uv_path()?;
-    ensure_runtime_tools(&bootstrap_uv, &cancel_requested, &mut status_updater, sources)?;
+    ensure_runtime_tools(
+        &bootstrap_uv,
+        &cancel_requested,
+        &mut status_updater,
+        sources,
+    )?;
     if cancel_requested.load(Ordering::SeqCst) {
         bail!(t!("launcher.cancelled"));
     }
@@ -497,8 +518,13 @@ pub fn repair_environment(
         SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.verifying_deps"), 70)
             .with_subtitle(t!("setup.syncing_deps", tip = get_tip())),
     );
-    migrate_dependency_config()?;
-    uv_sync_project(&mut status_updater, &bootstrap_uv, &cancel_requested, sources)
+    migrate_dependency_config(sources)?;
+    uv_sync_project(
+        &mut status_updater,
+        &bootstrap_uv,
+        &cancel_requested,
+        sources,
+    )
 }
 
 /// 读取解析后的 `config/deploy.yaml` 内容；文件缺失或格式错误时返回 `None`。
@@ -506,65 +532,6 @@ pub fn get_deploy_config() -> Option<JsonValue> {
     let config_content = fs::read_to_string("./config/deploy.yaml").ok()?;
     let config: JsonValue = serde_yaml::from_str(&config_content).ok()?;
     Some(config)
-}
-
-/// 递归删除目录/文件，删除前先清除只读属性。
-///
-/// Windows 上处于只读属性的文件无法直接删除，需先清位；
-/// 目录按先清空后删除的顺序递归处理。
-///
-/// # Errors
-/// 任一文件或目录删除失败时返回 Err（含 i18n 错误信息）。
-fn remove_runtime_entry(path: &Path) -> Result<()> {
-    clear_readonly(path)?;
-    if path.is_dir() {
-        for entry in fs::read_dir(path)? {
-            remove_runtime_entry(&entry?.path())?;
-        }
-        fs::remove_dir(path).with_context(|| {
-            t!(
-                "errors.delete_dir_failed",
-                error = path.display().to_string()
-            )
-        })?;
-    } else {
-        fs::remove_file(path).with_context(|| {
-            t!(
-                "errors.delete_file_failed",
-                error = path.display().to_string()
-            )
-        })?;
-    }
-    Ok(())
-}
-
-/// 带重试的删除：被杀进程尚未完全释放文件时退避重试。
-///
-/// 每次失败后检查目标是否已消失（可能被并发进程删掉），消失即成功。
-///
-/// # Errors
-/// 重试次数用尽仍失败时返回最后一次的错误。
-fn remove_runtime_entry_with_retry(path: &Path) -> Result<()> {
-    let mut last_error = None;
-    for attempt in 0..CLEANUP_RETRIES {
-        match remove_runtime_entry(path) {
-            Ok(()) => return Ok(()),
-            Err(err) => {
-                last_error = Some(err);
-                if !path.exists() {
-                    return Ok(());
-                }
-                thread::sleep(Duration::from_millis(250 + attempt as u64 * 100));
-            }
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| {
-        anyhow!(t!(
-            "errors.delete_failed",
-            error = path.display().to_string()
-        ))
-    }))
 }
 
 /// 后端恢复流程中删除 `.venv`，删除前做严格的安全校验。
@@ -632,7 +599,7 @@ fn remove_venv_path_for_repair(venv: &Path, cancel_requested: &AtomicBool) -> Re
 
 /// 带取消检查与退避重试的删除循环（恢复流程专用）。
 ///
-/// 与 [`remove_runtime_entry_with_retry`] 的区别在于每次尝试前后
+/// 每次删除尝试前后
 /// 都检查取消标志，保证用户取消时能尽快中止。
 ///
 /// # Errors
@@ -890,8 +857,8 @@ fn run_command(
     let mut last_err = "".to_owned();
     let mut git_progress = GitProgressState::default();
     let mut uv_progress = UvProgressState::new();
-    // 依赖阶段起点 70%：前半段留给部署与 git 更新，保证总进度单调
-    let mut dependency_progress = 70.0;
+    // 依赖阶段起点 60%，同步完成后再构建前端。
+    let mut dependency_progress = 60.0;
     let phase_subtitle = match phase {
         ScriptPhase::Git => t!("setup.syncing", tip = get_tip()).to_string(),
         ScriptPhase::App => t!("setup.syncing", tip = get_tip()).to_string(),
@@ -966,15 +933,15 @@ fn run_command(
             status_updater(update);
             last_wait_update = Instant::now();
         }
-        // npm 构建可能长时间无输出，按耗时把 60-70 区间线性推进。
+        // npm 构建可能长时间无输出，按耗时推进最后的前端阶段。
         if is_app && last_wait_update.elapsed() >= Duration::from_secs(1) {
             status_updater(
                 runtime_wait_update(
                     &t!("setup.building_frontend"),
                     &t!("setup.building_frontend_detail"),
                     started_at.elapsed(),
-                    60.0,
-                    70.0,
+                    86.0,
+                    94.0,
                 )
                 .with_subtitle(t!("setup.syncing", tip = get_tip()).to_string()),
             );
@@ -1103,24 +1070,24 @@ fn splash_retry_update(phase: ScriptPhase, retry_count: usize, error_text: &str)
     match phase {
         ScriptPhase::Git => SplashUpdate::loading(t!("setup.retrying_update"), detail, 40)
             .with_subtitle(t!("setup.syncing", tip = get_tip())),
-        ScriptPhase::App => SplashUpdate::loading(t!("setup.building_frontend"), detail, 60)
+        ScriptPhase::App => SplashUpdate::loading(t!("setup.building_frontend"), detail, 86)
             .with_subtitle(t!("setup.syncing", tip = get_tip())),
-        ScriptPhase::Dependencies => SplashUpdate::loading(t!("setup.retrying_deps"), detail, 70)
+        ScriptPhase::Dependencies => SplashUpdate::loading(t!("setup.retrying_deps"), detail, 60)
             .with_subtitle(t!("setup.syncing_deps", tip = get_tip()))
             .with_uv_progress(2, t!("setup.uv_resolving", secs = "0")),
     }
 }
 
-/// 构造依赖同步阶段的起始进度（70%，uv 子进度从 2% 开始解析）。
+/// 构造依赖同步阶段的起始进度（60%，uv 子进度从 2% 开始解析）。
 fn dependency_start_update() -> SplashUpdate {
-    SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.uv_parsing"), 70)
+    SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.uv_parsing"), 60)
         .with_subtitle(t!("setup.syncing_deps", tip = get_tip()))
         .with_uv_progress(2, t!("setup.uv_resolving", secs = "0"))
 }
 
 /// 子命令成功退出后确认依赖同步完成，推进到本阶段的终点。
 fn dependency_complete_update() -> SplashUpdate {
-    SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.uv_completed"), 94)
+    SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.uv_completed"), 86)
         .with_subtitle(t!("setup.syncing_deps", tip = get_tip()))
         .with_uv_progress(100, t!("setup.uv_completed"))
 }
@@ -1208,6 +1175,33 @@ fn app_update(
     isolate_python_child_environment(&mut cmd);
     bypass_proxy_for_child(&mut cmd);
     run_command(&mut cmd, status_updater, ScriptPhase::App, cancel_requested)
+}
+
+/// 前端构建会导入后端日志等模块，必须等 uv 安装 Python 依赖后再执行。
+fn sync_dependencies_and_frontend(
+    mut status_updater: impl FnMut(SplashUpdate),
+    bootstrap_uv: &Path,
+    cancel_requested: &AtomicBool,
+    sources: &Preferences,
+    build_frontend: bool,
+) -> Result<()> {
+    status_updater(
+        SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.verifying_deps"), 60)
+            .with_subtitle(t!("setup.syncing_deps", tip = get_tip())),
+    );
+    uv_sync_project(&mut status_updater, bootstrap_uv, cancel_requested, sources)?;
+    if build_frontend {
+        status_updater(
+            SplashUpdate::loading(
+                t!("setup.building_frontend"),
+                t!("setup.building_frontend_detail"),
+                86,
+            )
+            .with_subtitle(t!("setup.syncing", tip = get_tip())),
+        );
+        app_update(&mut status_updater, cancel_requested)?;
+    }
+    Ok(())
 }
 
 /// 按 `uv.lock` 同步 Python 依赖，带 PyPI 镜像源的多级回退。
@@ -1498,24 +1492,23 @@ fn uv_lock_command_with_paths(
 ///
 /// # Errors
 /// 目录创建或文件写入失败时返回 Err。
-fn migrate_dependency_config() -> Result<()> {
-    let path = "./config/deploy.yaml";
-    if let Some(parent) = Path::new(path).parent() {
+fn migrate_dependency_config(sources: &Preferences) -> Result<()> {
+    migrate_dependency_config_at(&azurpilot_repo_dir(), sources)
+}
+
+fn migrate_dependency_config_at(root: &Path, sources: &Preferences) -> Result<()> {
+    let path = root.join("config/deploy.yaml");
+    if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
 
     let mut changed = false;
-    let content = fs::read_to_string(path).unwrap_or_default();
+    let content = fs::read_to_string(&path).unwrap_or_default();
     // 首次启动或配置为空时，优先使用部署阶段从仓库下载的当前系统模板；
     // 模板缺失时回退到编译期内置基线。
     let content = if content.trim().is_empty() {
         changed = true;
-        let platform_template = if cfg!(windows) {
-            "./config/deploy.template.yaml"
-        } else {
-            "./config/deploy.template-linux.yaml"
-        };
-        fs::read_to_string(platform_template)
+        fs::read_to_string(root.join(crate::components::platform_template_file(sources)))
             .ok()
             .filter(|template| !template.trim().is_empty())
             .unwrap_or_else(|| default_deploy_config().to_owned())
@@ -1593,8 +1586,8 @@ fn migrate_dependency_config() -> Result<()> {
     }
 
     if changed {
-        fs::write(path, output)?;
-        info!("Updated self-contained .venv settings in {path}");
+        fs::write(&path, output)?;
+        info!("Updated runtime settings in {}", path.display());
     }
 
     Ok(())
@@ -1658,8 +1651,8 @@ fn runtime_wait_update(
 /// 确保运行时工具链齐备：Python 环境 → uv 引导依赖 → 复制 uv 进 `.venv`。
 ///
 /// 是环境搭建的第二阶段：先保证 `.venv` 内有可用的 Python 与 requests，
-/// 再把 uv 复制进 `.venv`。git 与 adb 二进制由部署阶段的组件直接解压到
-/// `.venv`，此处不再复制。
+/// 再把 uv 复制进 `.venv`。Git/ADB 由组件部署到独立工具目录，重建 Python
+/// 环境不会修改这些工具。
 ///
 /// # Errors
 /// 用户取消、Python 安装失败或工具部署失败时返回 Err。
@@ -1930,6 +1923,7 @@ fn bypass_proxy_for_child(cmd: &mut Command) {
 /// 会让 `.venv` 内的解释器加载错误的库路径，是"本机能跑、
 /// 启动器里跑不起来"的常见根因，因此所有 Python 子进程统一清洗。
 pub(crate) fn isolate_python_child_environment(cmd: &mut Command) {
+    cmd.env_remove("AZURPILOT_PREBUILT");
     for key in [
         "PYTHONHOME",
         "pythonhome",
@@ -2080,9 +2074,9 @@ fn ensure_self_contained_python(
     ));
     let existing_venv_python_version = venv_python_version();
     let venv = venv_dir();
-    if venv.exists()
+    if (venv.join("pyvenv.cfg").exists() || venv_python().exists())
         && (existing_venv_python_version.is_none()
-            || existing_venv_python_version.is_some_and(venv_python_version_requires_rebuild)
+            || !existing_venv_python_version.is_some_and(is_reusable_venv_python_version)
             || managed_python_executable().is_none())
     {
         bail!(t!("launcher.env_repair_required"));
@@ -2169,7 +2163,6 @@ fn ensure_self_contained_python(
         t!("setup.creating_venv"),
         33,
     ));
-    reset_virtualenv_layout()?;
     let mut cmd = Command::new(bootstrap_uv);
     cmd.args(["venv", "--allow-existing", "--relocatable", "--python"])
         .arg(managed_python)
@@ -2179,36 +2172,6 @@ fn ensure_self_contained_python(
     if !status.success() {
         bail!(t!("errors.venv_create_failed"));
     }
-    Ok(())
-}
-
-/// 清空虚拟环境的标准布局目录（Scripts/Lib 等），为 `uv venv --allow-existing` 铺路。
-///
-/// uv 的 venv 命令不会覆盖已有布局文件，重建环境前必须先清掉旧布局；
-/// 只删标准条目而非整个 `.venv`，尽量保留无关数据。
-///
-/// # Errors
-/// 任一标准目录删除失败时返回 Err。
-fn reset_virtualenv_layout() -> Result<()> {
-    let venv = venv_dir();
-    let entries = if cfg!(windows) {
-        vec!["Scripts", "Lib", "Include", "pyvenv.cfg"]
-    } else {
-        vec!["bin", "lib", "include", "pyvenv.cfg"]
-    };
-
-    for entry in entries {
-        let path = venv.join(entry);
-        if path.exists() {
-            remove_runtime_entry_with_retry(&path).with_context(|| {
-                t!(
-                    "errors.reset_venv_failed",
-                    error = path.display().to_string()
-                )
-            })?;
-        }
-    }
-
     Ok(())
 }
 
@@ -2510,9 +2473,9 @@ fn dependency_splash_update(
         .with_uv_progress(uv_progress.progress(), uv_progress.detail())
 }
 
-/// 把 uv 子进度（0-100）线性映射到总进度条的 70-94 区间。
+/// 把 uv 子进度（0-100）线性映射到总进度条的 60-86 区间。
 fn dependency_global_progress(uv_progress: f64) -> f64 {
-    scale_progress(uv_progress, 70, 94)
+    scale_progress(uv_progress, 60, 86)
 }
 
 /// 判断一行 stderr 是否为 uv 的正常进度/提示输出。
@@ -2757,12 +2720,127 @@ mod tests {
         fs::write(venv.join("Lib").join("package.txt"), "dependency")
             .expect("write temporary dependency");
         fs::write(&keep, "keep").expect("write sibling file");
+        let tool = temp_dir
+            .path()
+            .join(crate::components::TOOLS_DIR)
+            .join("adb/adb");
+        fs::create_dir_all(tool.parent().unwrap()).unwrap();
+        fs::write(&tool, "deployed adb").unwrap();
         let cancel_requested = AtomicBool::new(false);
 
         remove_venv_path_for_repair(&venv, &cancel_requested).expect("remove temporary venv");
 
         assert!(!venv.exists());
         assert_eq!(fs::read_to_string(keep).expect("read sibling file"), "keep");
+        assert_eq!(fs::read_to_string(tool).unwrap(), "deployed adb");
+    }
+
+    #[test]
+    fn fresh_configuration_uses_selected_domestic_template_and_preserves_user_json() {
+        let root = tempfile::tempdir().unwrap();
+        let mut sources = Preferences::default();
+        sources.download_source = crate::sources::DownloadSource::Cnb;
+        let template = root
+            .path()
+            .join(crate::components::platform_template_file(&sources));
+        fs::create_dir_all(template.parent().unwrap()).unwrap();
+        let content = default_deploy_config().replace(
+            "Repository:",
+            "# selected domestic template\n    Repository:",
+        );
+        fs::write(template, content).unwrap();
+        fs::write(root.path().join("config/user.json"), "user data").unwrap();
+        migrate_dependency_config_at(root.path(), &sources).unwrap();
+        let deployed = fs::read_to_string(root.path().join("config/deploy.yaml")).unwrap();
+        assert!(deployed.contains("# selected domestic template"));
+        assert!(deployed.contains(platform_git_config_path()));
+        assert!(deployed.contains(platform_adb_config_path()));
+        assert_eq!(
+            fs::read_to_string(root.path().join("config/user.json")).unwrap(),
+            "user data"
+        );
+        fs::write(
+            root.path().join("config/deploy.yaml"),
+            deployed.replace("# selected domestic template", "# user configuration"),
+        )
+        .unwrap();
+        migrate_dependency_config_at(root.path(), &Preferences::default()).unwrap();
+        assert!(fs::read_to_string(root.path().join("config/deploy.yaml"))
+            .unwrap()
+            .contains("# user configuration"));
+    }
+
+    /// 显式运行：cargo test real_uv_empty_install_and_repair -- --ignored --test-threads=1
+    /// 使用真实 uv 安装 Python/依赖并执行前端步骤，只操作本测试临时目录。
+    #[test]
+    #[ignore = "downloads Python with real uv; run explicitly for bootstrap verification"]
+    fn real_uv_empty_install_and_repair() {
+        struct RestoreEnvironment {
+            directory: PathBuf,
+            repo: Option<std::ffi::OsString>,
+        }
+        impl Drop for RestoreEnvironment {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.directory);
+                if let Some(value) = &self.repo {
+                    std::env::set_var("AZURPILOT_REPO_DIR", value);
+                } else {
+                    std::env::remove_var("AZURPILOT_REPO_DIR");
+                }
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let _restore = RestoreEnvironment {
+            directory: std::env::current_dir().unwrap(),
+            repo: std::env::var_os("AZURPILOT_REPO_DIR"),
+        };
+        std::env::set_var("AZURPILOT_REPO_DIR", root.path());
+        std::env::set_current_dir(root.path()).unwrap();
+        let tool = root
+            .path()
+            .join(crate::components::TOOLS_DIR)
+            .join("git/keep.txt");
+        fs::create_dir_all(tool.parent().unwrap()).unwrap();
+        fs::write(&tool, "git component").unwrap();
+        fs::create_dir_all(root.path().join("config")).unwrap();
+        fs::write(root.path().join("config/user.json"), "preserve user data").unwrap();
+        fs::write(root.path().join("pyproject.toml"), "[project]\nname = 'bootstrap-smoke'\nversion = '0.0.0'\nrequires-python = '>=3.14,<3.15'\ndependencies = ['requests', 'rich==15.0.0']\n[tool.uv]\npackage = false\n").unwrap();
+        fs::create_dir_all(root.path().join("deploy")).unwrap();
+        fs::write(root.path().join("deploy/app.py"), "from rich.console import Console\nfrom pathlib import Path\nclass AppManager:\n    def app_update(self):\n        Console()\n        Path('frontend-ready').write_text('dependencies installed first')\n").unwrap();
+        let uv = bootstrap_uv_path().unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut sources = Preferences::default();
+        sources.python_source = crate::sources::PythonSource::Astral;
+        sources.pypi_source = crate::sources::PypiSource::Pypi;
+        sources.download_source = crate::sources::DownloadSource::Github;
+        // 首次安装、随后主动修复；两次都必须保留已部署的工具和用户配置。
+        for repair in [false, true] {
+            if repair {
+                remove_venv_for_repair(&cancel).unwrap();
+            }
+            ensure_runtime_tools(&uv, &cancel, |_| {}, &sources).unwrap();
+            let marker = root.path().join("frontend-ready");
+            if marker.exists() {
+                fs::remove_file(&marker).unwrap();
+            }
+            sync_dependencies_and_frontend(|_| {}, &uv, &cancel, &sources, true).unwrap();
+            assert!(marker.is_file());
+            assert!(is_reusable_venv_python_version(
+                venv_python_version().unwrap()
+            ));
+            let mut command = Command::new(venv_python());
+            command.args([
+                "-c",
+                "import requests; import sys; assert sys.version_info[:2] == (3, 14)",
+            ]);
+            isolate_python_child_environment(&mut command);
+            assert!(command.create_no_window().status().unwrap().success());
+            assert_eq!(fs::read_to_string(&tool).unwrap(), "git component");
+            assert_eq!(
+                fs::read_to_string(root.path().join("config/user.json")).unwrap(),
+                "preserve user data"
+            );
+        }
     }
 
     #[test]
@@ -2944,7 +3022,7 @@ mod tests {
         assert_eq!(progress.progress_at(now), 98.0);
 
         let complete = dependency_complete_update();
-        assert_eq!(complete.progress, 94.0);
+        assert_eq!(complete.progress, 86.0);
         assert_eq!(complete.uv_progress.expect("uv progress").progress, 100.0);
     }
 
@@ -2976,6 +3054,7 @@ mod tests {
 
     fn assert_python_environment_isolated(command: &Command) {
         for key in [
+            "AZURPILOT_PREBUILT",
             "PYTHONHOME",
             "PYTHONPATH",
             "VIRTUAL_ENV",

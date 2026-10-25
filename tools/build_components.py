@@ -35,12 +35,15 @@ DEPLOY_TEMPLATES = (
 
 
 def run(*args, cwd=None):
-    return subprocess.check_output(args, cwd=cwd, text=True).strip()
+    return subprocess.check_output(args, cwd=cwd, encoding='utf-8').strip()
 
 
 def file_hash(path):
+    digest = hashlib.sha256()
     with path.open('rb') as reader:
-        return hashlib.file_digest(reader, 'sha256').hexdigest()
+        for block in iter(lambda: reader.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def archive(output, name, files):
@@ -94,20 +97,20 @@ def git_component_files(stage, platform):
                 destination = extracted / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(package.read(info))
-        return list(tree(extracted, '.venv/Scripts/git'))
+        return list(tree(extracted, '.azurpilot/tools/git'))
 
     exec_path = Path(run('git', '--exec-path'))
     tool_root = exec_path.parent.parent
     git_bin = tool_root / 'bin' / 'git'
     if not git_bin.is_file():
         git_bin = Path(shutil.which('git'))
-    files = [(git_bin, '.venv/bin/git')]
-    files.extend(tree(exec_path, '.venv/libexec/git-core'))
+    files = [(git_bin, '.azurpilot/tools/git/bin/git')]
+    files.extend(tree(exec_path, '.azurpilot/tools/git/libexec/git-core'))
     templates = tool_root / 'share' / 'git-core' / 'templates'
     if not templates.is_dir():
         templates = Path('/usr/share/git-core/templates')
     if templates.is_dir():
-        files.extend(tree(templates, '.venv/share/git-core/templates'))
+        files.extend(tree(templates, '.azurpilot/tools/git/share/git-core/templates'))
     return files
 
 
@@ -135,7 +138,7 @@ def adb_component_files(stage, platform):
                 destination.chmod(0o755 if basename in ('adb', 'adb.exe') else 0o644)
     if not (adb / ('adb.exe' if windows else 'adb')).is_file():
         raise RuntimeError('Android platform-tools archive has no adb executable')
-    return list(tree(adb, '.venv/Scripts' if windows else '.venv/bin'))
+    return list(tree(adb, '.azurpilot/tools/adb'))
 
 
 def deploy_files(source):
@@ -165,13 +168,13 @@ def verify_relocated(output, platform):
     env = dict(os.environ)
     env.pop('GIT_EXEC_PATH', None)
     if platform.startswith('windows-'):
-        git = relocated / '.venv/Scripts/git/cmd/git.exe'
-        adb = relocated / '.venv/Scripts/adb.exe'
+        git = relocated / '.azurpilot/tools/git/cmd/git.exe'
+        adb = relocated / '.azurpilot/tools/adb/adb.exe'
     else:
-        git = relocated / '.venv/bin/git'
-        adb = relocated / '.venv/bin/adb'
-        env['GIT_EXEC_PATH'] = str(relocated / '.venv/libexec/git-core')
-        env['GIT_TEMPLATE_DIR'] = str(relocated / '.venv/share/git-core/templates')
+        git = relocated / '.azurpilot/tools/git/bin/git'
+        adb = relocated / '.azurpilot/tools/adb/adb'
+        env['GIT_EXEC_PATH'] = str(relocated / '.azurpilot/tools/git/libexec/git-core')
+        env['GIT_TEMPLATE_DIR'] = str(relocated / '.azurpilot/tools/git/share/git-core/templates')
     subprocess.run([str(git), '--version'], check=True, env=env)
     subprocess.run([str(adb), 'version'], check=True, env=env)
 

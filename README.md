@@ -109,7 +109,7 @@
 
 **AzurPilot Launcher** 致力于让全功能《碧蓝航线》自动化助手 **AzurPilot** 在 Windows、macOS 与 Linux 上以原生方式一键运行——无论是 Apple Silicon 的 Mac Mini，还是传统 x86 主机，都无需转译、无需 Docker、不污染系统环境。
 
-启动器从同一份 `stable.json` 按需下载 CI 预构建的代码、游戏资源、前端、最新稳定 Python 3.14.x、依赖和 ADB，再启动 Python WebUI。缺少组件时首页显示“部署”；系统简体中文且为北京时间时优先 CNB，其他情况优先 GitHub，也可手动切换组件、Python 和 PyPI 镜像。用户无需预装 Git、uv、Python 或 Node.js。详见[独立组件部署](docs/runtime-components.md)。
+启动器从同一份 `stable.json` 按需下载 Git/ADB 二进制、deploy 脚本和配置模板，再由内嵌 uv 在本机安装最新稳定 Python 3.14.x 与 Python 依赖，通过 deploy 脚本更新仓库和构建 WebUI。缺少部署引导文件时首页显示“部署”；系统简体中文且为北京时间时优先 CNB，其他情况优先 GitHub，也可手动切换组件、Python 和 PyPI 镜像。用户无需预装 Git、uv 或 Python。详见[部署引导组件](docs/runtime-components.md)。
 
 ---
 
@@ -179,10 +179,10 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/模块-部署形态-0052cc?style=flat-square" alt="Tag"><br>
       <h3>零配置环境搭建</h3>
-      <p>CI 预构建独立组件，启动器缺什么下什么，并复用已完成的组件和下载缓存。Python 自动使用最新稳定 3.14 补丁版，无需系统 Python、Git 或 Node.js。</p>
+      <p>CI 仅打包 Git/ADB 等部署工具。启动器补齐引导文件，由内嵌 uv 安装最新稳定 Python 3.14 补丁版与依赖，并复用已完成的安装和下载缓存。</p>
       <div>
         <img src="https://img.shields.io/badge/运行时-Python%203.14.x-orange?style=flat-square" alt="Python">
-        <img src="https://img.shields.io/badge/依赖管理-CI%20预构建-blueviolet?style=flat-square" alt="uv">
+        <img src="https://img.shields.io/badge/依赖管理-uv%20同步-blueviolet?style=flat-square" alt="uv">
         <img src="https://img.shields.io/badge/体验-开箱即跑-brightgreen?style=flat-square" alt="Ready">
       </div>
     </td>
@@ -201,9 +201,9 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/模块-更新体系-403294?style=flat-square" alt="Tag"><br>
       <h3>自动化更新体系</h3>
-      <p>更新信息统一保存在启动器 stable.json，代码、资源和依赖按内容摘要更新；启动器本体提供 CNB 与 GitHub 下载地址。</p>
+      <p>引导组件和启动器更新信息统一保存在 stable.json，源码由 Git 更新，Python 依赖由 uv 同步；启动器本体提供 CNB 与 GitHub 下载地址。</p>
       <div>
-        <img src="https://img.shields.io/badge/代码更新-SHA256%20组件-purple?style=flat-square" alt="Git Update">
+        <img src="https://img.shields.io/badge/代码更新-Git-purple?style=flat-square" alt="Git Update">
         <img src="https://img.shields.io/badge/依赖锁定-uv.lock-blue?style=flat-square" alt="Lock">
         <img src="https://img.shields.io/badge/自更新-mTLS%20多镜像-orange?style=flat-square" alt="mTLS">
       </div>
@@ -259,14 +259,14 @@ graph TD
         Backend["后端托管 backend.rs<br/>(端口清理 / 进程回收)"]
     end
 
-    subgraph Venv [".venv/runtime (CI 预构建 · 可重定位)"]
+    subgraph Venv ["本机运行环境 (uv 管理)"]
         PYTHON["CPython 3.14.x 解释器"]
-        TOOLS["Python / dependencies / ADB 内置工具链"]
-        SYNC["CI 构建依赖 (uv.lock 锁定)"]
+        TOOLS[".azurpilot/tools Git / ADB"]
+        SYNC["uv sync 依赖同步 (uv.lock)"]
     end
 
     subgraph Repo ["AzurLaneAutoScript 仓库"]
-        GIT["stable.json 独立组件更新"]
+        GIT["deploy.git 仓库更新"]
         GUI["gui.py WebUI 后端"]
         WEB["WebUI 控制台 (127.0.0.1:22267)"]
     end
@@ -279,7 +279,7 @@ graph TD
     SYNC --> GUI
     Backend --> GUI
     GUI --> WEB
-    Shell -. "WebView 承载 · SSE 通知流" .-> WEB
+    Shell -. "WebView 承载 · WebSocket 通道" .-> WEB
     Tray -. "桌面通知 / 托盘控制" .-> Shell
 ```
 
@@ -389,10 +389,10 @@ graph TD
 |:---:|:---|:---|
 | 1 | **全平台支持** | 不再局限于 Windows，macOS（含 Apple Silicon 原生）与 Linux 均可运行 |
 | 2 | **更新策略重构** | 按统一清单更新独立组件，校验成功后成组提交；重复启动仅重新聚焦已有窗口 |
-| 3 | **依赖版本锁定** | Python 包版本在 CI 依照 `uv.lock` 构建，备用安装也仅使用编译好的 wheel |
+| 3 | **依赖版本锁定** | Python 包由启动器在本机调用 uv，按项目锁文件同步 |
 | 4 | **adb 策略** | 不再重启和替换 adb |
-| 5 | **目录结构调整** | Python / Python / dependencies / ADB 全部收纳进 `.venv`，详见下方目录结构 |
-| 6 | **预构建前端** | CI 编译 WebUI，运行时无需 Node.js 或 npm |
+| 5 | **目录结构调整** | Python 环境位于 `.venv`，Git/ADB 位于 `.azurpilot/tools`，两者独立维护 |
+| 6 | **本机构建前端** | Python 依赖就绪后由 deploy 脚本调用 Node.js/npm 构建 WebUI |
 
 ---
 
@@ -410,16 +410,16 @@ AzurPilot 启动器
 * Linux:   AzurLaneAutoScript/AzurPilot
 
 Python
-* Windows: .venv/runtime/python.exe
-* Unix: .venv/runtime/bin/python3.14
+* Windows: .venv/Scripts/python.exe
+* Unix: .venv/bin/python
 
 Components
 * .azurpilot/installed.json
 * .azurpilot/cache/
 
 Adb
-* Unix:    .venv/bin/adb
-* Windows: .venv/Scripts/adb.exe
+* Unix:    .azurpilot/tools/adb/adb
+* Windows: .azurpilot/tools/adb/adb.exe
 
 启动器会附加的环境变量
 * Unix:    .venv/bin

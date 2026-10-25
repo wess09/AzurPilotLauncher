@@ -5,9 +5,10 @@
 - 更新用户提供的 Windows ICO 图标，并用于 Windows 启动器和安装程序。
 
 - 部署回归 deploy 脚本驱动：`stable.json` 的 `runtime` 字段（schema 2）每平台只含 CI 打包的 `git`（Windows 为最新 MinGit，macOS/Linux 为发行包布局）与 `adb` 二进制组件，另附跟随 master 的 deploy 脚本与分系统 `deploy.template*.yaml` 模板的 CNB/GitHub raw 下载清单；`config/` 下的 json 等其余文件一律不下载。
-- 部署仅下载上述引导物，缺少时首页显示"部署"；启动阶段由内嵌 uv 安装最新稳定 Python 3.14.x、安装 deploy 引导依赖 requests，再运行 `deploy.git` 拉取仓库源码与资源、`deploy.app` 构建前端（无 Node.js 时明确报错）、uv sync 按 `uv.lock` 同步依赖（多镜像重锁回退）。
+- 部署仅下载上述引导物，缺少时首页显示"部署"；启动阶段由内嵌 uv 安装最新稳定 Python 3.14.x、安装 deploy 引导依赖 requests，再运行 `deploy.git` 拉取仓库源码与资源、uv sync 按 `uv.lock` 同步依赖（多镜像重锁回退），最后由 `deploy.app` 构建前端（无 Node.js 时明确报错）。
 - 源码、资源、Python、依赖与前端不再经 CI 构建；运行组件 CI 不再执行 npm 与 uv，构建时长大幅缩短。
-- 组件下载保持摘要校验、暂存、成组提交与中断恢复；取消、失败与关闭不删除现有环境。
+- 组件下载保持摘要校验、暂存、成组提交与中断恢复；取消、失败与关闭不删除现有环境。Git/ADB 放在独立工具目录，首次安装和 Python 环境修复不会删除工具；deploy 下载中断后按文件补齐。
+- 修正 schema 2 发布校验、源码模式后端启动、Windows 中文路径解码及国内模板/下载源选择。
 - 组件、Python、PyPI 下载源设置保留：系统简体中文且使用北京时间时自动优先 CNB，其他环境优先 GitHub；Python/PyPI 镜像在部署与修复时直接生效。
 
 ## 3.0.1 - 2026-10-25

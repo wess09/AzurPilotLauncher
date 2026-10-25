@@ -109,7 +109,7 @@
 
 **AzurPilot Launcher** は、フル機能の『アズールレーン』自動化アシスタント **AzurPilot** を Windows・macOS・Linux 上でネイティブにワンクリック起動できるようにするプロジェクトです。Apple Silicon の Mac Mini でも、従来の x86 マシンでも、トランスレータも Docker も不要で、システム環境を汚しません。
 
-ランチャーは単一の `stable.json` から CI ビルド済みのコード、リソース、フロントエンド、最新の安定版 Python 3.14 パッチ、依存関係、ADB を必要に応じて取得します。不足時は「デプロイ」を表示します。システム言語が簡体字中国語で北京時間の場合は CNB、それ以外は GitHub を優先し、設定で取得元を選択できます。Git、uv、Python、Node.js の事前インストールは不要です。[コンポーネント仕様](docs/runtime-components.md)を参照してください。
+ランチャーは単一の `stable.json` を通じて Git/ADB バイナリ、deploy スクリプト、設定テンプレートを取得します。内蔵 uv が最新の安定版 Python 3.14 パッチと依存関係をローカルで導入し、deploy スクリプトがリポジトリ更新と WebUI ビルドを行います。不足時は「デプロイ」を表示します。システム言語が簡体字中国語で北京時間の場合は CNB、それ以外は GitHub を優先し、設定で取得元を選択できます。Git、uv、Python の事前インストールは不要です。[コンポーネント仕様](docs/runtime-components.md)を参照してください。
 
 ---
 
@@ -179,7 +179,7 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/モジュール-デプロイ形態-0052cc?style=flat-square" alt="Tag"><br>
       <h3>ゼロ設定の環境構築</h3>
-      <p>CI が独立したコンポーネントをビルドします。不足分のみを取得し、既存の環境とキャッシュを再利用します。Python は最新の安定版 3.14 パッチです。</p>
+      <p>CI は Git/ADB の配置ツールをパッケージ化します。ランチャーが不足した引導ファイルを取得し、内蔵 uv で Python と依存関係を導入して、既存環境とキャッシュを再利用します。</p>
       <div>
         <img src="https://img.shields.io/badge/ランタイム-Python%203.14.x-orange?style=flat-square" alt="Python">
         <img src="https://img.shields.io/badge/依存管理-uv%20内蔵-blueviolet?style=flat-square" alt="uv">
@@ -413,12 +413,12 @@ Python / uv
 * 全システム共通: .venv
 
 Git
-* Unix:    .venv/bin/git
-* Windows: .venv/Scripts/git/cmd/git.exe
+* Unix:    .azurpilot/tools/git/bin/git
+* Windows: .azurpilot/tools/git/cmd/git.exe
 
 Adb
-* Unix:    .venv/bin/adb
-* Windows: .venv/Scripts/adb.exe
+* Unix:    .azurpilot/tools/adb/adb
+* Windows: .azurpilot/tools/adb/adb.exe
 
 ランチャーが追加する環境変数
 * Unix:    .venv/bin

@@ -4,9 +4,10 @@ import json
 import tempfile
 import unittest
 import zipfile
+import subprocess
 from pathlib import Path
 
-from build_components import archive, merge as merge_components
+from build_components import archive, merge as merge_components, deploy_files
 from merge_stable_manifest import merge
 
 
@@ -26,7 +27,7 @@ class ComponentPackagingTest(unittest.TestCase):
 
     def test_runtime_publish_preserves_launcher_github_url_and_unknown_fields(self):
         current = {'version': '3.0.1', 'platforms': {'windows-x86_64': {'url': 'primary', 'github_url': 'github', 'sha256': 'hash'}}, 'notes': 'keep', 'future': True}
-        runtime = {'schema': 1, 'platforms': {'windows-x86_64': []}}
+        runtime = {'schema': 2, 'platforms': {'windows-x86_64': []}}
         updated = merge(current, runtime=runtime)
         self.assertEqual(updated['platforms'], current['platforms'])
         self.assertEqual(updated['runtime'], runtime)
@@ -38,6 +39,41 @@ class ComponentPackagingTest(unittest.TestCase):
         self.assertEqual(result['platforms']['linux-x86_64']['github_url'], 'b')
         with self.assertRaises(ValueError):
             merge({}, runtime=runtime)
+        with self.assertRaises(ValueError):
+            merge(current, runtime={'schema': 1, 'platforms': {'windows-x86_64': []}})
+
+    def test_deploy_file_listing_handles_unicode_paths_in_git_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(['git', 'init', '--quiet', str(root)], check=True)
+            for name in ['deploy/installer.py', 'config/deploy.template.yaml', 'README/开发文档.md']:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('content', encoding='utf-8')
+            subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
+            self.assertEqual(deploy_files(root), ['config/deploy.template.yaml', 'deploy/installer.py'])
+
+    def test_worker_validator_accepts_schema_two_and_rejects_old_components(self):
+        script = (Path(__file__).resolve().parents[1] / 'cf-worker/deploy.sh').read_text(encoding='utf-8')
+        validator = script.split("<<'JS'\n", 1)[1].split('\nJS', 1)[0]
+        runtime = {
+            'schema': 2, 'revision': 'a' * 40,
+            'platforms': {'windows-x86_64': [
+                {'id': name, 'sha256': 'b' * 64, 'size': 1, 'urls': ['https://example.com/component.zip']}
+                for name in ('git', 'adb')]},
+            'deploy': {'bases': ['https://example.com/raw'], 'files': ['deploy/installer.py']},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'stable.json'
+            def validate():
+                path.write_text(json.dumps({'version': '3.0.2', 'platforms': {'windows-x86_64': {}}, 'runtime': runtime}), encoding='utf-8')
+                return subprocess.run(['node', '-', str(path)], input=validator, encoding='utf-8', capture_output=True).returncode
+            self.assertEqual(validate(), 0)
+            runtime['schema'] = 1
+            self.assertNotEqual(validate(), 0)
+            runtime['schema'] = 2
+            runtime['platforms']['windows-x86_64'][0]['id'] = 'dependencies'
+            self.assertNotEqual(validate(), 0)
 
     def test_mismatched_revisions_cannot_be_published(self):
         with tempfile.TemporaryDirectory() as directory:

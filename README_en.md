@@ -109,7 +109,7 @@ A cross-platform desktop launcher for [AzurPilot](https://github.com/wess09/Azur
 
 **AzurPilot Launcher** makes the full-featured Azur Lane automation assistant **AzurPilot** run natively with one click on Windows, macOS and Linux — whether on an Apple Silicon Mac Mini or a classic x86 machine, with no translation layers, no Docker, and no pollution of your system environment.
 
-The launcher downloads CI-built code, resources, frontend, the latest stable Python 3.14 patch, dependencies, and ADB from one `stable.json`. Missing components change Run to Deploy. Auto prefers CNB only for a Simplified Chinese system using Beijing time; otherwise GitHub. Component, Python, and PyPI sources can be selected by mirror name. No preinstalled Git, uv, Python, or Node.js is required. See [component deployment](docs/runtime-components.md).
+The launcher downloads Git/ADB binaries, deploy scripts, and configuration templates through one `stable.json`. Embedded uv installs the latest stable Python 3.14 patch and Python dependencies locally; deploy scripts update the repository and build the WebUI. Missing bootstrap files change Run to Deploy. Auto prefers CNB only for a Simplified Chinese system using Beijing time; otherwise GitHub. Component, Python, and PyPI sources can be selected by mirror name. Git, uv, and Python do not need to be preinstalled. See [bootstrap deployment](docs/runtime-components.md).
 
 ---
 
@@ -179,7 +179,7 @@ This project works closely with the following core projects in its ecosystem:
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/Module-Deployment-0052cc?style=flat-square" alt="Tag"><br>
       <h3>Zero-Config Environment Setup</h3>
-      <p>CI builds independent components. The launcher downloads missing components and reuses completed installations and cached archives, including the latest stable Python 3.14 patch.</p>
+      <p>CI packages Git/ADB deployment tools. The launcher fills in missing bootstrap files, installs Python and dependencies with embedded uv, and reuses completed installations and cached archives.</p>
       <div>
         <img src="https://img.shields.io/badge/Runtime-Python%203.14.x-orange?style=flat-square" alt="Python">
         <img src="https://img.shields.io/badge/Dependencies-Embedded%20uv-blueviolet?style=flat-square" alt="uv">
@@ -413,16 +413,16 @@ Python / uv
 * All systems: .venv
 
 Git
-* Unix:    .venv/bin/git
-* Windows: .venv/Scripts/git/cmd/git.exe
+* Unix:    .azurpilot/tools/git/bin/git
+* Windows: .azurpilot/tools/git/cmd/git.exe
 
 Adb
-* Unix:    .venv/bin/adb
-* Windows: .venv/Scripts/adb.exe
+* Unix:    .azurpilot/tools/adb/adb
+* Windows: .azurpilot/tools/adb/adb.exe
 
 Environment variables appended by the launcher
 * Unix:    .venv/bin
-* Windows: .venv/Scripts, .venv/Scripts/git/cmd
+* Windows: .venv/Scripts, .azurpilot/tools/git/cmd
 ```
 
 ---

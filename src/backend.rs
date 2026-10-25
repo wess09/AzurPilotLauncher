@@ -272,7 +272,7 @@ impl ManagedBackend {
         backend_env::configure(&mut command, std::process::id(), launcher_trust_secret());
         isolate_python_child_environment(&mut command);
         command
-            .env("AZURPILOT_PREBUILT", "1")
+            .env_remove("AZURPILOT_PREBUILT")
             .env("AZURPILOT_NO_UV_BOOTSTRAP", "1");
         // 以进程组方式拉起：terminate/drop 时可整组回收，防止孙进程残留。
         #[cfg(unix)]
