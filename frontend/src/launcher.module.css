@@ -310,6 +310,13 @@ body {
     animation: none;
   }
 }
+/* 启动器设置开启“减弱动态效果”时与系统偏好同等对待。 */
+:global(html.reduced-motion) .launchText {
+  animation: none;
+}
+:global(html.reduced-motion) .launchFill {
+  transition: none;
+}
 .progressGroup {
   margin-top: 20px;
   display: grid;

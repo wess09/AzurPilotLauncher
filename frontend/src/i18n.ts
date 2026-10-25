@@ -52,6 +52,8 @@ const keys = [
   "settings_launch_on_startup",
   "settings_auto_start_service",
   "settings_keep_webview_tray",
+  "settings_reduced_motion",
+  "settings_prevent_sleep",
   "packing_log",
   "start",
   "deploy",

@@ -41,10 +41,13 @@ export function SettingsDialog({
   launchOnStartupLabel,
   autoStartServiceLabel,
   keepWebviewOnTrayLabel,
+  reducedMotionLabel,
+  preventSleepLabel,
   closeLabel,
   unsupportedLabel,
   sourceLabels,
   onLanguageChange,
+  onReducedMotionChange,
   onClose,
 }: {
   title: string;
@@ -54,10 +57,13 @@ export function SettingsDialog({
   launchOnStartupLabel: string;
   autoStartServiceLabel: string;
   keepWebviewOnTrayLabel: string;
+  reducedMotionLabel: string;
+  preventSleepLabel: string;
   closeLabel: string;
   unsupportedLabel: string;
   sourceLabels: Record<SourceLabel, string>;
   onLanguageChange?: (locale: string | null) => void;
+  onReducedMotionChange?: (reduced: boolean) => void;
   onClose: () => void;
 }) {
   const [settings, setSettings] = useState<LauncherSettings | null>(null);
@@ -68,6 +74,8 @@ export function SettingsDialog({
       launchOnStartup: false,
       autoStartService: false,
       keepWebviewOnTray: false,
+      reducedMotion: false,
+      preventSleep: false,
       language: null,
       downloadSource: "auto",
       pythonSource: "auto",
@@ -96,6 +104,10 @@ export function SettingsDialog({
       setSettings(saved);
       if (patch.language !== undefined)
         onLanguageChange?.(saved?.language ?? patch.language ?? null);
+      if (patch.reducedMotion !== undefined)
+        onReducedMotionChange?.(
+          saved?.reducedMotion ?? patch.reducedMotion ?? false,
+        );
     } catch {
       setSettings(settings);
     } finally { setSaving(false); }
@@ -181,6 +193,18 @@ export function SettingsDialog({
                   }
                   disabled={saving || platform !== "windows"}
                   onChange={(_e, data) => void update({ keepWebviewOnTray: data.checked })}
+                />
+                <Switch
+                  disabled={saving}
+                  checked={settings.reducedMotion}
+                  label={reducedMotionLabel}
+                  onChange={(_e, data) => void update({ reducedMotion: data.checked })}
+                />
+                <Switch
+                  disabled={saving}
+                  checked={settings.preventSleep}
+                  label={preventSleepLabel}
+                  onChange={(_e, data) => void update({ preventSleep: data.checked })}
                 />
               </div>
             )}

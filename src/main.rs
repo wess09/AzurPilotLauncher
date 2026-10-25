@@ -23,6 +23,8 @@ mod launcher_control;
 mod launcher_protocol;
 /// 平台原生通知与点击回调。
 mod notify;
+/// “阻止计算机自动睡眠”设置对应的三平台电源锁。
+mod power;
 /// 统一的启动进度状态、快照与推送节奏。
 mod progress;
 /// 启动器行为设置：SQLite 存储、Tauri 命令与开机自启副作用。

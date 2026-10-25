@@ -288,6 +288,8 @@ launcher:
   settings_launch_on_startup: "開機自啟"
   settings_auto_start_service: "啟動啟動器時直接啟動"
   settings_keep_webview_tray: "托盤化時不釋放記憶體（不關閉 WebView）"
+  settings_reduced_motion: "減弱動態效果"
+  settings_prevent_sleep: "阻止電腦自動睡眠"
   download_error_log: "下載錯誤日誌"
   err_command: "命令執行失敗"
   err_git_fetch: "代碼更新失敗"

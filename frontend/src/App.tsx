@@ -55,6 +55,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
   const [localeOverride, setLocaleOverride] = useState<string | null>(null);
+  const [reducedMotion, setReducedMotion] = useState(false);
   const t = useMemo(
     () => translator(localeOverride ?? context.locale),
     [localeOverride, context.locale],
@@ -71,13 +72,15 @@ export function App() {
         }
       })
       .catch((e) => setBridgeError(String(e)));
-    // 语言偏好（设置里选定的 UI 语言）覆盖系统语言。
+    // 语言偏好（设置里选定的 UI 语言）覆盖系统语言；同时恢复减弱动效偏好。
     command<LauncherSettings>("settings_get")
       .then((s) => {
-        if (!disposed && s?.language) setLocaleOverride(s.language);
+        if (disposed) return;
+        if (s?.language) setLocaleOverride(s.language);
+        setReducedMotion(!!s?.reducedMotion);
       })
       .catch(() => {
-        /* 设置读取失败时沿用系统语言 */
+        /* 设置读取失败时沿用系统语言与默认动效 */
       });
     subscribe(
       (s) => {
@@ -102,10 +105,13 @@ export function App() {
       cleanup?.();
     };
   }, []);
+  // 背景视频受三层控制：页面隐藏、系统或设置任一开启“减弱动态效果”。
+  // 视频持续可见播放会让 WebView2 持有显示器唤醒锁，导致系统无法息屏。
   useEffect(() => {
     const motion = matchMedia("(prefers-reduced-motion: reduce)");
     const sync = () => {
-      if (document.hidden || motion.matches) video.current?.pause();
+      if (document.hidden || motion.matches || reducedMotion)
+        video.current?.pause();
       else void video.current?.play().catch(() => {});
     };
     sync();
@@ -115,7 +121,11 @@ export function App() {
       document.removeEventListener("visibilitychange", sync);
       motion.removeEventListener("change", sync);
     };
-  }, []);
+  }, [reducedMotion]);
+  // CSS 动画（步骤文字淡入、进度填充过渡）随设置一并停用。
+  useEffect(() => {
+    document.documentElement.classList.toggle("reduced-motion", reducedMotion);
+  }, [reducedMotion]);
   useEffect(() => {
     if (!connection || !state?.backend_running) return;
     let stopped = false;
@@ -509,7 +519,11 @@ export function App() {
                   disabled={pending || !canAct || !!bridgeError}
                   icon={
                     active ? (
-                      <Spinner size="extra-small" />
+                      reducedMotion ? (
+                        <ArrowClockwise16Regular />
+                      ) : (
+                        <Spinner size="extra-small" />
+                      )
                     ) : MainIcon ? (
                       <MainIcon />
                     ) : undefined
@@ -570,12 +584,15 @@ export function App() {
           launchOnStartupLabel={t("settings_launch_on_startup")}
           autoStartServiceLabel={t("settings_auto_start_service")}
           keepWebviewOnTrayLabel={t("settings_keep_webview_tray")}
+          reducedMotionLabel={t("settings_reduced_motion")}
+          preventSleepLabel={t("settings_prevent_sleep")}
           closeLabel={t("close")}
           unsupportedLabel={t("not_supported")}
           onLanguageChange={(locale) => {
             setLocaleOverride(locale);
             document.documentElement.lang = locale ?? context.locale;
           }}
+          onReducedMotionChange={setReducedMotion}
           onClose={() => setSettingsOpen(false)}
         />
       )}

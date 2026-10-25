@@ -76,3 +76,5 @@ Windows 的 Rust 测试和启动器均需要管理员终端。发布必须先构
 控制、通知和免密登录统一使用 [启动器 WS v2](launcher-protocol-v2.md)，旧 SSE/HTTP 接口已移除。
 
 状态快照的 `deployment_required` 由 Rust 检查实际文件是否齐备生成；安装记录缺失时使用缓存清单及已有配置，不以缺少记录本身判定需要部署。设置弹窗提供组件、Python、PyPI 下载源，全部显示镜像名。自动选源读取系统原始语言与 IANA 时区，界面语言覆盖不改变自动判断。
+
+设置弹窗另有“减弱动态效果”与“阻止计算机自动睡眠”两个开关。背景视频持续可见播放会让 WebView2 持有显示器唤醒锁、系统因此无法息屏，“减弱动态效果”暂停背景视频并停用步骤文字与进度填充动画（与系统 `prefers-reduced-motion` 同等对待）；“阻止计算机自动睡眠”由 Rust 侧 `power` 模块持有系统电源锁（Windows `SetThreadExecutionState` 专用线程 / macOS `IOPMAssertion` / Linux `systemd-inhibit` 子进程随宿主退出），只阻止空闲进入睡眠、不阻止息屏，启动器启动时按设置自动恢复。

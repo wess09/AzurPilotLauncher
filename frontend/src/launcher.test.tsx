@@ -83,7 +83,7 @@ const send = (s: Partial<Snapshot>) =>
 
 describe("launcher actions", () => {
   it("saves named mirrors without showing URL paths", async () => {
-    const settings = { launchOnStartup: false, autoStartService: false, keepWebviewOnTray: false, language: null, downloadSource: "auto", pythonSource: "auto", pypiSource: "auto" };
+    const settings = { launchOnStartup: false, autoStartService: false, keepWebviewOnTray: false, reducedMotion: false, preventSleep: false, language: null, downloadSource: "auto", pythonSource: "auto", pypiSource: "auto" };
     bridge.command.mockImplementation(async (name: string, args?: { settings: unknown }) => name === "settings_set" ? args?.settings : name === "settings_get" ? settings : undefined);
     await mount();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
@@ -93,6 +93,27 @@ describe("launcher actions", () => {
     expect(options.every(option => !option.textContent?.includes("http"))).toBe(true);
     fireEvent.click(screen.getByRole("option", { name: "Taobao mirror" }));
     await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", { settings: { ...settings, pythonSource: "npmmirror" } }));
+  });
+  it("pauses the background video when reduced motion is enabled", async () => {
+    const settings = { launchOnStartup: false, autoStartService: false, keepWebviewOnTray: false, reducedMotion: false, preventSleep: false, language: null, downloadSource: "auto", pythonSource: "auto", pypiSource: "auto" };
+    bridge.command.mockImplementation(async (name: string, args?: { settings: unknown }) => name === "settings_set" ? args?.settings : name === "settings_get" ? settings : undefined);
+    // 覆写系统偏好为“未减弱动态”，验证视频暂停完全由启动器设置驱动。
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    });
+    const pause = vi.fn();
+    HTMLMediaElement.prototype.pause = pause;
+    await mount();
+    expect(pause).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const toggle = await screen.findByRole("switch", { name: "Reduce motion" });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", { settings: { ...settings, reducedMotion: true } }));
+    await waitFor(() => expect(pause).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("switch", { name: "Prevent automatic sleep" }));
+    await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", { settings: { ...settings, reducedMotion: true, preventSleep: true } }));
   });
   it("shows Deploy for missing components and Run after deployment", async () => {
     await mount();

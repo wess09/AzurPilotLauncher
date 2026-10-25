@@ -19,6 +19,10 @@ pub struct Settings {
     pub auto_start_service: bool,
     /// 托盘化时保留 WebView（不销毁主窗口）。
     pub keep_webview_on_tray: bool,
+    /// 减弱动态效果（暂停背景视频等界面动效）。
+    pub reduced_motion: bool,
+    /// 阻止计算机自动睡眠（持有系统电源锁）。
+    pub prevent_sleep: bool,
     /// UI 语言偏好；None 表示跟随系统。
     pub language: Option<String>,
     #[serde(flatten)]
@@ -105,6 +109,8 @@ impl Store {
             launch_on_startup: as_bool(raw("launchOnStartup")),
             auto_start_service: as_bool(raw("autoStartService")),
             keep_webview_on_tray: as_bool(raw("keepWebviewOnTray")),
+            reduced_motion: as_bool(raw("reducedMotion")),
+            prevent_sleep: as_bool(raw("preventSleep")),
             language,
             sources: crate::sources::Preferences {
                 download_source: read_source(raw("downloadSource")),
@@ -150,6 +156,14 @@ impl Store {
             } else {
                 "0"
             },
+        )?;
+        upsert(
+            "reducedMotion",
+            if settings.reduced_motion { "1" } else { "0" },
+        )?;
+        upsert(
+            "preventSleep",
+            if settings.prevent_sleep { "1" } else { "0" },
         )?;
         match settings.language.as_deref() {
             Some(language) => upsert("language", language)?,
@@ -213,10 +227,14 @@ mod tests {
         assert!(!store.get().launch_on_startup);
         assert!(!store.get().auto_start_service);
         assert!(!store.get().keep_webview_on_tray);
+        assert!(!store.get().reduced_motion);
+        assert!(!store.get().prevent_sleep);
         let next = Settings {
             launch_on_startup: true,
             auto_start_service: false,
             keep_webview_on_tray: true,
+            reduced_motion: true,
+            prevent_sleep: true,
             language: Some("zh-CN".to_string()),
             sources: crate::sources::Preferences::default(),
         };
@@ -224,6 +242,8 @@ mod tests {
         let read = store.get();
         assert!(read.launch_on_startup);
         assert!(read.keep_webview_on_tray);
+        assert!(read.reduced_motion);
+        assert!(read.prevent_sleep);
         assert_eq!(read.language.as_deref(), Some("zh-CN"));
     }
     #[test]
@@ -291,6 +311,12 @@ pub(crate) fn settings_set(
     store.set(&settings).map_err(|e| e.to_string())?;
     if previous.launch_on_startup != settings.launch_on_startup {
         if let Err(error) = crate::autostart::set_enabled(settings.launch_on_startup) {
+            let _ = store.set(&previous);
+            return Err(error.to_string());
+        }
+    }
+    if previous.prevent_sleep != settings.prevent_sleep {
+        if let Err(error) = crate::power::set_prevent_sleep(settings.prevent_sleep) {
             let _ = store.set(&previous);
             return Err(error.to_string());
         }

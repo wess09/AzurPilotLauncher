@@ -288,6 +288,8 @@ launcher:
   settings_launch_on_startup: "PC起動時に自動起動"
   settings_auto_start_service: "ランチャー起動時にサービスを自動開始"
   settings_keep_webview_tray: "トレイ格納時にメモリを解放しない（WebView を閉じない）"
+  settings_reduced_motion: "視覚効果を減らす"
+  settings_prevent_sleep: "コンピューターの自動スリープを防止"
   download_error_log: "エラーログをダウンロード"
   err_command: "コマンドの実行に失敗しました"
   err_git_fetch: "コード更新に失敗しました"

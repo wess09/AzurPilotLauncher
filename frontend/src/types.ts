@@ -52,6 +52,8 @@ export interface LauncherSettings {
   launchOnStartup: boolean;
   autoStartService: boolean;
   keepWebviewOnTray: boolean;
+  reducedMotion: boolean;
+  preventSleep: boolean;
   language: string | null;
   downloadSource: "auto" | "cnb" | "github";
   pythonSource: "auto" | "nju" | "ustc" | "npmmirror" | "aliyun" | "cnb" | "astral";

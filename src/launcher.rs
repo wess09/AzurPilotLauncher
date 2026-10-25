@@ -955,6 +955,12 @@ pub(crate) fn run() -> Result<()> {
             app.manage(controller.clone());
             app.manage(settings_store.clone());
             let auto_start = auto_start || settings_store.auto_start_service();
+            // 启动时恢复“阻止计算机自动睡眠”电源锁；失败仅记录，不阻塞启动。
+            if settings_store.get().prevent_sleep {
+                if let Err(error) = crate::power::set_prevent_sleep(true) {
+                    warn!("Failed to restore prevent-sleep lock: {error:#}");
+                }
+            }
             match time_bomb_expiration_message() {
                 Ok(Some(message)) => {
                     allow_for_setup.store(true, Ordering::SeqCst);

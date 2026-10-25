@@ -42,7 +42,7 @@ cargo check            # 仅检查编译
 - `src/backend_env.rs`：同时注入 `AP_` / `ALAS_` 后端环境协议，双归属标记均匹配时才兜底清理子进程。
 - `src/task_process.rs` / `cancel.rs`：安装任务进程组与可取消 HTTP，不在取消时删除环境。
 - `src/notify.rs` / `launcher_control.rs`：每次后端会话独立的单条 WS 通道、原生通知与停止标志。
-- `src/settings.rs`、`autostart.rs`、`i18n.rs`、`window_util.rs`：设置/下载源、自启、多语言和子进程窗口控制。
+- `src/settings.rs`、`autostart.rs`、`power.rs`、`i18n.rs`、`window_util.rs`：设置/下载源、自启、阻止睡眠电源锁、多语言和子进程窗口控制。
 
 详细开发流程及 IPC 见 [启动器界面与生命周期](docs/launcher-ui.md)。
 
