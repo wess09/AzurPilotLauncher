@@ -437,7 +437,7 @@ jobs:
             "/Sazurpilot=$signingCommand" `
             "/DAppVersion=$env:PACKAGE_VERSION" `
             "/DOutputBaseFilename=AzurPilot_Setup_$env:PACKAGE_VERSION" `
-            "/DPackageRoot=package-root\AzurLaneAutoScript" `
+            "/DPackageRoot=package-root\AzurPilot" `
             "/DSetupRoot=setup"
           if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation or code signing failed.' }
       - name: Prepare launcher updater payload
@@ -665,7 +665,6 @@ jobs:
               --only-show-errors
           done
       - name: Upload launcher payloads to CNB release
-        if: github.ref_type == 'tag'
         env:
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
         run: |
@@ -708,6 +707,25 @@ jobs:
             "${cli}" --repo="${CNB_REPO}" release asset-upload \
               -t "${CNB_RELEASE_TAG}" -f "${file}"
           done
+          if [[ "${GITHUB_REF_TYPE:-}" != "tag" ]]; then
+            # 金丝雀发布：官方源 302 到 CNB 同名资产，必须随每次构建更新。
+            # 上传后滚动清理旧金丝雀资产（保留本次与正式版命名的资产），
+            # 避免 CNB Release 上无限堆积历史构建。
+            declare -A keep=()
+            for file in "${files[@]}"; do
+              [[ -f "${file}" ]] && keep["$(basename "${file}")"]=1
+            done
+            jq -r '.assets[]?.name' <<<"${release_json}" | while IFS= read -r asset_name; do
+              [[ "${asset_name}" == *-canary.* ]] || continue
+              [[ -n "${keep[${asset_name}]:-}" ]] && continue
+              asset_id="$(jq -r --arg name "${asset_name}" '.assets[]? | select(.name == $name) | .id' <<<"${release_json}" | head -n1)"
+              if [[ -n "${asset_id}" && "${asset_id}" != "null" ]]; then
+                echo "Deleting superseded canary CNB asset: ${asset_name} (${asset_id})"
+                curl -fsS -X DELETE "${auth[@]}" \
+                  "${CNB_API}/${CNB_REPO}/-/releases/${release_id}/assets/${asset_id}" >/dev/null
+              fi
+            done
+          fi
       # stable.json 以静态资源整体发布到 Worker（cf-worker/ 中没有 main 脚本），
       # 命中资源的请求不执行 Worker，不消耗 Workers 请求配额。
       - name: Publish stable.json to Cloudflare Worker
