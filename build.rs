@@ -1,8 +1,10 @@
 //! Tauri 构建脚本：在编译期固化 Windows 清单与关键构建资源。
 //!
 //! 内嵌 Windows manifest（requireAdministrator 提权、Common-Controls 依赖）；
-//! 处理 AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64（mTLS 自更新证书
-//! base64，未设置回退"证书.txt"）与 LAUNCHER_UPDATE_URL（自更新源覆盖）。
+//! 处理 `AZURPILOT_BOOTSTRAP_UV`（内嵌 uv 引导二进制，未设置时写空占位符、
+//! 运行时回退 `UV` 环境变量或 PATH 中的 uv）、
+//! `AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64`（mTLS 自更新证书
+//! base64，未设置回退"证书.txt"）与 `LAUNCHER_UPDATE_URL`（自更新源覆盖）。
 use std::{env, fs, path::PathBuf};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
@@ -73,9 +75,27 @@ fn main() {
     // cargo:rustc-env 在编译期注入该值，运行时用 env! 宏读取。
     println!("cargo:rustc-env={LAUNCHER_UPDATE_URL_ENV}={launcher_update_url}");
 
-    // mTLS 证书写入 OUT_DIR，供运行时内嵌。
+    // uv 引导二进制与 mTLS 证书统一写入 OUT_DIR，供运行时按路径内嵌。
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR is set by Cargo");
     let out_dir = PathBuf::from(out_dir);
+
+    // 内嵌 uv 引导二进制：CI 构建经 AZURPILOT_BOOTSTRAP_UV 指定 uv 路径。
+    // 本地构建通常没有现成 uv：写空占位符，运行时回退到 UV 环境变量或
+    // PATH 中的 uv，保证开发流程不被阻断。
+    let bootstrap_uv_target = out_dir.join("bootstrap_uv.bin");
+    if let Ok(source) = env::var("AZURPILOT_BOOTSTRAP_UV") {
+        if !source.trim().is_empty() {
+            fs::copy(&source, &bootstrap_uv_target).expect("copy AZURPILOT_BOOTSTRAP_UV");
+            println!("cargo:rerun-if-env-changed=AZURPILOT_BOOTSTRAP_UV");
+            println!("cargo:rerun-if-changed={source}");
+        } else {
+            fs::write(&bootstrap_uv_target, []).expect("write empty bootstrap uv placeholder");
+        }
+    } else {
+        fs::write(&bootstrap_uv_target, []).expect("write empty bootstrap uv placeholder");
+        println!("cargo:warning=AZURPILOT_BOOTSTRAP_UV is not set; launcher will use PATH uv for local builds");
+        println!("cargo:rerun-if-env-changed=AZURPILOT_BOOTSTRAP_UV");
+    }
 
     let mtls_identity_target = out_dir.join("launcher_mtls_identity.pem");
     // mTLS 证书解析顺序：环境变量优先，其次仓库根目录的本地证书文件，

@@ -1,9 +1,17 @@
-//! CI 组件协议。运行时只使用 HTTPS/ZIP，不执行 Git、uv、npm 或 deploy 安装脚本。
-//! 全部包校验成功后才提交；持久化日志保证进程中断后也能回滚。
+//! 运行组件与部署引导协议。
+//!
+//! 部署阶段只下载两类内容：CI 打包的 `git`/`adb` 二进制组件（内容寻址
+//! ZIP，经事务提交），以及后端仓库 master 分支上的 deploy 部署脚本与
+//! `config/deploy.template*.yaml` 模板（清单由 CI 写入 stable.json 的
+//! `runtime.deploy`，启动器直连 CNB/GitHub raw 逐文件下载，跟随 master
+//! 浮动更新）。`config/` 下的 json 与其余文件一律不下载、不修改。
+//!
+//! Python、依赖、源码与前端均不在部署范围：它们由启动阶段经内嵌 uv 与
+//! deploy 脚本（`deploy.git` / `deploy.app` / uv sync）自行安装拉取。
 use crate::{
     launcher::ensure_not_cancelled,
     progress::SplashUpdate,
-    sources::{DownloadSource, Preferences, PypiSource, PythonSource},
+    sources::{DownloadSource, Preferences},
 };
 use anyhow::{bail, Context, Result};
 use reqwest::blocking::Client;
@@ -20,20 +28,15 @@ use std::{
 };
 use tracing::{info, warn};
 
-const IDS: [&str; 6] = [
-    "source",
-    "resources",
-    "frontend",
-    "python",
-    "dependencies",
-    "adb",
-];
+const IDS: [&str; 2] = ["git", "adb"];
 const RECEIPT: &str = ".azurpilot/installed.json";
 const TRANSACTION: &str = ".azurpilot/transaction";
 const MANIFEST_URLS: [&str; 2] = [
     crate::updater::LAUNCHER_UPDATE_URL,
     crate::updater::LAUNCHER_UPDATE_FALLBACK_URL,
 ];
+/// 部署引导脚本就绪的判定文件：核心 deploy 脚本到位即视为引导完成。
+const BOOTSTRAP_MARKER: &str = "deploy/installer.py";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct Component {
@@ -41,17 +44,20 @@ pub(crate) struct Component {
     pub sha256: String,
     pub size: u64,
     pub urls: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requirements: Option<String>,
+}
+/// deploy 引导下载信息：raw 基址（跟随 master）与文件清单，由 CI 生成。
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub(crate) struct DeployBootstrap {
+    pub bases: Vec<String>,
+    pub files: Vec<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Manifest {
     pub schema: u32,
     pub revision: String,
-    pub python: String,
     pub platforms: BTreeMap<String, Vec<Component>>,
     #[serde(default)]
-    pub installers: BTreeMap<String, Component>,
+    pub deploy: DeployBootstrap,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct InstalledComponent {
@@ -71,7 +77,7 @@ struct Change {
 }
 
 fn platform() -> String {
-    // Windows ARM64 可运行完整的 x64 Python/ADB，不能混用 ARM64 解释器和 x64 wheels。
+    // Windows ARM64 可运行完整的 x64 git/ADB，统一使用 x64 二进制。
     let arch = if cfg!(windows) {
         "x86_64"
     } else {
@@ -115,8 +121,12 @@ fn intact(root: &Path, installed: &InstalledComponent) -> bool {
         })
 }
 
+/// 部署是否必需：引导物（git/adb 组件与 deploy 脚本）缺失或未完成时为真。
 pub(crate) fn deployment_required(root: &Path) -> bool {
     if root.join(TRANSACTION).join("journal.json").exists() {
+        return true;
+    }
+    if !root.join(BOOTSTRAP_MARKER).is_file() {
         return true;
     }
     let Ok(receipt) = read_receipt(root) else {
@@ -135,14 +145,9 @@ fn valid_hash(value: &str) -> bool {
 
 impl Manifest {
     fn validate(&self, target: &str) -> Result<&Vec<Component>> {
-        let parts = self.python.split('.').collect::<Vec<_>>();
-        if self.schema != 1
+        if self.schema != 2
             || self.revision.len() != 40
             || !self.revision.bytes().all(|b| b.is_ascii_hexdigit())
-            || parts.len() != 3
-            || parts[0] != "3"
-            || parts[1] != "14"
-            || parts[2].parse::<u32>().is_err()
         {
             bail!(t!("components.invalid_manifest"));
         }
@@ -166,306 +171,15 @@ impl Manifest {
             {
                 bail!(t!("components.invalid_manifest"));
             }
-            if let Some(requirements) = &component.requirements {
-                validate_requirements(requirements)?;
-            }
         }
-        if let Some(uv) = self.installers.get(target) {
-            if uv.id != "uv" || !valid_hash(&uv.sha256) || uv.size == 0 || uv.urls.is_empty() {
-                bail!("Invalid uv installer");
-            }
-            for url in &uv.urls {
-                validate_url(url)?;
-            }
+        if self.deploy.bases.iter().any(|url| validate_url(url).is_err()) {
+            bail!(t!("components.invalid_manifest"));
+        }
+        for file in &self.deploy.files {
+            bootstrap_path(file)?;
         }
         Ok(components)
     }
-}
-
-fn validate_requirements(requirements: &str) -> Result<()> {
-    if requirements.trim().is_empty() || requirements.len() > 256 * 1024 {
-        bail!("Invalid pinned requirements");
-    }
-    if requirements.lines().any(|line| {
-        let Some((name, version)) = line.split_once("==") else {
-            return true;
-        };
-        name.is_empty()
-            || version.is_empty()
-            || !name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-            || !version
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b".+!-_".contains(&b))
-    }) {
-        bail!("PyPI requirements must contain only pinned package versions");
-    }
-    Ok(())
-}
-
-fn run_install_command(command: &mut std::process::Command, cancel: &AtomicBool) -> Result<()> {
-    use std::io::{BufRead, BufReader};
-    command
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    crate::setup::isolate_python_child_environment(command);
-    for key in [
-        "UV_INDEX",
-        "UV_INDEX_URL",
-        "UV_DEFAULT_INDEX",
-        "UV_EXTRA_INDEX_URL",
-        "PIP_INDEX_URL",
-        "PIP_EXTRA_INDEX_URL",
-        "UV_PYTHON",
-        "VIRTUAL_ENV",
-    ] {
-        command.env_remove(key);
-    }
-    let mut child = crate::task_process::TaskChild::spawn(command)?;
-    let readers: Vec<Box<dyn Read + Send>> = child
-        .take_stdout()
-        .map(|s| Box::new(s) as Box<dyn Read + Send>)
-        .into_iter()
-        .chain(
-            child
-                .take_stderr()
-                .map(|s| Box::new(s) as Box<dyn Read + Send>),
-        )
-        .collect();
-    let handles = readers
-        .into_iter()
-        .map(|reader| {
-            std::thread::spawn(move || {
-                for line in BufReader::new(reader)
-                    .lines()
-                    .map_while(std::result::Result::ok)
-                {
-                    info!("runtime installer: {line}");
-                }
-            })
-        })
-        .collect::<Vec<_>>();
-    loop {
-        ensure_not_cancelled(cancel)?;
-        if let Some(status) = child.try_wait()? {
-            for handle in handles {
-                let _ = handle.join();
-            }
-            if !status.success() {
-                bail!("Runtime installer failed: {status}");
-            }
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-}
-
-fn copy_python_tree(
-    source: &Path,
-    target: &Path,
-    canonical_root: &Path,
-    cancel: &AtomicBool,
-    depth: u32,
-) -> Result<()> {
-    ensure_not_cancelled(cancel)?;
-    if depth > 64 || !source.canonicalize()?.starts_with(canonical_root) {
-        bail!("Python runtime link escapes installation directory");
-    }
-    if source.is_dir() {
-        fs::create_dir_all(target)?;
-        for entry in fs::read_dir(source)? {
-            let entry = entry?;
-            if matches!(
-                entry.file_name().to_str(),
-                Some("site-packages" | "__pycache__")
-            ) {
-                continue;
-            }
-            copy_python_tree(
-                &entry.path(),
-                &target.join(entry.file_name()),
-                canonical_root,
-                cancel,
-                depth + 1,
-            )?;
-        }
-    } else if source.is_file() && source.extension().is_none_or(|e| e != "pyc") {
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::copy(source, target)?;
-    }
-    Ok(())
-}
-
-fn record_tree(
-    root: &Path,
-    directory: &Path,
-    id: &str,
-    cancel: &AtomicBool,
-    files: &mut BTreeMap<String, u64>,
-) -> Result<()> {
-    for entry in fs::read_dir(directory)? {
-        ensure_not_cancelled(cancel)?;
-        let entry = entry?;
-        let path = entry.path();
-        if entry.file_name() == "__pycache__" || path.extension().is_some_and(|e| e == "pyc") {
-            continue;
-        }
-        if entry.file_type()?.is_symlink() {
-            bail!("Installer created an unexpected symlink");
-        }
-        if path.is_dir() {
-            record_tree(root, &path, id, cancel, files)?;
-        } else {
-            let name = path
-                .strip_prefix(root)?
-                .to_string_lossy()
-                .replace('\\', "/");
-            component_path(id, &name)?;
-            files.insert(name, entry.metadata()?.len());
-        }
-    }
-    Ok(())
-}
-
-fn install_from_mirror(
-    root: &Path,
-    manifest: &Manifest,
-    component: &Component,
-    client: &Client,
-    cancel: Arc<AtomicBool>,
-    sources: &Preferences,
-    progress: &mut impl FnMut(SplashUpdate),
-) -> Result<InstalledComponent> {
-    let transaction = secure_target(root, TRANSACTION)?;
-    let stage = transaction.join("new");
-    let runtime = stage.join(".venv/runtime");
-    let uv_component = manifest
-        .installers
-        .get(&platform())
-        .context("This manifest has no mirror installer; use automatic component downloads")?;
-    let uv_dir = transaction.join("tools");
-    let uv = uv_dir.join(if cfg!(windows) { "uv.exe" } else { "uv" });
-    if !uv.is_file() {
-        let archive = download(
-            root,
-            uv_component,
-            client,
-            cancel.clone(),
-            sources.download_source,
-            |_| {},
-        )?;
-        unpack(&archive, uv_component, &uv_dir, &cancel)?;
-    }
-    progress(SplashUpdate::loading(
-        t!("components.installing"),
-        t!(
-            "components.mirror_install",
-            component = component.id.as_str()
-        ),
-        45,
-    ));
-    let directory;
-    if component.id == "python" {
-        if runtime.exists() {
-            crate::setup::remove_venv_entry_with_retry(&runtime, &cancel)?;
-        }
-        let managed = transaction.join("managed-python");
-        let mut command = std::process::Command::new(&uv);
-        command
-            .args([
-                "--no-config",
-                "python",
-                "install",
-                "--no-bin",
-                "--managed-python",
-                "--install-dir",
-            ])
-            .arg(&managed)
-            .arg(if cfg!(windows) {
-                format!("cpython-{}-windows-x86_64-none", manifest.python)
-            } else {
-                manifest.python.clone()
-            });
-        if let Some(mirror) = sources.python_source.mirror().or_else(|| {
-            if sources.download_source.prefer_cnb() {
-                PythonSource::Cnb.mirror()
-            } else {
-                None
-            }
-        }) {
-            command.env("UV_PYTHON_INSTALL_MIRROR", mirror);
-        } else {
-            command.env_remove("UV_PYTHON_INSTALL_MIRROR");
-        }
-        command.env("UV_CACHE_DIR", secure_target(root, ".azurpilot/uv-cache")?);
-        run_install_command(&mut command, &cancel)?;
-        let home = fs::read_dir(&managed)?
-            .filter_map(std::result::Result::ok)
-            .map(|e| e.path())
-            .find(|p| {
-                p.join(if cfg!(windows) {
-                    "python.exe"
-                } else {
-                    "bin/python3.14"
-                })
-                .is_file()
-            })
-            .context("Python mirror did not provide the requested interpreter")?;
-        copy_python_tree(&home, &runtime, &home.canonicalize()?, &cancel, 0)?;
-        directory = runtime;
-    } else {
-        let python_relative = if cfg!(windows) {
-            "python.exe"
-        } else {
-            "bin/python3.14"
-        };
-        if !runtime.join(python_relative).is_file() {
-            let installed = secure_target(root, ".venv/runtime")?;
-            copy_python_tree(&installed, &runtime, &installed.canonicalize()?, &cancel, 0)?;
-        }
-        let requirements = component
-            .requirements
-            .as_deref()
-            .context("This manifest has no locked PyPI requirements")?;
-        validate_requirements(requirements)?;
-        let requirement_path = transaction.join("requirements.txt");
-        fs::write(&requirement_path, requirements)?;
-        let packages = runtime.join(if cfg!(windows) {
-            "Lib/site-packages"
-        } else {
-            "lib/python3.14/site-packages"
-        });
-        if packages.exists() {
-            crate::setup::remove_venv_entry_with_retry(&packages, &cancel)?;
-        }
-        let mut command = std::process::Command::new(&uv);
-        command
-            .args([
-                "--no-config",
-                "pip",
-                "sync",
-                "--system",
-                "--break-system-packages",
-                "--python",
-            ])
-            .arg(runtime.join(python_relative))
-            .arg("--default-index")
-            .arg(sources.pypi_source.index(sources.download_source))
-            .arg(&requirement_path)
-            .env("UV_CACHE_DIR", secure_target(root, ".azurpilot/uv-cache")?);
-        run_install_command(&mut command, &cancel)?;
-        directory = packages;
-    }
-    let mut files = BTreeMap::new();
-    record_tree(&stage, &directory, &component.id, &cancel, &mut files)?;
-    validate_files(&component.id, &files)?;
-    Ok(InstalledComponent {
-        sha256: component.sha256.clone(),
-        files,
-    })
 }
 
 fn validate_url(value: &str) -> Result<()> {
@@ -608,12 +322,7 @@ fn apply_manifest(
     repair: bool,
     sources: &Preferences,
 ) -> Result<()> {
-    let mut components = manifest.validate(&platform())?.iter().collect::<Vec<_>>();
-    components.sort_by_key(|component| match component.id.as_str() {
-        "python" => 0,
-        "dependencies" => 1,
-        _ => 2,
-    });
+    let components = manifest.validate(&platform())?.iter().collect::<Vec<_>>();
     let transaction = secure_target(root, TRANSACTION)?;
     fs::create_dir_all(transaction.join("new"))?;
     let mut installed = BTreeMap::new();
@@ -621,76 +330,36 @@ fn apply_manifest(
     for (index, component) in components.iter().enumerate() {
         ensure_not_cancelled(&cancel)?;
         let previous = old.as_ref().and_then(|r| r.components.get(&component.id));
-        let force = repair && matches!(component.id.as_str(), "python" | "dependencies" | "adb");
-        if !force && previous.is_some_and(|p| p.sha256 == component.sha256 && intact(root, p)) {
+        if !repair && previous.is_some_and(|p| p.sha256 == component.sha256 && intact(root, p)) {
             installed.insert(component.id.clone(), previous.unwrap().clone());
             continue;
         }
-        let custom = (component.id == "python" && sources.python_source != PythonSource::Auto)
-            || (component.id == "dependencies" && sources.pypi_source != PypiSource::Auto);
-        let normal = if custom {
-            None
-        } else {
-            Some((|| {
-                let archive = download(
-                    root,
-                    component,
-                    client,
-                    cancel.clone(),
-                    sources.download_source,
-                    |percent| {
-                        progress(SplashUpdate::loading(
-                            t!("components.downloading"),
-                            t!(
-                                "components.download_detail",
-                                component = component.id.as_str(),
-                                percent = format!("{percent:.0}")
-                            ),
-                            10.0 + (index as f64 + percent / 100.0) / components.len() as f64
-                                * 70.0,
-                        ));
-                    },
-                )?;
-                unpack(&archive, component, &transaction.join("new"), &cancel)
-            })())
-        };
-        let record = match normal {
-            Some(Ok(record)) => record,
-            Some(Err(error)) => {
-                ensure_not_cancelled(&cancel)?;
-                if !matches!(component.id.as_str(), "python" | "dependencies")
-                    || !manifest.installers.contains_key(&platform())
-                {
-                    return Err(error);
-                }
-                warn!("Prebuilt component unavailable, trying configured mirror: {error:#}");
-                install_from_mirror(
-                    root,
-                    &manifest,
-                    component,
-                    client,
-                    cancel.clone(),
-                    sources,
-                    progress,
-                )?
-            }
-            None => install_from_mirror(
-                root,
-                &manifest,
-                component,
-                client,
-                cancel.clone(),
-                sources,
-                progress,
-            )?,
-        };
+        let archive = download(
+            root,
+            component,
+            client,
+            cancel.clone(),
+            sources.download_source,
+            |percent| {
+                progress(SplashUpdate::loading(
+                    t!("components.downloading"),
+                    t!(
+                        "components.download_detail",
+                        component = component.id.as_str(),
+                        percent = format!("{percent:.0}")
+                    ),
+                    6.0 + (index as f64 + percent / 100.0) / components.len() as f64 * 12.0,
+                ));
+            },
+        )?;
+        let record = unpack(&archive, component, &transaction.join("new"), &cancel)?;
         if let Some(previous) = previous {
             changed.extend(previous.files.keys().cloned());
         }
         changed.extend(record.files.keys().cloned());
         installed.insert(component.id.clone(), record);
     }
-    // 源码、前端与依赖必须来自同一份清单，不能逐个组件提前提交。
+    // 二进制组件必须来自同一份清单，不能逐个提前提交。
     let mut owners = BTreeSet::new();
     for record in installed.values() {
         for name in record.files.keys() {
@@ -712,19 +381,157 @@ fn apply_manifest(
     progress(SplashUpdate::loading(
         t!("components.installing"),
         t!("components.installing_detail"),
-        85,
+        19,
     ));
     commit(root, &changed, &cancel)?;
+    // deploy 引导脚本一次性下载：仓库经 git 拉取后接管其后续更新。
+    if !root.join(BOOTSTRAP_MARKER).is_file() {
+        download_deploy_bootstrap(root, &manifest, client, &cancel, sources, progress)?;
+    } else {
+        info!("Deploy bootstrap scripts already present; skipping raw downloads");
+    }
     progress(SplashUpdate::loading(
         t!("setup.finishing"),
         t!("setup.ready_to_launch"),
-        94,
+        24,
     ));
     info!(
-        "Deployed revision {} with Python {}",
-        manifest.revision, manifest.python
+        "Deployed bootstrap components at revision {} ({} deploy files)",
+        manifest.revision,
+        manifest.deploy.files.len()
     );
     Ok(())
+}
+
+/// 引导文件在清单中允许的路径：deploy 部署脚本与分系统的 deploy 模板。
+///
+/// `config/` 下的 json 等其余文件一律拒绝，防止清单被用于写用户数据。
+fn bootstrap_path(name: &str) -> Result<PathBuf> {
+    let path = relative(name)?;
+    let allowed = name.starts_with("deploy/")
+        || matches!(
+            name,
+            "config/deploy.template.yaml"
+                | "config/deploy.template-cn.yaml"
+                | "config/deploy.template-linux.yaml"
+                | "config/deploy.template-linux-cn.yaml"
+        );
+    if !allowed {
+        bail!("Deploy bootstrap cannot own {name}");
+    }
+    Ok(path)
+}
+
+/// 当前系统应使用的 deploy 模板文件名；国内网络环境优先 `-cn` 变体。
+fn platform_template_file(sources: &Preferences) -> &'static str {
+    let cn = sources.download_source.prefer_cnb();
+    if cfg!(windows) {
+        if cn {
+            "config/deploy.template-cn.yaml"
+        } else {
+            "config/deploy.template.yaml"
+        }
+    } else if cn {
+        "config/deploy.template-linux-cn.yaml"
+    } else {
+        "config/deploy.template-linux.yaml"
+    }
+}
+
+/// 逐文件从仓库 raw 端点下载 deploy 引导脚本与当前系统的模板。
+///
+/// 清单跟随 master：文件内容不锁定摘要，双源（国内优先 CNB）按序回退，
+/// 每个文件原子写入；任一必需文件全源失败时部署失败。
+fn download_deploy_bootstrap(
+    root: &Path,
+    manifest: &Manifest,
+    client: &Client,
+    cancel: &Arc<AtomicBool>,
+    sources: &Preferences,
+    progress: &mut impl FnMut(SplashUpdate),
+) -> Result<()> {
+    let template = platform_template_file(sources);
+    let mut files: Vec<&str> = manifest
+        .deploy
+        .files
+        .iter()
+        .map(String::as_str)
+        .filter(|name| name.starts_with("deploy/"))
+        .collect();
+    if manifest.deploy.files.iter().any(|name| name == template) {
+        files.push(template);
+    } else {
+        warn!("Deploy manifest has no template {template}; falling back to embedded template");
+    }
+    if manifest.deploy.bases.is_empty() || files.is_empty() {
+        bail!(t!("components.invalid_manifest"));
+    }
+    let ordered_bases = sources.download_source.order_urls(&manifest.deploy.bases);
+    let total = files.len();
+    for (index, name) in files.iter().enumerate() {
+        ensure_not_cancelled(cancel)?;
+        progress(SplashUpdate::loading(
+            t!("components.downloading"),
+            t!(
+                "components.bootstrap_detail",
+                file = *name,
+                current = (index + 1).to_string(),
+                total = total.to_string()
+            ),
+            20.0 + (index as f64 + 1.0) / total as f64 * 4.0,
+        ));
+        download_raw_file(root, name, &ordered_bases, client, cancel)?;
+    }
+    Ok(())
+}
+
+/// 从 raw 基址下载单个文件并原子写入目标路径。
+///
+/// 返回 Err 前会尝试全部基址；空响应视为失败（raw 端点不会返回空文件）。
+fn download_raw_file(
+    root: &Path,
+    name: &str,
+    bases: &[&str],
+    client: &Client,
+    cancel: &Arc<AtomicBool>,
+) -> Result<()> {
+    let target = secure_target(root, name)?;
+    let mut errors = Vec::new();
+    for base in bases {
+        ensure_not_cancelled(cancel)?;
+        let url = format!("{base}/{name}");
+        let result = (|| -> Result<()> {
+            let response = crate::cancel::request(client.get(&url), cancel)?.error_for_status()?;
+            let mut bytes = Vec::new();
+            crate::cancel::body(response, cancel.clone())
+                .take(16 * 1024 * 1024)
+                .read_to_end(&mut bytes)?;
+            if bytes.is_empty() {
+                bail!("Empty response");
+            }
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut temporary =
+                tempfile::NamedTempFile::new_in(target.parent().unwrap_or(root))?;
+            temporary.write_all(&bytes)?;
+            temporary.as_file().sync_all()?;
+            temporary.persist(&target).map_err(|error| error.error)?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                info!("Deploy bootstrap file {name} downloaded");
+                return Ok(());
+            }
+            Err(error) => errors.push(format!("{error:#}")),
+        }
+    }
+    bail!(t!(
+        "components.bootstrap_failed",
+        file = name,
+        error = errors.join("; ")
+    ))
 }
 
 fn file_hash(path: &Path, cancel: &AtomicBool) -> Result<(String, u64)> {
@@ -837,35 +644,13 @@ fn relative(name: &str) -> Result<PathBuf> {
 fn component_path(id: &str, name: &str) -> Result<PathBuf> {
     let path = relative(name)?;
     let allowed = match id {
-        "python" => name.starts_with(".venv/runtime/") && !name.contains("/site-packages/"),
-        "dependencies" => {
-            name.starts_with(".venv/runtime/Lib/site-packages/")
-                || name.starts_with(".venv/runtime/lib/python3.14/site-packages/")
-        }
         "adb" => name.starts_with(".venv/Scripts/") || name.starts_with(".venv/bin/"),
-        "frontend" => name.starts_with("frontend/dist/"),
-        "resources" => name.starts_with("assets/") || name.starts_with("bin/"),
-        "uv" => name == "uv" || name == "uv.exe",
-        "source" => {
-            let lower = name.to_ascii_lowercase();
-            let root = lower.split('/').next().unwrap();
-            !root.starts_with('.')
-                && !matches!(
-                    root,
-                    "assets"
-                        | "bin"
-                        | "bootstrap"
-                        | "log"
-                        | "cache"
-                        | "screenshots"
-                        | "downloads"
-                        | "azurpilot"
-                        | "azurpilot.exe"
-                )
-                && !lower.starts_with("frontend/dist/")
-                && (root != "config"
-                    || lower.starts_with("config/template")
-                    || lower.starts_with("config/deploy.template"))
+        "git" => {
+            name.starts_with(".venv/Scripts/git/")
+                || (!cfg!(windows)
+                    && (name == ".venv/bin/git"
+                        || name.starts_with(".venv/libexec/git-core/")
+                        || name.starts_with(".venv/share/git-core/")))
         }
         _ => false,
     };
@@ -877,28 +662,16 @@ fn component_path(id: &str, name: &str) -> Result<PathBuf> {
 
 fn validate_files(id: &str, files: &BTreeMap<String, u64>) -> Result<()> {
     let required = match id {
-        "source" => vec![
-            "gui.py",
-            "pyproject.toml",
-            "BUILD_MANIFEST",
-            "module/runtime/prebuilt.py",
-        ],
-        "frontend" => vec![
-            "frontend/dist/index.html",
-            "frontend/dist/.source-fingerprint",
-        ],
-        "python" => vec![if cfg!(windows) {
-            ".venv/runtime/python.exe"
+        "git" => vec![if cfg!(windows) {
+            ".venv/Scripts/git/cmd/git.exe"
         } else {
-            ".venv/runtime/bin/python3.14"
+            ".venv/bin/git"
         }],
         "adb" => vec![if cfg!(windows) {
             ".venv/Scripts/adb.exe"
         } else {
             ".venv/bin/adb"
         }],
-        "dependencies" | "resources" => vec![],
-        "uv" => vec![if cfg!(windows) { "uv.exe" } else { "uv" }],
         _ => bail!("Unknown component: {id}"),
     };
     if files.is_empty() || required.iter().any(|name| !files.contains_key(*name)) {
@@ -1083,22 +856,8 @@ fn recover(root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{io::Cursor, sync::atomic::Ordering};
+    use std::{io::Cursor, net::TcpListener, sync::atomic::Ordering, thread};
     use zip::write::SimpleFileOptions;
-
-    #[test]
-    fn mirror_requirements_allow_only_locked_binary_package_versions() {
-        assert!(validate_requirements("numpy==2.4.6\nuv==0.13.5\n").is_ok());
-        for value in [
-            "",
-            "--index-url https://example.com",
-            "demo @ git+https://example.com/repo",
-            "demo>=1",
-            "demo==1 --extra-index-url https://example.com",
-        ] {
-            assert!(validate_requirements(value).is_err());
-        }
-    }
 
     fn archive(files: &[(&str, &[u8])]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -1112,45 +871,31 @@ mod tests {
     }
 
     fn fixture(root: &Path, version: u8) -> Manifest {
-        let python = if cfg!(windows) {
-            ".venv/runtime/python.exe"
+        let git = if cfg!(windows) {
+            ".venv/Scripts/git/cmd/git.exe"
         } else {
-            ".venv/runtime/bin/python3.14"
-        };
-        let dependency = if cfg!(windows) {
-            ".venv/runtime/Lib/site-packages/demo.py"
-        } else {
-            ".venv/runtime/lib/python3.14/site-packages/demo.py"
+            ".venv/bin/git"
         };
         let adb = if cfg!(windows) {
             ".venv/Scripts/adb.exe"
         } else {
             ".venv/bin/adb"
         };
-        let body = vec![version; version as usize + 10];
-        let mut source = vec![
-            ("gui.py", body.as_slice()),
-            ("pyproject.toml", b"test".as_slice()),
-            ("BUILD_MANIFEST", b"{}".as_slice()),
-            ("module/runtime/prebuilt.py", b"pass".as_slice()),
-        ];
-        if version == 1 {
-            source.push(("obsolete.py", b"old"));
+        let mut git_files = vec![(git, b"git".as_slice())];
+        if !cfg!(windows) {
+            git_files.push((".venv/libexec/git-core/git-remote-https", b"helper".as_slice()));
         }
-        let groups = vec![
-            source,
-            vec![("assets/demo.png", b"image".as_slice())],
-            vec![
-                ("frontend/dist/index.html", b"index".as_slice()),
-                (
-                    "frontend/dist/.source-fingerprint",
-                    b"fingerprint".as_slice(),
-                ),
-            ],
-            vec![(python, b"python".as_slice())],
-            vec![(dependency, b"dependency".as_slice())],
-            vec![(adb, b"adb".as_slice())],
-        ];
+        if version == 1 {
+            git_files.push((
+                if cfg!(windows) {
+                    ".venv/Scripts/git/obsolete.exe"
+                } else {
+                    ".venv/libexec/git-core/obsolete"
+                },
+                b"old".as_slice(),
+            ));
+        }
+        let groups = vec![git_files, vec![(adb, b"adb".as_slice())]];
         fs::create_dir_all(root.join(".azurpilot/cache")).unwrap();
         let components = IDS
             .iter()
@@ -1164,20 +909,28 @@ mod tests {
                     sha256: hash,
                     size: bytes.len() as u64,
                     urls: vec!["http://127.0.0.1:9/unavailable.zip".into()],
-                    ..Default::default()
                 }
             })
             .collect();
         Manifest {
-            schema: 1,
+            schema: 2,
             revision: format!("{version:040x}"),
-            python: "3.14.6".into(),
             platforms: BTreeMap::from([(platform(), components)]),
-            installers: BTreeMap::new(),
+            deploy: DeployBootstrap {
+                bases: vec!["http://127.0.0.1:9/base".into()],
+                files: vec![
+                    "deploy/installer.py".into(),
+                    "deploy/git.py".into(),
+                    "config/deploy.template.yaml".into(),
+                ],
+            },
         }
     }
     fn apply(root: &Path, manifest: Manifest) -> Result<()> {
         recover(root)?;
+        // 预置引导标记：raw 下载路径由独立测试覆盖，组件事务测试不依赖网络。
+        fs::create_dir_all(root.join("deploy")).unwrap();
+        fs::write(root.join(BOOTSTRAP_MARKER), "# test").unwrap();
         apply_manifest(
             root,
             &mut |_| {},
@@ -1198,16 +951,12 @@ mod tests {
         apply(root.path(), manifest.clone()).unwrap();
         assert!(!deployment_required(root.path()));
         let receipt = read_receipt(root.path()).unwrap();
-        let missing = receipt.components["dependencies"]
-            .files
-            .keys()
-            .next()
-            .unwrap();
+        let missing = receipt.components["adb"].files.keys().next().unwrap();
         fs::remove_file(root.path().join(missing)).unwrap();
         assert!(deployment_required(root.path()));
-        // 只有依赖 ZIP 留在缓存，其他源不可访问；成功说明没有重复请求完整组件。
+        // 只有 adb ZIP 留在缓存，其他源不可访问；成功说明没有重复请求完整组件。
         for component in &manifest.platforms[&platform()] {
-            if component.id != "dependencies" {
+            if component.id != "adb" {
                 fs::remove_file(
                     root.path()
                         .join(format!(".azurpilot/cache/{}.zip", component.sha256)),
@@ -1233,31 +982,34 @@ mod tests {
         fs::write(root.path().join("custom.py"), "user").unwrap();
         let next = fixture(root.path(), 2);
         apply(root.path(), next).unwrap();
-        assert!(!root.path().join("obsolete.py").exists());
-        assert_eq!(fs::read(root.path().join("gui.py")).unwrap(), vec![2; 12]);
+        let obsolete = if cfg!(windows) {
+            root.path().join(".venv/Scripts/git/obsolete.exe")
+        } else {
+            root.path().join(".venv/libexec/git-core/obsolete")
+        };
+        assert!(!obsolete.exists());
+        assert!(!deployment_required(root.path()));
         assert_eq!(
             fs::read_to_string(root.path().join("custom.py")).unwrap(),
             "user"
         );
-        assert!(!deployment_required(root.path()));
     }
 
     #[test]
-    fn failed_download_does_not_commit_already_staged_source() {
+    fn failed_download_does_not_commit_already_staged_files() {
         let root = tempfile::tempdir().unwrap();
         let first = fixture(root.path(), 1);
         apply(root.path(), first).unwrap();
         let mut next = fixture(root.path(), 2);
-        let dependencies = next
+        let adb = next
             .platforms
             .get_mut(&platform())
             .unwrap()
             .iter_mut()
-            .find(|c| c.id == "dependencies")
+            .find(|c| c.id == "adb")
             .unwrap();
-        dependencies.sha256 = "0".repeat(64);
+        adb.sha256 = "0".repeat(64);
         assert!(apply(root.path(), next).is_err());
-        assert_eq!(fs::read(root.path().join("gui.py")).unwrap(), vec![1; 11]);
         assert!(!deployment_required(root.path()));
     }
 
@@ -1265,29 +1017,29 @@ mod tests {
     fn interrupted_commit_recovers_old_and_new_files() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path();
-        fs::create_dir_all(path.join(format!("{TRANSACTION}/backup"))).unwrap();
-        fs::write(path.join("gui.py"), "new").unwrap();
-        fs::write(path.join(format!("{TRANSACTION}/backup/gui.py")), "old").unwrap();
-        fs::write(path.join("new.py"), "new").unwrap();
+        fs::create_dir_all(path.join(".venv/bin")).unwrap();
+        fs::create_dir_all(path.join(format!("{TRANSACTION}/backup/.venv/bin"))).unwrap();
+        fs::write(path.join(".venv/bin/adb"), "new").unwrap();
+        fs::write(
+            path.join(format!("{TRANSACTION}/backup/.venv/bin/adb")),
+            "old",
+        )
+        .unwrap();
         fs::write(
             path.join(format!("{TRANSACTION}/journal.json")),
-            serde_json::to_vec(&vec![
-                Change {
-                    path: "gui.py".into(),
-                    existed: true,
-                },
-                Change {
-                    path: "new.py".into(),
-                    existed: false,
-                },
-            ])
+            serde_json::to_vec(&vec![Change {
+                path: ".venv/bin/adb".into(),
+                existed: true,
+            }])
             .unwrap(),
         )
         .unwrap();
         recover(path).unwrap();
         recover(path).unwrap();
-        assert_eq!(fs::read_to_string(path.join("gui.py")).unwrap(), "old");
-        assert!(!path.join("new.py").exists());
+        assert_eq!(
+            fs::read_to_string(path.join(".venv/bin/adb")).unwrap(),
+            "old"
+        );
     }
 
     #[test]
@@ -1304,17 +1056,15 @@ mod tests {
             next,
             read_receipt(root.path()).ok(),
             &client().unwrap(),
-            true,
+            false,
             &Preferences::default()
         )
         .is_err());
-        assert_eq!(fs::read(root.path().join("gui.py")).unwrap(), vec![1; 11]);
         assert!(!deployment_required(root.path()));
     }
 
     #[test]
     fn checksum_failure_uses_next_mirror() {
-        use std::{net::TcpListener, thread};
         let root = tempfile::tempdir().unwrap();
         let bytes = archive(&[("demo", b"payload")]);
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1336,14 +1086,13 @@ mod tests {
             }
         });
         let component = Component {
-            id: "source".into(),
+            id: "git".into(),
             sha256: hash.clone(),
             size: size as u64,
             urls: vec![
                 format!("http://{address}/bad"),
                 format!("http://{address}/good"),
             ],
-            ..Default::default()
         };
         let path = download(
             root.path(),
@@ -1362,6 +1111,60 @@ mod tests {
     }
 
     #[test]
+    fn raw_bootstrap_download_uses_fallback_base_and_writes_file() {
+        let root = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 4096];
+            stream.read(&mut request).unwrap();
+            let body = b"print('installer')";
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(body).unwrap();
+        });
+        let bases = vec![
+            format!("http://127.0.0.1:9/unreachable"),
+            format!("http://{address}"),
+        ];
+        download_raw_file(
+            root.path(),
+            "deploy/installer.py",
+            &bases.iter().map(String::as_str).collect::<Vec<_>>(),
+            &client().unwrap(),
+            &Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        server.join().unwrap();
+        assert_eq!(
+            fs::read_to_string(root.path().join("deploy/installer.py")).unwrap(),
+            "print('installer')"
+        );
+    }
+
+    #[test]
+    fn platform_template_matches_system_and_cn_preference() {
+        let mut overseas = Preferences::default();
+        overseas.download_source = DownloadSource::Github;
+        assert_eq!(
+            platform_template_file(&overseas),
+            if cfg!(windows) {
+                "config/deploy.template.yaml"
+            } else {
+                "config/deploy.template-linux.yaml"
+            }
+        );
+        let mut cn = Preferences::default();
+        cn.download_source = DownloadSource::Cnb;
+        assert!(platform_template_file(&cn).ends_with("-cn.yaml"));
+    }
+
+    #[test]
     fn unsafe_archives_and_manifests_are_rejected() {
         for name in [
             "../outside",
@@ -1375,22 +1178,47 @@ mod tests {
             assert!(relative(name).is_err(), "{name}");
         }
         for (id, path) in [
-            ("source", "config/user.json"),
-            ("source", ".azurpilot/installed.json"),
-            ("source", "frontend/dist/index.html"),
-            ("python", ".venv/runtime/Lib/site-packages/a.py"),
-            ("dependencies", "gui.py"),
+            ("git", ".venv/bin/adb"),
+            ("git", "deploy/git.py"),
+            ("git", "gui.py"),
+            ("adb", "gui.py"),
+            ("adb", "deploy/installer.py"),
         ] {
-            assert!(component_path(id, path).is_err());
+            assert!(component_path(id, path).is_err(), "{id} {path}");
+        }
+        if !cfg!(windows) {
+            assert!(component_path("git", ".venv/bin/git").is_ok());
+            assert!(component_path("git", ".venv/libexec/git-core/git-remote-https").is_ok());
+        } else {
+            assert!(component_path("git", ".venv/Scripts/git/cmd/git.exe").is_ok());
+            assert!(component_path("git", ".venv/bin/git").is_err());
+        }
+        // 引导清单只允许 deploy 脚本与分系统模板，json 等一律拒绝。
+        for name in [
+            "config/alas.json",
+            "config/template.json",
+            "config/deploy.yaml",
+            "module/webui/server.py",
+            "gui.py",
+        ] {
+            assert!(bootstrap_path(name).is_err(), "{name}");
+        }
+        for name in [
+            "deploy/installer.py",
+            "config/deploy.template.yaml",
+            "config/deploy.template-linux-cn.yaml",
+        ] {
+            assert!(bootstrap_path(name).is_ok(), "{name}");
         }
         let root = tempfile::tempdir().unwrap();
         let mut manifest = fixture(root.path(), 1);
-        manifest.python = "3.15.0".into();
-        assert!(manifest.validate(&platform()).is_err());
-        manifest.python = "3.14.7rc1".into();
-        assert!(manifest.validate(&platform()).is_err());
-        manifest.python = "3.14.123".into();
         assert!(manifest.validate(&platform()).is_ok());
+        manifest.schema = 1;
+        assert!(manifest.validate(&platform()).is_err());
+        manifest.schema = 2;
+        manifest.deploy.files.push("config/alas.json".into());
+        assert!(manifest.validate(&platform()).is_err());
+        manifest.deploy.files.pop();
         manifest.platforms.get_mut(&platform()).unwrap().pop();
         assert!(manifest.validate(&platform()).is_err());
     }
@@ -1404,7 +1232,7 @@ mod tests {
         #[cfg(unix)]
         let link = std::os::unix::fs::symlink(outside.path(), root.path().join(".venv"));
         if link.is_ok() {
-            assert!(secure_target(root.path(), ".venv/runtime/python.exe").is_err());
+            assert!(secure_target(root.path(), ".venv/bin/git").is_err());
         }
         let cancel = AtomicBool::new(false);
         cancel.store(true, Ordering::SeqCst);

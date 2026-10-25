@@ -4,11 +4,11 @@
 
 - 更新用户提供的 Windows ICO 图标，并用于 Windows 启动器和安装程序。
 
-- 启动器可独立启动，按统一 stable.json 下载源码、游戏资源、预构建前端、Python、依赖与 ADB；缺少组件时首页显示“部署”。
-- CI 自动选择最新稳定 Python 3.14 补丁版，运行时不需要预装 Python、Git、uv 或 Node.js；资源和下载缓存可独立复用。
-- 组件下载经过摘要校验，采用暂存、成组提交和中断恢复，取消或失败不删除现有环境。
-- 新增组件、Python、PyPI 下载源设置；系统简体中文且使用北京时间时自动优先 CNB，其他环境优先 GitHub，界面仅显示镜像名称。
-- 启动器更新清单新增 GitHub 备用下载地址；CI 发布组件与启动器时保留同一份 stable.json 的全部字段。
+- 部署回归 deploy 脚本驱动：`stable.json` 的 `runtime` 字段（schema 2）每平台只含 CI 打包的 `git`（Windows 为最新 MinGit，macOS/Linux 为发行包布局）与 `adb` 二进制组件，另附跟随 master 的 deploy 脚本与分系统 `deploy.template*.yaml` 模板的 CNB/GitHub raw 下载清单；`config/` 下的 json 等其余文件一律不下载。
+- 部署仅下载上述引导物，缺少时首页显示"部署"；启动阶段由内嵌 uv 安装最新稳定 Python 3.14.x、安装 deploy 引导依赖 requests，再运行 `deploy.git` 拉取仓库源码与资源、`deploy.app` 构建前端（无 Node.js 时明确报错）、uv sync 按 `uv.lock` 同步依赖（多镜像重锁回退）。
+- 源码、资源、Python、依赖与前端不再经 CI 构建；运行组件 CI 不再执行 npm 与 uv，构建时长大幅缩短。
+- 组件下载保持摘要校验、暂存、成组提交与中断恢复；取消、失败与关闭不删除现有环境。
+- 组件、Python、PyPI 下载源设置保留：系统简体中文且使用北京时间时自动优先 CNB，其他环境优先 GitHub；Python/PyPI 镜像在部署与修复时直接生效。
 
 ## 3.0.1 - 2026-10-25
 

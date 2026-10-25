@@ -66,7 +66,7 @@ jobs:
   runtime-components:
     needs: runtime-revision
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 30
     permissions:
       contents: read
     strategy:
@@ -79,10 +79,6 @@ jobs:
             platform: windows-x86_64
           - os: macos-latest
             platform: macos-aarch64
-    env:
-      UV_MANAGED_PYTHON: "1"
-      # 不复用旧补丁的安装目录；新版 uv 的下载定义负责选择最新稳定 3.14。
-      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci-python
     steps:
       # 日志脱敏：注册 URL 掩码清单（明文见 tools/ci/log-mask.txt；base64 藏在
       # 环境变量里，避免本步骤自身的日志先出现 URL）。掩码对本 job 之后的全部
@@ -105,29 +101,11 @@ jobs:
           ref: ${{ needs.runtime-revision.outputs.revision }}
           path: backend-source
           persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: backend-source/frontend/package-lock.json
-      - name: Build backend frontend in CI
-        shell: bash
-        run: |
-          set -o pipefail
-          npm --prefix backend-source/frontend ci 2>&1 | bash tools/ci/redact-urls.sh
-          npm --prefix backend-source/frontend run build 2>&1 | bash tools/ci/redact-urls.sh
-      - name: Install current uv and latest stable Python 3.14
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-          cache-dependency-glob: backend-source/uv.lock
-      - name: Build and relocate-test independent components
+      - name: Package git/adb components and deploy bootstrap manifest
         shell: bash
         run: |
           set -euo pipefail
-          uv python install --no-bin 3.14
-          interpreter="$(uv python find --managed-python 3.14)"
-          "$interpreter" tools/build_components.py --source backend-source --output runtime-artifacts --platform '${{ matrix.platform }}' --python "$interpreter"
+          python tools/build_components.py --source backend-source --output runtime-artifacts --platform '${{ matrix.platform }}'
       - uses: actions/upload-artifact@v4
         with:
           name: runtime-${{ matrix.platform }}
@@ -363,6 +341,15 @@ jobs:
           print(f"Building version {version}")
       - name: Rustup for cache
         run: rustup toolchain install stable --profile minimal
+      - name: Install uv for bootstrap embedding
+        uses: astral-sh/setup-uv@v6
+      - name: Prepare embedded bootstrap uv
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bootstrap
+          cp "$(command -v uv)" bootstrap/uv
+          echo "AZURPILOT_BOOTSTRAP_UV=$PWD/bootstrap/uv" >> "$GITHUB_ENV"
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
         with:

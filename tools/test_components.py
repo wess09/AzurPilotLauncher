@@ -44,7 +44,8 @@ class ComponentPackagingTest(unittest.TestCase):
             root = Path(directory)
             for name, revision in [('a', 'a' * 40), ('b', 'b' * 40)]:
                 # 不同 revision 在校验第二份清单前即失败，无需真实依赖下载。
-                fragment = {'schema': 1, 'revision': revision, 'python': '3.14.6', 'platforms': {}}
+                fragment = {'schema': 2, 'revision': revision, 'platforms': {},
+                            'deploy': {'bases': [], 'files': []}}
                 (root / f'{name}.json').write_text(json.dumps(fragment), encoding='utf-8')
             with self.assertRaisesRegex(RuntimeError, '不一致'):
                 merge_components(root, root / 'merged.json')

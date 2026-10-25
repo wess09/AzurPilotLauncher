@@ -6,7 +6,7 @@
 
 ## 项目概述
 
-AzurPilot Launcher 是 [AzurPilot](https://github.com/wess09/AzurPilot) 的跨平台（Windows/macOS/Linux）桌面启动器，基于 **Tauri 2 + Rust** 构建。它从既有 `stable.json` 按需部署 CI 编译的独立组件和最新稳定 Python 3.14.x，启动 Python WebUI 后端（`gui.py`），并提供原生 webview 壳（含 React 启动首页、系统托盘、通知和自定义标题栏）。
+AzurPilot Launcher 是 [AzurPilot](https://github.com/wess09/AzurPilot) 的跨平台（Windows/macOS/Linux）桌面启动器，基于 **Tauri 2 + Rust** 构建。它从既有 `stable.json` 部署 git/adb 二进制组件与 deploy 引导脚本（仓库 raw 直连），启动时由内嵌 uv 安装最新稳定 Python 3.14.x 并运行 deploy 脚本拉取仓库、构建前端、同步依赖，随后启动 Python WebUI 后端（`gui.py`），并提供原生 webview 壳（含 React 启动首页、系统托盘、通知和自定义标题栏）。
 
 ## 构建与开发命令
 
@@ -96,8 +96,8 @@ locales/
 - `launcher.rs`：统一状态、互斥任务、进度事件、托盘与每次后端会话的生命周期。
 - `updater.rs`：自动检查与显式安装分离，保留下载校验、mTLS 和平台替换。
 - `windows.rs`：WebUI 窗口、导航失败时本地 `#/connection-error` React 页面、标题栏注入。
-- `components.rs`：按清单下载、校验、事务提交与恢复；可选 CI uv 工具只在镜像备用安装时下载。
-- `setup.rs`：便携目录和后端配置；修复重新部署运行组件并保留代码与缓存。
+- `components.rs`：git/adb 组件的按清单下载、校验、事务提交与恢复；deploy 引导脚本与分系统模板的仓库 raw 下载。
+- `setup.rs`：内嵌 uv、Python 与 `.venv`、deploy 脚本驱动的拉取/前端构建/依赖同步；修复重下组件并重建 `.venv`，保留代码与缓存。
 - `sources.rs` / `settings.rs`：按系统语言与真实时区自动选择 CNB/GitHub，保存可覆盖的组件、Python、PyPI 源。
 - `task_process.rs` / `backend_process.rs`：任务进程组及 Windows Job；`cancel.rs` 让 HTTP 等待可取消。
 
@@ -168,6 +168,6 @@ AzurPilot 启动模拟器时根据 `AP_LAUNCHER_JOB_BREAKAWAY=1` 或兼容别名
 - Windows 托管 runner 以管理员身份运行，满足启动器 manifest 要求；本地纯组件测试亦可使用 RunAsInvoker
 - 可在 GitHub Actions 中选择 **Test AzurPilot → Run workflow** 手动运行；本地使用上述两条 Cargo 命令复现
 
-GitHub Actions 打包、运行组件与统一清单发布见 [独立组件部署](docs/runtime-components.md)。该工作流会生成轻量启动器归档及六类组件 ZIP，下载全部完成后再发布 `stable.json`；GitHub/CNB 不另存组件 JSON。CI 解析最新稳定 Python 3.14 补丁版。用户选择镜像备用安装时，只使用 CI 发布的 uv 和已经编译的 wheels，不在设备上编译依赖。
+GitHub Actions 打包、运行组件与统一清单发布见 [部署引导组件](docs/runtime-components.md)。该工作流会生成轻量启动器归档、git/adb 两类组件 ZIP 与 deploy 引导清单，全部完成后再发布 `stable.json`；GitHub/CNB 不另存组件 JSON。Python 版本在用户机器上由内嵌 uv 解析最新稳定 3.14 补丁版；CI 不运行 npm、uv 或 Python 安装。
 
-关键配置：WebUI 端口 22267；WS 心跳 15 秒；部署失败/关闭/取消不删除环境。源码、资源、前端、Python、依赖与 ADB 清单必须来自同一批源码提交。
+关键配置：WebUI 端口 22267；WS 心跳 15 秒；部署失败/关闭/取消不删除环境。git 与 adb 组件必须来自同一份清单；deploy 引导清单跟随后端 master 浮动。

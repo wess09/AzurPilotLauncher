@@ -73,6 +73,9 @@ setup:
   action_elapsed: "%{action}, running for about %{secs} seconds."
   download_python_title: "Download Python"
   creating_venv_title: "Create virtual environment"
+  building_frontend: "Building frontend"
+  building_frontend_detail: "Building static assets for the web UI (Node.js required on first run)."
+  frontend_failed: "Failed to build the frontend"
 
 launcher_update:
   updating: "Updating launcher"
@@ -244,7 +247,7 @@ launcher:
   settings_download_source: "Component source"
   settings_python_source: "Python source"
   settings_pypi_source: "PyPI source"
-  settings_sources_hint: "Auto prefers CNB only for a Simplified Chinese system using Beijing time; otherwise GitHub. Python and PyPI mirrors apply to fallback installation and repair, starting with the next install."
+  settings_sources_hint: "Auto prefers CNB only for a Simplified Chinese system using Beijing time; otherwise GitHub. Python and PyPI mirrors apply during deployment and repair."
   source_auto: "Auto"
   source_cnb: "CNB"
   source_github: "GitHub"
@@ -339,9 +342,8 @@ launcher:
   service: "Background service"
 
 components:
-  mirror_install: "Installing %{component} from mirror"
   checking: "Checking components"
-  checking_detail: "Checking code, frontend, Python, dependencies, and ADB."
+  checking_detail: "Checking git, ADB components and deploy scripts."
   downloading: "Downloading components"
   download_detail: "%{component} · %{percent}%"
   installing: "Deploying components"
@@ -351,3 +353,5 @@ components:
   manifest_failed: "Cannot fetch component manifest: %{error}"
   checksum_failed: "Component verification failed: %{component}"
   download_failed: "Cannot download %{component}: %{error}"
+  bootstrap_detail: "deploy script · %{file} (%{current}/%{total})"
+  bootstrap_failed: "Failed to download %{file}: %{error}"

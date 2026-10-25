@@ -1,5 +1,10 @@
 # 交流登记（多 AI 协作改动范围记录，最新在最上）
 
+## 2026-10-25 ZCode — 部署架构重构：deploy 脚本驱动 + git/adb 组件（覆盖 3.0.2 六组件模型，重发 3.0.2）
+- 改动范围：`src/components.rs`（六组件→git/adb 两组件 + deploy 引导 raw 下载器）、`src/setup.rs`（恢复 3.0.1 部署流程：内嵌 uv→Python 3.14（不锁补丁）→requests→deploy.git 拉仓库→新增 app_update 前端构建→uv sync；进度重排）、`build.rs`（恢复 `AZURPILOT_BOOTSTRAP_UV` 内嵌 uv）、`tools/build_components.py`（只打 git/adb + deploy 清单，MinGit 跟 latest，无 npm/uv）、`tools/test_components.py`、`.github/workflows/package.yml`（runtime-components 瘦身；package job 内嵌 uv）、`locales/*4`、`docs/runtime-components.md`、`docs/launcher-ui.md`、`CLAUDE.md`、`AGENTS.md`、`CHANGELOG.md`（3.0.2 条目改写）。
+- 架构：部署=只下载引导物（git/adb 组件 ZIP + deploy/** 与 config/deploy.template*.yaml 的 master raw 直连，CNB `/-/git/raw/master` + GitHub raw 双源；config 下 json 一律不碰）；启动=uv 装 Python→跑 deploy.git 拉源码资源→deploy.app 构建前端（无 Node 报错）→uv sync。stable.json runtime schema=2。
+- 发布：版本号保持 3.0.2，push -f main 后删旧 tag 重打 3.0.2 触发 CI。⚠️ schema 2 与旧六组件清单不兼容：完整环境的旧 3.0.2 走离线降级不受影响，新装/修复需新启动器（重打 tag 即保证）。
+
 ## 2026-10-25 ZCode — CI 日志脱敏
 - 改动范围：`.github/workflows/package.yml`、`.github/workflows/test.yml`（每个 job 新增 `Register log masks` 首步 + npm/apt/choco 输出经过滤）、新增 `tools/ci/log-mask.txt`（掩码清单明文基准）与 `tools/ci/redact-urls.sh`（URL→`<URL>` 过滤器）、`cf-worker/deploy.sh`（wrangler 输出过滤 + 关闭遥测）、`AGENTS.md`（新增 CI 日志脱敏约定）。
 - 背景：用户要求 CI 日志中不出现任何 URL/仓库地址。`::add-mask::` 掩码清单以 base64 存于各 job 的 `AZURPILOT_LOG_MASK_B64`。

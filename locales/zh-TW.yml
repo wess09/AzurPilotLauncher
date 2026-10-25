@@ -73,6 +73,9 @@ setup:
   action_elapsed: "%{action}，已執行約 %{secs} 秒。"
   download_python_title: "下載 Python"
   creating_venv_title: "建立虛擬環境"
+  building_frontend: "建構前端介面"
+  building_frontend_detail: "正在建構 Web 介面所需的靜態資源（首次需要 Node.js）。"
+  frontend_failed: "建構前端失敗"
 
 launcher_update:
   updating: "啟動器更新中"
@@ -244,7 +247,7 @@ launcher:
   settings_download_source: "元件下載來源"
   settings_python_source: "Python 下載來源"
   settings_pypi_source: "PyPI 來源"
-  settings_sources_hint: "自動選源：系統為簡體中文且使用北京時間時優先 CNB，其餘優先 GitHub。Python 與 PyPI 鏡像用於備用安裝和修復，下次安裝生效。"
+  settings_sources_hint: "自動選源：系統為簡體中文且使用北京時間時優先 CNB，其餘優先 GitHub。Python 與 PyPI 鏡像於啟動部署與修復時生效。"
   source_auto: "自動"
   source_cnb: "CNB"
   source_github: "GitHub"
@@ -339,9 +342,8 @@ launcher:
   service: "背景服務"
 
 components:
-  mirror_install: "正在透過鏡像安裝 %{component}"
   checking: "檢查部署元件"
-  checking_detail: "檢查本機程式碼、前端、Python、依賴與 ADB。"
+  checking_detail: "檢查 git、ADB 元件與 deploy 部署腳本。"
   downloading: "正在下載元件"
   download_detail: "%{component} · %{percent}%"
   installing: "正在部署元件"
@@ -351,3 +353,5 @@ components:
   manifest_failed: "無法取得元件清單：%{error}"
   checksum_failed: "元件驗證失敗：%{component}"
   download_failed: "下載 %{component} 失敗：%{error}"
+  bootstrap_detail: "deploy 腳本 · %{file}（%{current}/%{total}）"
+  bootstrap_failed: "下載 %{file} 失敗：%{error}"

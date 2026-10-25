@@ -73,6 +73,9 @@ setup:
   action_elapsed: "%{action}、約 %{secs} 秒経過しました。"
   download_python_title: "Python をダウンロード"
   creating_venv_title: "仮想環境を作成中"
+  building_frontend: "フロントエンドを構築中"
+  building_frontend_detail: "Web UI の静的リソースを構築しています（初回は Node.js が必要）。"
+  frontend_failed: "フロントエンドの構築に失敗"
 
 launcher_update:
   updating: "ランチャーを更新中"
@@ -244,7 +247,7 @@ launcher:
   settings_download_source: "コンポーネントの取得元"
   settings_python_source: "Python の取得元"
   settings_pypi_source: "PyPI の取得元"
-  settings_sources_hint: "自動：システム言語が簡体字中国語でタイムゾーンが北京の場合は CNB、それ以外は GitHub を優先します。Python と PyPI のミラーは代替インストールと修復に使用し、次回インストール時に適用します。"
+  settings_sources_hint: "自動：システム言語が簡体字中国語でタイムゾーンが北京の場合は CNB、それ以外は GitHub を優先します。Python と PyPI のミラーはデプロイと修復時に適用されます。"
   source_auto: "自動"
   source_cnb: "CNB"
   source_github: "GitHub"
@@ -339,9 +342,8 @@ launcher:
   service: "バックグラウンドサービス"
 
 components:
-  mirror_install: "ミラーから %{component} をインストール中"
   checking: "コンポーネントを確認"
-  checking_detail: "コード、フロントエンド、Python、依存関係、ADB を確認しています。"
+  checking_detail: "git、ADB コンポーネントと deploy スクリプトを確認しています。"
   downloading: "コンポーネントをダウンロード中"
   download_detail: "%{component} · %{percent}%"
   installing: "コンポーネントを配置中"
@@ -351,3 +353,5 @@ components:
   manifest_failed: "マニフェストを取得できません：%{error}"
   checksum_failed: "検証に失敗しました：%{component}"
   download_failed: "%{component} のダウンロードに失敗しました：%{error}"
+  bootstrap_detail: "deploy スクリプト · %{file}（%{current}/%{total}）"
+  bootstrap_failed: "%{file} のダウンロードに失敗：%{error}"
