@@ -223,8 +223,37 @@ jobs:
               raise SystemExit('Published stable.json does not contain the expected runtime components')
           PY
 
+  # 前端产物单点构建：四个平台 package job 共用同一份 dist（产物与平台
+  # 无关），避免 Windows ARM64 等平台重复执行缓慢的 npm 构建步骤。
+  frontend-dist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build launcher UI
+        shell: bash
+        run: |
+          set -o pipefail
+          npm --prefix frontend ci 2>&1 | bash tools/ci/redact-urls.sh
+          npm --prefix frontend run build 2>&1 | bash tools/ci/redact-urls.sh
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
+
   package:
     if: github.event_name != 'schedule' && github.event_name != 'repository_dispatch'
+    needs: [runtime-revision, frontend-dist]
     outputs:
       canary-version: ${{ steps.version.outputs.version }}
     runs-on: ${{ matrix.os }}
@@ -259,18 +288,11 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
           } 2>&1 | bash tools/ci/redact-urls.sh
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download shared frontend dist
+        uses: actions/download-artifact@v4
         with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Build launcher UI
-        shell: bash
-        run: |
-          set -o pipefail
-          npm --prefix frontend ci 2>&1 | bash tools/ci/redact-urls.sh
-          npm --prefix frontend run build 2>&1 | bash tools/ci/redact-urls.sh
+          name: frontend-dist
+          path: frontend/dist
       - name: Prepare version from tag or input
         id: version
         shell: python
