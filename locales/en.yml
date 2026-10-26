@@ -84,6 +84,7 @@ launcher_update:
   notify_body: "Version %{version} is available. Click to open the launcher and update."
   available_detail: "Launcher version %{version} is available. Preparing download."
   parallel_downloading_detail: "Downloading with %{connections} connections."
+  retrying_download_detail: "Download temporarily limited or interrupted. Retrying with %{connections} connections in %{seconds} seconds."
   downloading_detail: "Downloaded %{downloaded} / %{total} (%{percent}%), speed %{speed}/s."
   downloading_detail_unknown: "Downloaded %{downloaded}, speed %{speed}/s."
   verifying_detail: "Download complete. Verifying update file."

@@ -84,6 +84,7 @@ launcher_update:
   notify_body: "新バージョン %{version} があります。クリックしてランチャーを開き、更新してください。"
   available_detail: "ランチャーの新バージョン %{version} が見つかりました。ダウンロードを準備中です。"
   parallel_downloading_detail: "%{connections} 接続でダウンロード中です。"
+  retrying_download_detail: "ダウンロードが一時的に制限または中断されました。%{seconds} 秒後に %{connections} 接続で再試行します。"
   downloading_detail: "%{downloaded} / %{total}（%{percent}%）をダウンロード済み、速度 %{speed}/s。"
   downloading_detail_unknown: "%{downloaded} をダウンロード済み、速度 %{speed}/s。"
   verifying_detail: "ダウンロードが完了しました。更新ファイルを検証中です。"

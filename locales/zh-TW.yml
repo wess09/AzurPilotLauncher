@@ -84,6 +84,7 @@ launcher_update:
   notify_body: "發現新版本 %{version}，點擊開啟啟動器進行更新。"
   available_detail: "發現啟動器新版本 %{version}，正在準備下載。"
   parallel_downloading_detail: "正在使用 %{connections} 路連線下載。"
+  retrying_download_detail: "下載連線暫時受限或中斷，將以 %{connections} 路連線重試（%{seconds} 秒後）。"
   downloading_detail: "已下載 %{downloaded} / %{total}（%{percent}%），速度 %{speed}/s。"
   downloading_detail_unknown: "已下載 %{downloaded}，速度 %{speed}/s。"
   verifying_detail: "下載完成，正在校驗更新檔案。"

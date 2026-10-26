@@ -1,23 +1,30 @@
 //! 启动器自更新：清单检查与显式更新分离，保留平台替换和下载校验。
 use crate::{progress, setup::SplashUpdate};
 use anyhow::{anyhow, bail, Context, Result};
+use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
 use reqwest::{
     blocking::Client,
-    header::{HeaderMap, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, CONTENT_RANGE, RANGE, USER_AGENT},
+    header::{
+        HeaderMap, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, CONTENT_RANGE, RANGE, RETRY_AFTER,
+        USER_AGENT,
+    },
     StatusCode,
 };
 use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
-    sync::{atomic::AtomicBool, mpsc, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use tauri::Url;
 use tempfile::Builder as TempDirBuilder;
@@ -42,6 +49,9 @@ const LAUNCHER_UPDATE_BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x
 const LAUNCHER_UPDATE_MAX_CONNECTIONS: usize = 8;
 /// 并行分片的最小字节数：载荷不足单片时退回单连接顺序下载。
 const LAUNCHER_UPDATE_MIN_CHUNK_BYTES: u64 = 1024 * 1024;
+/// 非限流的临时错误先重试，再交给下载源回退；429 始终等待用户取消或恢复。
+const LAUNCHER_UPDATE_MAX_TRANSIENT_RETRIES: usize = 8;
+const LAUNCHER_UPDATE_MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
 /// 更新下载占用 splash 进度条的起始百分比（8 之前留给更新前的检查）。
 const LAUNCHER_UPDATE_DOWNLOAD_PROGRESS_START: u8 = 8;
 /// 更新下载占用 splash 进度条的结束百分比（88 之后留给校验与重启）。
@@ -192,6 +202,135 @@ struct LauncherUpdateByteRange {
     start: u64,
     /// 区间结束字节偏移（含）。
     end: u64,
+}
+
+/// 可恢复的 HTTP/断流错误；磁盘和协议校验错误不会被包装成此类型。
+#[derive(Debug)]
+struct LauncherUpdateDownloadRetry {
+    reason: String,
+    rate_limited: bool,
+    retry_after: Option<Duration>,
+}
+
+impl std::fmt::Display for LauncherUpdateDownloadRetry {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.reason)
+    }
+}
+
+impl std::error::Error for LauncherUpdateDownloadRetry {}
+
+struct LauncherUpdateRetryState {
+    backoff: ExponentialBackoff,
+    transient_retries: usize,
+}
+
+impl LauncherUpdateRetryState {
+    fn new() -> Self {
+        Self {
+            backoff: ExponentialBuilder::default()
+                .with_jitter()
+                .without_max_times()
+                .build(),
+            transient_retries: 0,
+        }
+    }
+
+    fn retry_delay(&mut self, error: &anyhow::Error) -> Option<Duration> {
+        let retry = error.downcast_ref::<LauncherUpdateDownloadRetry>()?;
+        if !retry.rate_limited {
+            if self.transient_retries >= LAUNCHER_UPDATE_MAX_TRANSIENT_RETRIES {
+                return None;
+            }
+            self.transient_retries += 1;
+        }
+        let backoff = self.backoff.next()?.min(LAUNCHER_UPDATE_MAX_RETRY_DELAY);
+        Some(backoff.max(retry.retry_after.unwrap_or_default()))
+    }
+}
+
+/// 支持 Retry-After 的秒数与 HTTP-date 两种格式。异常超长等待最多一天，
+/// 避免不可信响应溢出 Instant；整个等待始终可以取消。
+fn launcher_update_retry_after(headers: &HeaderMap, now: SystemTime) -> Option<Duration> {
+    let value = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
+    let delay = if let Ok(seconds) = value.parse::<u64>() {
+        Duration::from_secs(seconds)
+    } else {
+        httpdate::parse_http_date(value)
+            .ok()?
+            .duration_since(now)
+            .unwrap_or_default()
+    };
+    Some(delay.min(Duration::from_secs(24 * 60 * 60)))
+}
+
+fn launcher_update_download_request(
+    client: &Client,
+    url: &str,
+    range: Option<&str>,
+    cancel: &AtomicBool,
+) -> Result<reqwest::blocking::Response> {
+    let mut request = client.get(url);
+    if let Some(range) = range {
+        request = request.header(RANGE, range);
+    }
+    let response = crate::cancel::request(request, cancel).map_err(|error| {
+        if error.downcast_ref::<reqwest::Error>().is_some_and(|error| {
+            error.is_timeout() || error.is_connect() || error.is_request() || error.is_body()
+        }) {
+            anyhow::Error::new(LauncherUpdateDownloadRetry {
+                reason: format!("{error:#}"),
+                rate_limited: false,
+                retry_after: None,
+            })
+        } else {
+            error
+        }
+    })?;
+    let status = response.status();
+    if status == StatusCode::TOO_MANY_REQUESTS
+        || status == StatusCode::REQUEST_TIMEOUT
+        || status.is_server_error()
+    {
+        return Err(LauncherUpdateDownloadRetry {
+            reason: format!("launcher update download returned HTTP {status}"),
+            rate_limited: status == StatusCode::TOO_MANY_REQUESTS,
+            retry_after: launcher_update_retry_after(response.headers(), SystemTime::now()),
+        }
+        .into());
+    }
+    Ok(response.error_for_status()?)
+}
+
+/// 探测和单连接请求也先退避重试；每 100ms 检查取消，不阻塞退出。
+fn launcher_update_download_request_with_retry(
+    client: &Client,
+    url: &str,
+    range: Option<&str>,
+    cancel: &AtomicBool,
+) -> Result<reqwest::blocking::Response> {
+    let mut retry = LauncherUpdateRetryState::new();
+    loop {
+        match launcher_update_download_request(client, url, range, cancel) {
+            Ok(response) => return Ok(response),
+            Err(error) => {
+                crate::launcher::ensure_not_cancelled(cancel)?;
+                let Some(delay) = retry.retry_delay(&error) else {
+                    return Err(error);
+                };
+                tracing::warn!("Retrying launcher update request in {delay:?}: {error:#}");
+                let started_at = Instant::now();
+                while started_at.elapsed() < delay {
+                    crate::launcher::ensure_not_cancelled(cancel)?;
+                    thread::sleep(
+                        delay
+                            .saturating_sub(started_at.elapsed())
+                            .min(Duration::from_millis(100)),
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn launcher_update_browser_headers() -> HeaderMap {
@@ -723,8 +862,8 @@ fn launcher_update_range_total(
     url: &str,
     cancel: &Arc<AtomicBool>,
 ) -> Result<Option<u64>> {
-    let response = crate::cancel::request(client.get(url).header(RANGE, "bytes=0-0"), cancel)?
-        .error_for_status()?;
+    let response =
+        launcher_update_download_request_with_retry(client, url, Some("bytes=0-0"), cancel)?;
     // 非 206 说明服务器忽略了 Range，无法并行，也拿不到可靠总大小。
     if response.status() != StatusCode::PARTIAL_CONTENT {
         return Ok(None);
@@ -792,8 +931,9 @@ fn launcher_update_byte_ranges(total_bytes: u64) -> Vec<LauncherUpdateByteRange>
 
 /// 多线程并行下载各字节区间到临时目录的分片文件，随后按序合并。
 ///
-/// 每个分片由独立线程下载，经 mpsc 通道上报进度；主循环每 100ms 汇聚一次
-/// 增量并节流刷新 splash。全部完成后校验总字节数一致才执行合并。
+/// 429 分片重新入队并减半后续并发；已建立的下载继续，成功分片不重下。
+/// 所有 worker 共享客户端连接池，空闲连接可继续领取待重试区间。
+/// 主循环每 100ms 汇聚进度、调度重试和检查取消，完成后校验并合并。
 ///
 /// # Errors
 /// 任一 worker panic、分片字节数合计与总大小不符或合并失败时返回 Err。
@@ -813,36 +953,121 @@ fn download_launcher_update_parallel(
         .context("create temporary launcher update download directory")?;
     let (progress_sender, progress_receiver) = mpsc::channel();
     let mut workers = Vec::with_capacity(ranges.len());
-    let mut chunk_paths = Vec::with_capacity(ranges.len());
-
-    // 每个区间一个 worker 线程，独立持有客户端克隆、URL 与分片路径。
-    for (index, range) in ranges.iter().copied().enumerate() {
-        let chunk_path = temp_dir.path().join(format!("chunk-{index:02}"));
-        let worker_client = client.clone();
-        let worker_url = url.to_owned();
-        let worker_path = chunk_path.clone();
-        let worker_sender = progress_sender.clone();
-        let worker_cancel = cancel.clone();
-        workers.push(thread::spawn(move || {
-            download_launcher_update_range(
-                &worker_client,
-                &worker_url,
-                range,
-                &worker_path,
-                &worker_sender,
-                &worker_cancel,
-            )
-        }));
-        chunk_paths.push(chunk_path);
-    }
-    // 主动丢弃主发送端：worker 全部结束后通道断开，主循环得以退出。
-    drop(progress_sender);
+    let chunk_paths: Vec<_> = (0..ranges.len())
+        .map(|index| temp_dir.path().join(format!("chunk-{index:02}")))
+        .collect();
+    let mut pending: VecDeque<_> = (0..ranges.len()).collect();
+    let mut retries: Vec<_> = ranges
+        .iter()
+        .map(|_| LauncherUpdateRetryState::new())
+        .collect();
+    let mut ready_at = vec![Instant::now(); ranges.len()];
+    let mut connection_limit = ranges.len().clamp(1, LAUNCHER_UPDATE_MAX_CONNECTIONS);
+    let mut cooldown_until = Instant::now();
+    // 内部失败只停止本组 worker，不修改用户任务的取消标志；退出前全部 join，
+    // 保证临时目录清理后不会仍有旧线程写入。
+    let worker_cancel = Arc::new(AtomicBool::new(false));
 
     let started_at = Instant::now();
     let mut downloaded_so_far = 0u64;
+    let mut completed_bytes = 0u64;
+    let mut failure = None;
     let mut last_reported_at = Instant::now() - Duration::from_secs(1);
-    // 每 100ms 醒一次：汇总各 worker 上报的进度增量并节流刷新 splash。
-    while workers.iter().any(|worker| !worker.is_finished()) {
+
+    loop {
+        if let Err(error) = crate::launcher::ensure_not_cancelled(cancel) {
+            failure = Some(error);
+            break;
+        }
+        // 先收集这一轮所有已结束 worker，再按降低后的上限调度新请求。
+        let mut index = 0;
+        while index < workers.len() {
+            let (chunk_index, worker): &(usize, thread::JoinHandle<Result<u64>>) = &workers[index];
+            if !worker.is_finished() {
+                index += 1;
+                continue;
+            }
+            let chunk_index = *chunk_index;
+            let (_, worker) = workers.swap_remove(index);
+            match worker.join() {
+                Ok(Ok(bytes)) => completed_bytes += bytes,
+                Ok(Err(error)) => {
+                    let Some(delay) = retries[chunk_index].retry_delay(&error) else {
+                        failure = Some(error);
+                        break;
+                    };
+                    let rate_limited = error
+                        .downcast_ref::<LauncherUpdateDownloadRetry>()
+                        .is_some_and(|retry| retry.rate_limited);
+                    ready_at[chunk_index] = Instant::now() + delay;
+                    if rate_limited {
+                        connection_limit = (connection_limit / 2).max(1);
+                        // 仅暂停新请求，绝不中断其他正在传输的响应。
+                        cooldown_until = cooldown_until.max(ready_at[chunk_index]);
+                    }
+                    pending.push_front(chunk_index);
+                    tracing::warn!(
+                        "Retrying launcher update chunk {chunk_index} in {delay:?}, \
+                         connection limit {connection_limit}: {error:#}"
+                    );
+                    let (progress, _) = launcher_download_progress_detail(
+                        downloaded_so_far,
+                        Some(total_bytes),
+                        started_at,
+                    );
+                    status_updater(
+                        SplashUpdate::loading(
+                            t!("launcher_update.updating"),
+                            t!(
+                                "launcher_update.retrying_download_detail",
+                                connections = connection_limit,
+                                seconds = delay.as_secs_f64().ceil() as u64
+                            ),
+                            progress,
+                        )
+                        .with_subtitle(t!("launcher_update.status")),
+                    );
+                }
+                Err(_) => {
+                    failure = Some(anyhow!("launcher update download worker panicked"));
+                    break;
+                }
+            }
+        }
+        if failure.is_some() || (pending.is_empty() && workers.is_empty()) {
+            break;
+        }
+
+        while workers.len() < connection_limit && Instant::now() >= cooldown_until {
+            let Some(position) = pending
+                .iter()
+                .position(|&index| Instant::now() >= ready_at[index])
+            else {
+                break;
+            };
+            let index = pending.remove(position).expect("pending chunk position");
+            let range = ranges[index];
+            let worker_client = client.clone();
+            let worker_url = url.to_owned();
+            let worker_path = chunk_paths[index].clone();
+            let worker_sender = progress_sender.clone();
+            let worker_cancel = worker_cancel.clone();
+            workers.push((
+                index,
+                thread::spawn(move || {
+                    download_launcher_update_range(
+                        &worker_client,
+                        &worker_url,
+                        range,
+                        total_bytes,
+                        &worker_path,
+                        &worker_sender,
+                        &worker_cancel,
+                    )
+                }),
+            ));
+        }
+
         match progress_receiver.recv_timeout(Duration::from_millis(100)) {
             Ok(downloaded) => {
                 downloaded_so_far = downloaded_so_far.saturating_add(downloaded);
@@ -858,28 +1083,13 @@ fn download_launcher_update_parallel(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
+    worker_cancel.store(true, Ordering::SeqCst);
+    for (_, worker) in workers {
+        let _ = worker.join();
+    }
     // worker 收尾后再清空一次通道，避免漏计尾部进度。
     while let Ok(downloaded) = progress_receiver.try_recv() {
         downloaded_so_far = downloaded_so_far.saturating_add(downloaded);
-    }
-
-    // join 各 worker 并累计字节数：任一 worker panic 视为整体失败。
-    let mut completed_bytes = 0u64;
-    let mut failure = None;
-    for worker in workers {
-        match worker.join() {
-            Ok(Ok(bytes)) => completed_bytes = completed_bytes.saturating_add(bytes),
-            Ok(Err(error)) => {
-                if failure.is_none() {
-                    failure = Some(error);
-                }
-            }
-            Err(_) => {
-                if failure.is_none() {
-                    failure = Some(anyhow!("launcher update download worker panicked"));
-                }
-            }
-        }
     }
     if let Some(error) = failure {
         return Err(error);
@@ -923,13 +1133,27 @@ fn download_launcher_update_range(
     client: &Client,
     url: &str,
     range: LauncherUpdateByteRange,
+    total_bytes: u64,
     chunk_path: &Path,
     progress_sender: &mpsc::Sender<u64>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<u64> {
-    let requested_range = format!("bytes={}-{}", range.start, range.end);
-    let response = crate::cancel::request(client.get(url).header(RANGE, requested_range), cancel)?
-        .error_for_status()?;
+    let expected_bytes = range.end - range.start + 1;
+    let mut downloaded = match fs::metadata(chunk_path) {
+        Ok(metadata) => metadata.len(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(error) => return Err(error.into()),
+    };
+    if downloaded > expected_bytes {
+        bail!("launcher update chunk is larger than its requested range");
+    }
+    if downloaded == expected_bytes {
+        return Ok(downloaded);
+    }
+    let requested_start = range.start + downloaded;
+    let remaining_bytes = expected_bytes - downloaded;
+    let requested_range = format!("bytes={requested_start}-{}", range.end);
+    let response = launcher_update_download_request(client, url, Some(&requested_range), cancel)?;
     if response.status() != StatusCode::PARTIAL_CONTENT {
         bail!(
             "launcher update server ignored byte range {}-{}",
@@ -938,7 +1162,7 @@ fn download_launcher_update_range(
         );
     }
 
-    let Some((start, end, _)) = response
+    let Some((start, end, total)) = response
         .headers()
         .get(CONTENT_RANGE)
         .and_then(|value| value.to_str().ok())
@@ -946,7 +1170,7 @@ fn download_launcher_update_range(
     else {
         bail!("launcher update range response is missing a valid Content-Range header");
     };
-    if start != range.start || end != range.end {
+    if start != requested_start || end != range.end || total != total_bytes {
         bail!(
             "launcher update range response does not match requested bytes {}-{}",
             range.start,
@@ -954,11 +1178,9 @@ fn download_launcher_update_range(
         );
     }
 
-    // 期望字节数即闭区间长度（两端均含）。
-    let expected_bytes = range.end - range.start + 1;
     if response
         .content_length()
-        .is_some_and(|content_length| content_length != expected_bytes)
+        .is_some_and(|content_length| content_length != remaining_bytes)
     {
         bail!(
             "launcher update range response has wrong length for bytes {}-{}",
@@ -969,13 +1191,24 @@ fn download_launcher_update_range(
 
     // 边读边写分片文件，并把每次写入的字节数经通道上报给进度汇总。
     let mut response = crate::cancel::body(response, cancel.clone());
-    let mut file = fs::File::create(chunk_path)?;
-    let mut downloaded = 0u64;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(chunk_path)?;
     let mut buffer = [0u8; 128 * 1024];
     loop {
-        let size = response.read(&mut buffer)?;
+        let size = response.read(&mut buffer).map_err(|error| {
+            anyhow::Error::new(LauncherUpdateDownloadRetry {
+                reason: format!("launcher update response interrupted: {error}"),
+                rate_limited: false,
+                retry_after: None,
+            })
+        })?;
         if size == 0 {
             break;
+        }
+        if size as u64 > expected_bytes - downloaded {
+            bail!("launcher update range response exceeds requested length");
         }
         file.write_all(&buffer[..size])?;
         downloaded += size as u64;
@@ -985,13 +1218,15 @@ fn download_launcher_update_range(
 
     // 最终核对：实际下载数必须与区间长度完全一致。
     if downloaded != expected_bytes {
-        bail!(
-            "launcher update range download incomplete for bytes {}-{}: expected {} bytes, got {} bytes",
-            range.start,
-            range.end,
-            expected_bytes,
-            downloaded
-        );
+        return Err(LauncherUpdateDownloadRetry {
+            reason: format!(
+                "launcher update range {}-{} incomplete: expected {expected_bytes} bytes, got {downloaded}",
+                range.start, range.end
+            ),
+            rate_limited: false,
+            retry_after: None,
+        }
+        .into());
     }
     Ok(downloaded)
 }
@@ -1120,7 +1355,7 @@ fn download_launcher_update_sequential(
     mut status_updater: impl FnMut(SplashUpdate),
     cancel: &Arc<AtomicBool>,
 ) -> Result<u64> {
-    let response = crate::cancel::request(client.get(url), cancel)?.error_for_status()?;
+    let response = launcher_update_download_request_with_retry(client, url, None, cancel)?;
     // 优先使用 Range 探测得到的总大小，其次取响应 Content-Length。
     let total_bytes = expected_total_bytes.or_else(|| response.content_length());
     let mut response = crate::cancel::body(response, cancel.clone());
@@ -1635,6 +1870,338 @@ mod tests {
         cargo_toml_section, cargo_toml_value, time_bomb_config, truncate_log_file,
         windows::{backend_unready_error, main_window_titlebar_injection_script},
     };
+
+    /// 有界本地服务，避免重试回归时因缺少预期请求而永久挂起测试。
+    fn download_test_server(
+        requests: usize,
+        handle: impl Fn(usize, &mut std::net::TcpStream) + Send + Sync + 'static,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/launcher", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let server = thread::spawn(move || {
+            let handle = Arc::new(handle);
+            let started_at = Instant::now();
+            let mut workers = Vec::new();
+            while workers.len() < requests {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(10)))
+                            .unwrap();
+                        stream
+                            .set_write_timeout(Some(Duration::from_secs(10)))
+                            .unwrap();
+                        let index = workers.len();
+                        let handle = handle.clone();
+                        workers.push(thread::spawn(move || handle(index, &mut stream)));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            started_at.elapsed() < Duration::from_secs(15),
+                            "missing download request"
+                        );
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept download request: {error}"),
+                }
+            }
+            for worker in workers {
+                worker.join().unwrap();
+            }
+        });
+        (url, server)
+    }
+
+    fn download_test_request(stream: &mut std::net::TcpStream) -> String {
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            assert_eq!(
+                stream.read(&mut byte).unwrap(),
+                1,
+                "incomplete HTTP request"
+            );
+            request.push(byte[0]);
+        }
+        String::from_utf8(request).unwrap()
+    }
+
+    fn download_test_range(request: &str) -> (usize, usize) {
+        request
+            .lines()
+            .find_map(|line| {
+                let (key, value) = line.split_once(':')?;
+                if !key.eq_ignore_ascii_case("range") {
+                    return None;
+                }
+                let (start, end) = value.trim().strip_prefix("bytes=")?.split_once('-')?;
+                Some((start.parse().unwrap(), end.parse().unwrap()))
+            })
+            .expect("Range header")
+    }
+
+    fn download_test_client() -> Client {
+        Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn launcher_download_retry_after_and_retry_budget() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let mut headers = HeaderMap::new();
+        for (value, expected) in [
+            ("12".to_string(), Some(Duration::from_secs(12))),
+            (
+                httpdate::fmt_http_date(now + Duration::from_secs(30)),
+                Some(Duration::from_secs(30)),
+            ),
+            (
+                httpdate::fmt_http_date(now - Duration::from_secs(30)),
+                Some(Duration::ZERO),
+            ),
+            ("invalid".to_string(), None),
+            (u64::MAX.to_string(), Some(Duration::from_secs(86_400))),
+        ] {
+            headers.insert(RETRY_AFTER, HeaderValue::from_str(&value).unwrap());
+            assert_eq!(launcher_update_retry_after(&headers, now), expected);
+        }
+        let limited = anyhow::Error::new(LauncherUpdateDownloadRetry {
+            reason: "429".into(),
+            rate_limited: true,
+            retry_after: Some(Duration::from_secs(120)),
+        });
+        let transient = anyhow::Error::new(LauncherUpdateDownloadRetry {
+            reason: "503".into(),
+            rate_limited: false,
+            retry_after: None,
+        });
+        let mut retry = LauncherUpdateRetryState::new();
+        for _ in 0..32 {
+            assert!(retry.retry_delay(&limited).unwrap() >= Duration::from_secs(120));
+        }
+        for _ in 0..LAUNCHER_UPDATE_MAX_TRANSIENT_RETRIES {
+            assert!(retry.retry_delay(&transient).is_some());
+        }
+        assert!(retry.retry_delay(&transient).is_none());
+        assert!(retry.retry_delay(&limited).is_some());
+        assert!(retry.retry_delay(&anyhow!("disk full")).is_none());
+    }
+
+    #[test]
+    fn launcher_download_probe_and_sequential_retry_transient_statuses() {
+        let (url, server) = download_test_server(4, |index, stream| {
+            let request = download_test_request(stream);
+            let response = match index {
+                0 => "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                1 => {
+                    assert_eq!(download_test_range(&request), (0, 0));
+                    "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-0/4\r\nContent-Length: 1\r\nConnection: close\r\n\r\na"
+                }
+                2 => "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                _ => "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nalas",
+            };
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let cancel = Arc::new(AtomicBool::new(false));
+        let client = download_test_client();
+        assert_eq!(
+            launcher_update_range_total(&client, &url, &cancel).unwrap(),
+            Some(4)
+        );
+        let temp = TempDirBuilder::new().tempdir().unwrap();
+        let output = temp.path().join("update.part");
+        assert_eq!(
+            download_launcher_update_sequential(&client, &url, &output, Some(4), |_| {}, &cancel)
+                .unwrap(),
+            4
+        );
+        assert_eq!(fs::read(output).unwrap(), b"alas");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn parallel_launcher_download_keeps_successes_and_reduces_concurrency() {
+        use std::sync::{atomic::AtomicUsize, Barrier, Mutex};
+        let barrier = Arc::new(Barrier::new(4));
+        let requested = Arc::new(Mutex::new(Vec::new()));
+        let retry_active = Arc::new(AtomicUsize::new(0));
+        let retry_peak = Arc::new(AtomicUsize::new(0));
+        let server_requests = requested.clone();
+        let peak = retry_peak.clone();
+        let (url, server) = download_test_server(6, move |index, stream| {
+            let (start, end) = download_test_range(&download_test_request(stream));
+            server_requests.lock().unwrap().push(start);
+            if index < 4 {
+                barrier.wait();
+                if start >= 8 {
+                    stream.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                    return;
+                }
+            } else {
+                let active = retry_active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(active, Ordering::SeqCst);
+            }
+            let headers = format!("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{end}/16\r\nContent-Length: 4\r\nConnection: close\r\n\r\n");
+            stream.write_all(headers.as_bytes()).unwrap();
+            // 成功响应在其他连接报 429 后仍处于传输中，不应被中断。
+            thread::sleep(Duration::from_millis(200));
+            stream.write_all(&b"abcdefghijklmnop"[start..=end]).unwrap();
+            if index >= 4 {
+                retry_active.fetch_sub(1, Ordering::SeqCst);
+            }
+        });
+        let temp = TempDirBuilder::new().tempdir().unwrap();
+        let output = temp.path().join("update.part");
+        let ranges: Vec<_> = (0..4)
+            .map(|i| LauncherUpdateByteRange {
+                start: i * 4,
+                end: i * 4 + 3,
+            })
+            .collect();
+        download_launcher_update_parallel(
+            &download_test_client(),
+            &url,
+            16,
+            &ranges,
+            &output,
+            &mut |_| {},
+            &Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        server.join().unwrap();
+        assert_eq!(fs::read(output).unwrap(), b"abcdefghijklmnop");
+        let mut requests = requested.lock().unwrap().clone();
+        requests.sort_unstable();
+        assert_eq!(requests, [0, 4, 8, 8, 12, 12]);
+        assert_eq!(retry_peak.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn parallel_launcher_download_reuses_successful_connection_after_429() {
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let rate_limited_at = std::sync::Mutex::new(None);
+        let (url, server) = download_test_server(2, move |_, stream| {
+            let (start, _) = download_test_range(&download_test_request(stream));
+            barrier.wait();
+            if start == 4 {
+                *rate_limited_at.lock().unwrap() = Some(Instant::now());
+                stream.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 3\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            } else {
+                stream.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-3/8\r\nContent-Length: 4\r\n\r\n").unwrap();
+                thread::sleep(Duration::from_millis(200));
+                stream.write_all(b"abcd").unwrap();
+                assert_eq!(download_test_range(&download_test_request(stream)), (4, 7));
+                assert!(
+                    rate_limited_at.lock().unwrap().unwrap().elapsed() >= Duration::from_secs(3),
+                    "Retry-After was ignored"
+                );
+                stream.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 4-7/8\r\nContent-Length: 4\r\nConnection: close\r\n\r\nefgh").unwrap();
+            }
+        });
+        let temp = TempDirBuilder::new().tempdir().unwrap();
+        let output = temp.path().join("update.part");
+        let ranges = [
+            LauncherUpdateByteRange { start: 0, end: 3 },
+            LauncherUpdateByteRange { start: 4, end: 7 },
+        ];
+        download_launcher_update_parallel(
+            &download_test_client(),
+            &url,
+            8,
+            &ranges,
+            &output,
+            &mut |_| {},
+            &Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(fs::read(output).unwrap(), b"abcdefgh");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn parallel_launcher_download_resumes_interrupted_range() {
+        let (url, server) = download_test_server(2, |index, stream| {
+            let range = download_test_range(&download_test_request(stream));
+            if index == 0 {
+                assert_eq!(range, (0, 7));
+                stream.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-7/8\r\nContent-Length: 8\r\nConnection: close\r\n\r\nabcd").unwrap();
+                thread::sleep(Duration::from_millis(100));
+            } else {
+                assert_eq!(range, (4, 7));
+                stream.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 4-7/8\r\nContent-Length: 4\r\nConnection: close\r\n\r\nefgh").unwrap();
+            }
+        });
+        let temp = TempDirBuilder::new().tempdir().unwrap();
+        let output = temp.path().join("update.part");
+        let ranges = [LauncherUpdateByteRange { start: 0, end: 7 }];
+        let mut progress = Vec::new();
+        download_launcher_update_parallel(
+            &download_test_client(),
+            &url,
+            8,
+            &ranges,
+            &output,
+            &mut |update| progress.push(update.progress),
+            &Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(fs::read(output).unwrap(), b"abcdefgh");
+        assert!(progress.windows(2).all(|pair| pair[0] <= pair[1]));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn parallel_launcher_download_can_cancel_long_rate_limit_wait() {
+        let (url, server) = download_test_server(1, |_, stream| {
+            download_test_request(stream);
+            stream.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 3600\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let temp = TempDirBuilder::new().tempdir().unwrap();
+        let output = temp.path().join("update.part");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let started_at = Instant::now();
+        let result = download_launcher_update_parallel(
+            &download_test_client(),
+            &url,
+            8,
+            &[LauncherUpdateByteRange { start: 0, end: 7 }],
+            &output,
+            &mut |_| {
+                cancel.store(true, Ordering::SeqCst);
+            },
+            &cancel,
+        );
+        assert!(result.is_err());
+        assert!(started_at.elapsed() < Duration::from_secs(2));
+        assert!(!output.exists());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn parallel_launcher_download_rejects_permanent_http_and_invalid_ranges() {
+        for response in [
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-7/9\r\nContent-Length: 8\r\nConnection: close\r\n\r\nabcdefgh",
+        ] {
+            let (url, server) = download_test_server(1, move |_, stream| {
+                download_test_request(stream);
+                stream.write_all(response.as_bytes()).unwrap();
+            });
+            let temp = TempDirBuilder::new().tempdir().unwrap();
+            let output = temp.path().join("update.part");
+            let cancel = Arc::new(AtomicBool::new(false));
+            let error = download_launcher_update_parallel(&download_test_client(), &url, 8, &[LauncherUpdateByteRange { start: 0, end: 7 }], &output, &mut |_| {}, &cancel).unwrap_err();
+            assert!(error.downcast_ref::<LauncherUpdateDownloadRetry>().is_none());
+            assert!(!cancel.load(Ordering::SeqCst));
+            assert!(!output.exists());
+            server.join().unwrap();
+        }
+    }
 
     #[test]
     fn update_helper_preserves_locale_and_minimized_arguments() {
