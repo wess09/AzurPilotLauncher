@@ -108,7 +108,8 @@ export function App() {
       cleanup?.();
     };
   }, []);
-  // 背景视频受三层控制：页面隐藏、系统或设置任一开启“减弱动态效果”。
+  // Rust 将窗口隐藏/最小化同步到 WebView，触发 visibilitychange 暂停视频；
+  // 系统或设置任一开启“减弱动态效果”时，即使恢复窗口也保持暂停。
   // 视频持续可见播放会让 WebView2 持有显示器唤醒锁，导致系统无法息屏。
   // 静音状态由设置的音频开关驱动（默认静音；React 的 muted 属性对
   // video 元素不可靠，必须直接写 property）。
@@ -302,7 +303,6 @@ export function App() {
         className={styles.background}
         src={background}
         poster={backgroundPoster}
-        autoPlay
         loop
         playsInline
         aria-hidden="true"

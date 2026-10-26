@@ -974,6 +974,13 @@ pub(crate) fn run() -> Result<()> {
     std::env::remove_var("AZURPILOT_RESUME_START");
     info!("Starting React launcher {}", env!("CARGO_PKG_VERSION"));
     tauri::Builder::default()
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                if let Some(window) = webview.app_handle().get_webview_window(webview.label()) {
+                    sync_webview_visibility(&window);
+                }
+            }
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_single_instance::init(move |app, _, _| {
@@ -1060,6 +1067,15 @@ pub(crate) fn run() -> Result<()> {
                     }
                     #[cfg(not(windows))]
                     minimize_main_window_to_tray(app);
+                }
+            }
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_),
+                ..
+            } => {
+                if let Some(window) = app.get_webview_window(&label) {
+                    sync_webview_visibility(&window);
                 }
             }
             tauri::RunEvent::Exit => {

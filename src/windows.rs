@@ -47,10 +47,64 @@ pub(crate) fn show_launcher_home(app: &tauri::AppHandle) -> Result<()> {
 pub(crate) fn hide_launcher_home(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("launcher") {
         #[cfg(target_os = "linux")]
-        let _ = window.minimize();
+        let _ = minimize_window(&window);
         #[cfg(not(target_os = "linux"))]
-        let _ = window.hide();
+        let _ = hide_window(&window);
     }
+}
+
+/// Tauri 的窗口显隐操作不会同步 WebView 的显隐；Windows 上只隐藏父窗口
+/// 时，WebView2 仍可能认为页面可见，背景视频因而继续持有 Video Wake Lock。
+/// 单独设置 WebView 可见性，让 Page Visibility API 触发前端的视频暂停逻辑。
+fn set_webview_visible(window: &WebviewWindow, visible: bool) {
+    #[cfg(windows)]
+    let result = {
+        let label = window.label().to_owned();
+        // 只改 WebView2 控制器：通用 Webview::show() 还会调用 ShowWindow，
+        // 在失焦事件中同步可见性时不应有重新激活原生窗口的副作用。
+        window.with_webview(move |webview| {
+            // SAFETY: with_webview 将闭包调度到 WebView2 所属的 UI 线程。
+            if let Err(error) = unsafe { webview.controller().SetIsVisible(visible) } {
+                warn!(label, visible, "Failed to set WebView2 visibility: {error:?}");
+            }
+        })
+    };
+    #[cfg(not(windows))]
+    let result = {
+        let webview: &tauri::Webview = window.as_ref();
+        if visible {
+            webview.show()
+        } else {
+            webview.hide()
+        }
+    };
+    if let Err(error) = result {
+        warn!(
+            label = window.label(),
+            visible, "Failed to update WebView visibility: {error:?}"
+        );
+    }
+}
+
+/// 页面加载和原生窗口事件也要同步，以覆盖初始隐藏、系统最小化和任务栏恢复。
+/// 失去焦点不代表隐藏：只检查窗口是否可见及最小化，不按焦点暂停视频。
+pub(crate) fn sync_webview_visibility(window: &WebviewWindow) {
+    match (window.is_visible(), window.is_minimized()) {
+        (Ok(visible), Ok(minimized)) => set_webview_visible(window, visible && !minimized),
+        _ => warn!(label = window.label(), "Failed to query window visibility"),
+    }
+}
+
+pub(crate) fn hide_window(window: &WebviewWindow) -> tauri::Result<()> {
+    window.hide()?;
+    set_webview_visible(window, false);
+    Ok(())
+}
+
+pub(crate) fn minimize_window(window: &WebviewWindow) -> tauri::Result<()> {
+    window.minimize()?;
+    set_webview_visible(window, false);
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -256,6 +310,7 @@ pub(crate) fn reveal_window(window: &WebviewWindow) -> tauri::Result<()> {
         window.unminimize()?;
     }
     window.show()?;
+    set_webview_visible(window, true);
     window.set_focus()?;
     Ok(())
 }
@@ -276,7 +331,7 @@ pub(crate) fn minimize_main_window_to_tray(app: &tauri::AppHandle) {
         if let Some(window) = app.get_webview_window("main") {
             if keep_webview {
                 tracing::info!("Hiding main window while trayed (keep WebView enabled)");
-                let _ = window.hide();
+                let _ = hide_window(&window);
             } else {
                 tracing::info!(
                     "Destroying main window to release WebView resources while trayed"
@@ -291,7 +346,7 @@ pub(crate) fn minimize_main_window_to_tray(app: &tauri::AppHandle) {
     #[cfg(not(windows))]
     {
         if let Some(window) = app.get_webview_window("main") {
-            let _ = window.hide();
+            let _ = hide_window(&window);
         }
     }
 

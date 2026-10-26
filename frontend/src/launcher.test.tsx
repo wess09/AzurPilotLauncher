@@ -115,6 +115,86 @@ describe("launcher actions", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Prevent automatic sleep" }));
     await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", { settings: { ...settings, reducedMotion: true, preventSleep: true } }));
   });
+  it("pauses hidden-window video and resumes it on restore", async () => {
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    });
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    await mount();
+    const video = document.querySelector("video")!;
+    // 播放完全由可见性及偏好控制，避免隐藏启动时 autoplay 抢先播放。
+    expect(video.autoplay).toBe(false);
+    expect(video.play).toHaveBeenCalled();
+    expect(video.pause).not.toHaveBeenCalled();
+
+    hidden.mockReturnValue(true);
+    fireEvent(document, new Event("visibilitychange"));
+    expect(video.pause).toHaveBeenCalledTimes(1);
+    vi.mocked(video.play).mockClear();
+
+    hidden.mockReturnValue(false);
+    fireEvent(document, new Event("visibilitychange"));
+    expect(video.play).toHaveBeenCalledTimes(1);
+    expect(video.muted).toBe(true);
+  });
+  it("keeps initially hidden video paused and honors motion preferences on restore", async () => {
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    let onMotionChange = () => {};
+    const motion = {
+      matches: false,
+      addEventListener: (_name: string, listener: () => void) => { onMotionChange = listener; },
+      removeEventListener() {},
+    };
+    window.matchMedia = vi.fn().mockReturnValue(motion);
+    await mount();
+    const video = document.querySelector("video")!;
+    expect(video.play).not.toHaveBeenCalled();
+    expect(video.pause).toHaveBeenCalled();
+
+    motion.matches = true;
+    hidden.mockReturnValue(false);
+    fireEvent(document, new Event("visibilitychange"));
+    expect(video.play).not.toHaveBeenCalled();
+
+    motion.matches = false;
+    act(() => onMotionChange());
+    expect(video.play).toHaveBeenCalledTimes(1);
+  });
+  it("does not resume hidden video after changing audio or reduced motion settings", async () => {
+    const settings = { launchOnStartup: false, autoStartService: false, keepWebviewOnTray: true, reducedMotion: true, preventSleep: false, audioEnabled: false, updateChannel: "stable", updateSource: "auto", language: null, downloadSource: "auto", pythonSource: "auto", pypiSource: "auto" };
+    bridge.command.mockImplementation(async (name: string, args?: { settings: unknown }) => name === "settings_set" ? args?.settings : name === "settings_get" ? settings : undefined);
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    });
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    await mount();
+    const video = document.querySelector("video")!;
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const toggle = await screen.findByRole("switch", { name: "Reduce motion" });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", { settings: { ...settings, reducedMotion: false } }));
+    await waitFor(() => expect(document.documentElement.classList.contains("reduced-motion")).toBe(false));
+    fireEvent.click(screen.getByRole("switch", { name: "Play background music" }));
+    await waitFor(() => expect(video.muted).toBe(false));
+    expect(video.play).not.toHaveBeenCalled();
+
+    hidden.mockReturnValue(false);
+    fireEvent(document, new Event("visibilitychange"));
+    expect(video.play).toHaveBeenCalledTimes(1);
+    expect(video.muted).toBe(false);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(document.documentElement.classList.contains("reduced-motion")).toBe(true));
+    vi.mocked(video.play).mockClear();
+    hidden.mockReturnValue(true);
+    fireEvent(document, new Event("visibilitychange"));
+    hidden.mockReturnValue(false);
+    fireEvent(document, new Event("visibilitychange"));
+    expect(video.play).not.toHaveBeenCalled();
+  });
   it("shows Deploy for missing components and Run after deployment", async () => {
     await mount();
     await send({ deployment_required: true, can_start: false, can_deploy: true });

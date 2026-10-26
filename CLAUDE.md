@@ -99,7 +99,7 @@ locales/
 - `components.rs`：git/adb 组件的按清单下载、校验、事务提交与恢复；deploy 引导脚本与分系统模板的仓库 raw 下载。
 - `setup.rs`：内嵌 uv、Python 与 `.venv`、deploy 脚本驱动的拉取/前端构建/依赖同步；修复重下组件并重建 `.venv`，保留代码与缓存。
 - `sources.rs` / `settings.rs`：按系统语言与真实时区自动选择 CNB/GitHub，保存可覆盖的组件、Python、PyPI 源。
-- `power.rs`：“阻止计算机自动睡眠”设置的三平台电源锁（Windows `SetThreadExecutionState` 专用线程 / macOS `IOPMAssertion` / Linux `systemd-inhibit` 子进程随宿主退出），只阻止空闲睡眠、不阻止息屏；“减弱动态效果”暂停背景视频（视频会让 WebView2 持显示器唤醒锁导致无法息屏）。
+- `power.rs`：“阻止计算机自动睡眠”设置的三平台电源锁（Windows `SetThreadExecutionState` 专用线程 / macOS `IOPMAssertion` / Linux `systemd-inhibit` 子进程随宿主退出），只阻止空闲睡眠、不阻止息屏；`windows.rs` 同步原生窗口与 WebView 可见性，隐藏或最小化时自动暂停背景视频、释放 Video Wake Lock，恢复后按动效偏好播放；“减弱动态效果”始终暂停背景视频。
 - `task_process.rs` / `backend_process.rs`：任务进程组及 Windows Job；`cancel.rs` 让 HTTP 等待可取消。
 
 普通启动先显示首页并检查启动器更新；发现新版后等待用户点击更新。无更新时点击“启动”才执行组件部署和后端启动。运行后首页隐藏（Linux 最小化到任务栏），WebUI 独立显示。首页提供停止服务与环境修复，运行中禁止修复。

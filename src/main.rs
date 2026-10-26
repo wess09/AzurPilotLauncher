@@ -628,7 +628,7 @@ fn window_hide(app_handle: tauri::AppHandle) -> tauri::Result<()> {
 /// Tauri 命令：最小化窗口到任务栏（splash 与标题栏的最小化按钮调用）。
 #[tauri::command]
 fn window_minimize(window: WebviewWindow) -> tauri::Result<()> {
-    window.minimize()
+    minimize_window(&window)
 }
 
 /// Tauri 命令：切换窗口最大化/还原状态。
