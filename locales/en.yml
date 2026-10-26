@@ -354,6 +354,7 @@ launcher:
   busy: "Another task is already running."
   forbidden: "This action is only available from the local launcher page."
   backend_exited: "The background service exited unexpectedly. Check the logs and try again."
+  auto_restart_update: "AP exited for an update; restarting automatically…"
   progress: "Task progress"
   dependencies: "Dependencies"
   service: "Background service"
