@@ -115,20 +115,28 @@ mod imp {
                     KCF_STRING_ENCODING_UTF8,
                 )
             };
-            // SAFETY：传入的 CFString 均由本函数创建且非空；调用后立即释放，
+            // SAFETY：仅当两个 CFString 均创建成功时才调用 IOKit（NULL 传入
+            // IOPMAssertionCreateWithName 会崩溃）；字符串用后立即释放，
             // 断言 ID 由 IOKit 持有，不受 CFString 释放影响。
             unsafe {
                 let assertion_type = create(b"PreventUserIdleSystemSleep\0");
                 let label = create(b"AzurPilot Launcher\0");
+                if assertion_type.is_null() || label.is_null() {
+                    if !assertion_type.is_null() {
+                        CFRelease(assertion_type.cast());
+                    }
+                    if !label.is_null() {
+                        CFRelease(label.cast());
+                    }
+                    return Err(anyhow::anyhow!(
+                        "CFStringCreateWithCString returned NULL; cannot create power assertion"
+                    ));
+                }
                 let mut id = 0u32;
                 let status =
                     IOPMAssertionCreateWithName(assertion_type, ASSERTION_LEVEL_ON, label, &mut id);
-                if !assertion_type.is_null() {
-                    CFRelease(assertion_type.cast());
-                }
-                if !label.is_null() {
-                    CFRelease(label.cast());
-                }
+                CFRelease(assertion_type.cast());
+                CFRelease(label.cast());
                 if status == KERN_SUCCESS {
                     *guard = Some(id);
                     Ok(())
