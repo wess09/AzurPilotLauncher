@@ -566,38 +566,16 @@ fn backend_exit_error(config: &WebuiLaunchConfig, status: &ExitStatus) -> anyhow
 
 /// 读取当日 gui 日志尾部记录的失败原因。日志尚未写出时返回 None，由调用方退回通用提示。
 pub(crate) fn read_backend_failure_reason() -> Option<String> {
-    gui_log_path()
-        .and_then(|path| read_log_tail(&path))
-        .and_then(|tail| extract_failure_reason(&tail))
-}
-
-/// 判断后端是否因「检测到更新事件」而自行退出（gui 日志尾部有
-/// `Reason: Update` / `原因: 更新` 标记）。此类退出需要启动器自动
-/// 重启（走完整启动流程应用更新），而非报“意外退出”。
-pub(crate) fn backend_exited_for_update() -> bool {
-    gui_log_path()
-        .and_then(|path| read_log_tail(&path))
-        .is_some_and(|tail| tail_reports_update_exit(&tail))
-}
-
-/// 当日 gui 日志路径；跨零点启动（当日文件尚未建立）时取修改时间最新的。
-fn gui_log_path() -> Option<PathBuf> {
+    // 优先读当日日志；跨零点启动（如启动器挂到次日）当日文件尚未建立时，
+    // 退回目录中修改时间最新的一份。
     let log_directory = azurpilot_repo_dir().join("log");
     let today = log_directory.join(format!("{}_gui.txt", Local::now().format("%Y-%m-%d")));
-    if today.is_file() {
-        return Some(today);
-    }
-    newest_gui_log(&log_directory)
-}
-
-/// 日志尾部是否记录了更新退出：只看最后若干行，避免历史日志中的旧标记
-/// 造成误判（退出是进程的最后事件，标记应紧邻文件末尾）。
-fn tail_reports_update_exit(log_tail: &str) -> bool {
-    log_tail
-        .lines()
-        .rev()
-        .take(20)
-        .any(|line| line.contains("Reason: Update") || line.contains("原因: 更新"))
+    let log_path = if today.is_file() {
+        today
+    } else {
+        newest_gui_log(&log_directory)?
+    };
+    read_log_tail(&log_path).and_then(|tail| extract_failure_reason(&tail))
 }
 
 /// 取目录中最新的一份 gui 日志；跨零点启动时当日文件尚未建立。
@@ -662,22 +640,6 @@ mod tests {
 
         assert!(is_backend_startup_timeout(&timeout));
         assert!(!is_backend_startup_timeout(&anyhow!("other startup error")));
-    }
-    /// 日志尾部近端出现更新退出标记才判定为更新退出；远端旧标记不生效。
-    #[test]
-    fn update_exit_is_detected_from_recent_log_tail_only() {
-        let recent = concat!(
-            "2026-10-25 08:00:12 | INFO | [AzurPilot] 检测到更新事件\r\n",
-            "2026-10-25 08:00:12 | INFO | [ap] 已退出。原因: 更新 | Reason: Update\r\n",
-        );
-        assert!(tail_reports_update_exit(recent));
-        let stale = concat!(
-            "2026-01-01 00:00:00 | INFO | [ap] exited. Reason: Update\r\n",
-            "\r\n",
-            "…（此后还有超过 20 行的本次运行日志）…\r\n",
-        );
-        let stale = format!("{stale}{}", "2026-01-01 00:01:00 | INFO | 运行中\r\n".repeat(30));
-        assert!(!tail_reports_update_exit(&stale));
     }
     /// 能从真实格式的 gui 日志行中提取失败原因。
     #[test]

@@ -354,7 +354,6 @@ launcher:
   busy: "另一個工作正在執行，請稍候。"
   forbidden: "此操作僅允許從啟動器本機頁面執行。"
   backend_exited: "背景服務意外結束，請檢視日誌後重試。"
-  auto_restart_update: "偵測到 AP 因更新結束，正在自動重啟…"
   progress: "工作進度"
   dependencies: "依賴安裝"
   service: "背景服務"

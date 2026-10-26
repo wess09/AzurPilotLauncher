@@ -354,7 +354,6 @@ launcher:
   busy: "另一个任务正在执行，请稍候。"
   forbidden: "此操作仅允许从启动器本地页面执行。"
   backend_exited: "后台服务意外退出，请查看日志后重试。"
-  auto_restart_update: "检测到 AP 因更新退出，正在自动重启…"
   progress: "任务进度"
   dependencies: "依赖安装"
   service: "后台服务"

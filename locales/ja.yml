@@ -354,7 +354,6 @@ launcher:
   busy: "別のタスクが実行中です。"
   forbidden: "この操作はローカル画面からのみ実行できます。"
   backend_exited: "サービスが予期せず終了しました。ログを確認してください。"
-  auto_restart_update: "アップデートのため AP が終了しました。自動的に再起動します…"
   progress: "タスクの進捗"
   dependencies: "依存関係"
   service: "バックグラウンドサービス"

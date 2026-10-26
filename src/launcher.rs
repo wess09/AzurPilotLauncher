@@ -272,9 +272,6 @@ pub(crate) struct Launcher {
     recreate: Arc<AtomicBool>,
     /// 已通知过的更新版本号，避免轮询期间对同一版本重复发通知。
     notified_update: Mutex<Option<String>>,
-    /// 本轮启动后连续自动重启的次数（后端因更新退出时自动拉起），
-    /// 用户手动启动时清零；防止更新失败导致的重启风暴。
-    auto_restarts: Mutex<u32>,
     port: u16,
     skip_update: bool,
     minimized: bool,
@@ -508,7 +505,6 @@ impl Launcher {
             model.touch();
         });
         let (task, cancel) = self.begin(Operation::Start)?;
-        *self.auto_restarts.lock().unwrap() = 0;
         let controller = self.clone();
         thread::spawn(move || {
             let result = (|| {
@@ -631,7 +627,7 @@ impl Launcher {
         });
     }
 
-    fn unexpected_exit(self: &Arc<Self>, task: u64) {
+    fn unexpected_exit(&self, task: u64) {
         // Claim this session before joining its streams. A simultaneous stop wins safely.
         {
             let mut model = self.model.lock().unwrap();
@@ -647,38 +643,6 @@ impl Launcher {
             model.touch();
         }
         let _ = self.stop_backend();
-        // 后端因「检测到更新事件」自行退出：按旧版启动器的契约自动重启
-        // （走完整启动流程应用更新），连续次数受预算限制防止重启风暴。
-        let update_exit = crate::backend::backend_exited_for_update();
-        let budget = {
-            let mut restarts = self.auto_restarts.lock().unwrap();
-            if update_exit && *restarts < 3 {
-                *restarts += 1;
-                true
-            } else {
-                false
-            }
-        };
-        if budget {
-            info!("Backend exited for update; restarting automatically");
-            let click_app = self.app.clone();
-            let click: crate::notify::NotificationClickHandler = Arc::new(move || {
-                let _ = crate::windows::show_launcher_home(&click_app);
-            });
-            let data = serde_json::json!({ "content": t!("launcher.auto_restart_update") });
-            if let Err(error) = crate::notify::display(&self.app, data, &click) {
-                warn!("Failed to show auto-restart notification: {error:#}");
-            }
-            self.change(|m| {
-                m.active = false;
-                m.view.backend_running = false;
-                m.view.error = None;
-                m.view.connection_error = None;
-                m.touch();
-            });
-            let _ = self.start();
-            return;
-        }
         self.change(|m| {
             m.active = false;
             m.view.backend_running = false;
@@ -1036,7 +1000,7 @@ pub(crate) fn run() -> Result<()> {
         .setup(move |app| {
             let controller = Arc::new(Launcher { app: app.handle().clone(), model: Mutex::new(Model::new()), changed: Condvar::new(),
                 backend: Mutex::new(None), session: Mutex::new(None), allow_exit: allow_for_setup.clone(),
-                recreate: Arc::new(AtomicBool::new(false)), notified_update: Mutex::new(None), auto_restarts: Mutex::new(0), port, skip_update: preview_crash || preview_deploy || preview_no_update_arg_present(), minimized });
+                recreate: Arc::new(AtomicBool::new(false)), notified_update: Mutex::new(None), port, skip_update: preview_crash || preview_deploy || preview_no_update_arg_present(), minimized });
             app.manage(controller.clone());
             app.manage(settings_store.clone());
             let auto_start = auto_start || settings_store.auto_start_service();
