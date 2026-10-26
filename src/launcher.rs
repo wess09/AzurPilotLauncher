@@ -841,14 +841,13 @@ fn same_local_origin(url: &tauri::Url, local: &tauri::Url) -> bool {
 }
 
 pub(crate) fn authorize(window: &WebviewWindow, home_only: bool) -> Result<(), String> {
-    if (window.label() != "launcher" && (home_only || window.label() != "main"))
-        || !is_local_page(window.app_handle(), window)
-    {
-        // 记录被拒窗口的实际 URL，便于定位各平台 WebView 的 URL 形式差异。
+    // 来源由 permissions/launcher.toml 和 capabilities/*.json 交给 Tauri
+    // 按本次 IPC 的调用来源校验；这里仅保留窗口标签的防御性检查。
+    // 不再读取 WebView 当前 URL，避免 WKWebView 的 URL 查询差异误拒本地调用。
+    if window.label() != "launcher" && (home_only || window.label() != "main") {
         warn!(
-            "Rejected IPC from window '{}': url={:?}, expected local origin, home_only={}",
+            "Rejected IPC from window '{}': home_only={}",
             window.label(),
-            window.url().map(|url| url.to_string()),
             home_only
         );
         return Err(t!("launcher.forbidden").to_string());

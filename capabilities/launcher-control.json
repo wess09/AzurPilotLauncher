@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "launcher-local-control",
+  "description": "Only the local launcher home may manage the service, updates, deployment and settings.",
+  "windows": ["launcher"],
+  "permissions": ["allow-launcher-control"]
+}

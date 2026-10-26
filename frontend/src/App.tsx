@@ -51,6 +51,7 @@ export function App() {
   const [dialog, setDialog] = useState<"repair" | "close" | null>(null);
   const [pending, setPending] = useState(false);
   const [bridgeError, setBridgeError] = useState("");
+  const [actionError, setActionError] = useState("");
   const [armCancel, setArmCancel] = useState(false);
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -89,7 +90,6 @@ export function App() {
       (s) => {
         if (!disposed) {
           setState((current) => acceptSnapshot(current, s));
-          setBridgeError("");
         }
       },
       () => {
@@ -185,10 +185,12 @@ export function App() {
   const act = async (name: string) => {
     if (pending) return;
     setPending(true);
+    setActionError("");
     try {
       await command<string | boolean>(name);
       setDialog(null);
-    } catch {
+    } catch (error) {
+      setActionError(String(error));
       setDialog(null);
     } finally {
       setPending(false);
@@ -197,7 +199,7 @@ export function App() {
   const phase = state?.phase ?? "checking";
   const active = !!state && busy(state);
   const error = connection ? state?.connection_error : state?.error;
-  const shownError = error || bridgeError;
+  const shownError = error || actionError || bridgeError;
   const mainAction = connection
     ? "retry_backend_connection"
     : state?.can_update
@@ -244,8 +246,7 @@ export function App() {
   const idle =
     !connection &&
     !active &&
-    !error &&
-    !bridgeError &&
+    !shownError &&
     !state?.update_version &&
     !state?.backend_running;
   // 任务进行中同样收起面板：右下角大按钮以转圈与轮播文字表达进度。

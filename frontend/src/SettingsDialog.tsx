@@ -82,6 +82,7 @@ export function SettingsDialog({
 }) {
   const [settings, setSettings] = useState<LauncherSettings | null>(null);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   useEffect(() => {
     let disposed = false;
     const fallback: LauncherSettings = {
@@ -112,6 +113,7 @@ export function SettingsDialog({
   const update = async (patch: Partial<LauncherSettings>) => {
     if (!settings || saving) return;
     setSaving(true);
+    setError("");
     const next = { ...settings, ...patch };
     setSettings(next);
     try {
@@ -127,8 +129,9 @@ export function SettingsDialog({
         );
       if (patch.audioEnabled !== undefined)
         onAudioChange?.(saved?.audioEnabled ?? patch.audioEnabled ?? false);
-    } catch {
+    } catch (error) {
       setSettings(settings);
+      setError(String(error));
     } finally { setSaving(false); }
   };
   return (
@@ -144,6 +147,7 @@ export function SettingsDialog({
         <DialogBody>
           <DialogTitle id="settings-title">{title}</DialogTitle>
           <DialogContent className={styles.settingsContent}>
+            {error && <p role="alert" data-selectable>{error}</p>}
             {settings && (
               <div className={styles.settingsRows}>
                 <Field label={languageLabel}>

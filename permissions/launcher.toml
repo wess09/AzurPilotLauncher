@@ -1,0 +1,31 @@
+# These permissions also opt application commands into Tauri's IPC ACL.
+# Tauri checks the calling frame's origin before dispatching the command, so
+# authorization does not depend on a second native WebView URL lookup.
+[[permission]]
+identifier = "allow-launcher-control"
+description = "Manage the service, deployment, updates and settings from the local launcher window."
+commands.allow = [
+  "launcher_start", "launcher_deploy", "launcher_stop", "launcher_repair",
+  "launcher_check_update", "launcher_install_update", "launcher_open_webui",
+  "launcher_cancel_and_exit", "launcher_cancel", "launcher_back", "settings_set",
+]
+
+[[permission]]
+identifier = "allow-launcher-read"
+description = "Read launcher state and settings and return home from local React pages."
+commands.allow = ["launcher_context", "launcher_snapshot", "launcher_show_home", "settings_get"]
+
+[[permission]]
+identifier = "allow-backend-retry"
+description = "Reconnect to the backend from its local connection error page."
+commands.allow = ["retry_backend_connection"]
+
+[[permission]]
+identifier = "allow-window-bridge"
+description = "Keep the window and file commands used by React pages and the backend title bar."
+commands.allow = [
+  "save_as", "download_today_gui_log", "download_today_launcher_log",
+  "download_log_archive", "prompt_log_archive_path", "window_hide",
+  "window_minimize", "window_toggle_maximize", "window_close",
+  "window_exit_application", "window_start_dragging", "window_is_maximized",
+]

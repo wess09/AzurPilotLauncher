@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "launcher-local-events",
-  "description": "Local React pages may subscribe to launcher state. Remote WebUI keeps its existing command bridge.",
+  "description": "Local React pages may read launcher state and use window and file commands.",
   "windows": ["launcher", "main"],
-  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-launcher-read",
+    "allow-window-bridge"
+  ]
 }

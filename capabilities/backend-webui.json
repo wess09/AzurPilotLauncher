@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "backend-webui-bridge",
+  "description": "Preserve the injected title bar and file bridge for the loopback backend, including custom ports.",
+  "local": false,
+  "remote": { "urls": ["http://127.0.0.1:*"] },
+  "windows": ["main"],
+  "permissions": ["allow-window-bridge"]
+}

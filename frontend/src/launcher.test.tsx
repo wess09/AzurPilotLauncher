@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -14,6 +15,7 @@ import dictionaries from "virtual:launcher-locales";
 
 const bridge = vi.hoisted(() => ({
   command: vi.fn(),
+  getContext: vi.fn(),
   receive: (_s: Snapshot) => {},
   close: () => {},
 }));
@@ -43,11 +45,7 @@ vi.mock("./bridge", () => ({
   native: false,
   command: bridge.command,
   subscribeLogArchiveProgress: async () => () => {},
-  getContext: async () => ({
-    locale: "en",
-    version: "2.2.5",
-    platform: "windows",
-  }),
+  getContext: bridge.getContext,
   subscribe: async (receive: (s: Snapshot) => void, close: () => void) => {
     bridge.receive = receive;
     bridge.close = close;
@@ -57,6 +55,11 @@ vi.mock("./bridge", () => ({
 }));
 beforeEach(() => {
   bridge.command.mockReset().mockResolvedValue(undefined);
+  bridge.getContext.mockReset().mockResolvedValue({
+    locale: "en",
+    version: "2.2.5",
+    platform: "windows",
+  });
   window.matchMedia = vi
     .fn()
     .mockReturnValue({
@@ -82,6 +85,26 @@ const send = (s: Partial<Snapshot>) =>
   act(() => bridge.receive({ ...ready(), sequence: 2, ...s }));
 
 describe("launcher actions", () => {
+  it("keeps initialization errors visible after state pushes", async () => {
+    bridge.getContext.mockRejectedValueOnce("Context permission denied");
+    render(<App />);
+    expect(await screen.findByText("Context permission denied")).toBeTruthy();
+    await send({ sequence: 3 });
+    expect(screen.getByText("Context permission denied")).toBeTruthy();
+  });
+  it("reports a settings save failure and rolls the switch back", async () => {
+    const settings = { launchOnStartup: false, autoStartService: false, keepWebviewOnTray: false, reducedMotion: false, preventSleep: false, audioEnabled: false, updateChannel: "stable", updateSource: "auto", language: null, downloadSource: "auto", pythonSource: "auto", pypiSource: "auto" };
+    bridge.command.mockImplementation(async (name: string) => {
+      if (name === "settings_get") return settings;
+      if (name === "settings_set") throw new Error("Settings permission denied");
+    });
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const toggle = await screen.findByRole("switch", { name: "Start the service when the launcher starts" });
+    fireEvent.click(toggle);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Error: Settings permission denied");
+    expect(toggle).toHaveProperty("checked", false);
+  });
   it("saves named mirrors without showing URL paths", async () => {
     const settings = { launchOnStartup: false, autoStartService: false, keepWebviewOnTray: false, reducedMotion: false, preventSleep: false, audioEnabled: false, updateChannel: "stable", updateSource: "auto", language: null, downloadSource: "auto", pythonSource: "auto", pypiSource: "auto" };
     bridge.command.mockImplementation(async (name: string, args?: { settings: unknown }) => name === "settings_set" ? args?.settings : name === "settings_get" ? settings : undefined);
@@ -243,6 +266,28 @@ describe("launcher actions", () => {
     expect(bridge.command).toHaveBeenCalledWith("launcher_install_update");
     expect(screen.queryByRole("button", { name: /Run$/ })).toBeNull();
   });
+  it.each(["launcher_start", "launcher_install_update"])(
+    "shows a rejected %s command, keeps the error across snapshots and permits retry",
+    async (name) => {
+      await mount();
+      const updating = name === "launcher_install_update";
+      const state = updating
+        ? { phase: "update_available" as const, update_version: "3.0.4", can_update: true, can_start: false }
+        : {};
+      if (updating) await send(state);
+      bridge.command.mockRejectedValueOnce("This operation is only allowed from a local launcher page.");
+      const label = updating ? /Update launcher/ : /Run$/;
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      expect(await screen.findByText("This operation is only allowed from a local launcher page.")).toBeTruthy();
+      await send({ ...state, sequence: 3 });
+      expect(screen.getByText("This operation is only allowed from a local launcher page.")).toBeTruthy();
+      const errorDialog = screen.getByRole("alertdialog");
+      fireEvent.click(within(errorDialog).getByRole("button", { name: "Close" }));
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      await waitFor(() => expect(bridge.command.mock.calls.filter(([command]) => command === name)).toHaveLength(2));
+      await waitFor(() => expect(screen.queryByText("This operation is only allowed from a local launcher page.")).toBeNull());
+    },
+  );
   it("retries an update check rather than bypassing its failure", async () => {
     await mount();
     await send({

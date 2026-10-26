@@ -686,12 +686,9 @@ async fn retry_backend_connection(
     window: WebviewWindow,
     controller: State<'_, Arc<launcher::Launcher>>,
 ) -> std::result::Result<bool, String> {
-    if window.label() != "main" || !launcher::is_local_page(window.app_handle(), &window) {
-        warn!(
-            "Rejected backend retry from window '{}': url={:?}",
-            window.label(),
-            window.url().map(|url| url.to_string())
-        );
+    // Tauri 的本地 main capability 已校验调用来源，无需再次读取原生 URL。
+    if window.label() != "main" {
+        warn!("Rejected backend retry from window '{}'", window.label());
         return Err(t!("launcher.forbidden").to_string());
     }
     let port = controller.port();
