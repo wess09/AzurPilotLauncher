@@ -79,7 +79,7 @@ struct LauncherUpdateManifest {
 /// 金丝雀通道的版本与平台载荷，结构同清单顶层的正式版字段。
 #[derive(Debug, Deserialize)]
 struct LauncherUpdateChannelManifest {
-    /// 金丝雀版本号（时间戳+提交哈希后缀，如 `3.0.2-canary.20261026.1750.9f3a2b1c`）。
+    /// 金丝雀版本号（提交哈希+UTC 时间戳，如 `3.0.3-canary.a5913db0.20261026100000`）。
     version: String,
     /// 平台标识到对应载荷的映射。
     platforms: HashMap<String, LauncherUpdatePlatform>,
@@ -473,7 +473,6 @@ pub(crate) fn check_update(
 
     // 当前版本、迷你版标记与平台标识共同决定检查结果与下载载荷。
     let current_version = env!("CARGO_PKG_VERSION");
-    let mini_launcher = launcher_version_is_mini(current_version);
     let platform_key = launcher_update_platform_key();
     let manifest_client = match launcher_update_http_client(Some(Duration::from_secs(10)), false) {
         Ok(client) => client,
@@ -502,6 +501,17 @@ pub(crate) fn check_update(
             tracing::warn!("Unable to cache runtime file manifest: {error:#}");
         }
     }
+    select_launcher_update(&manifest, current_version, channel, platform_key)
+}
+
+/// 按所选通道选择版本与同一组平台载荷；与网络和本机版本解耦以验证切换行为。
+fn select_launcher_update(
+    manifest: &LauncherUpdateManifest,
+    current_version: &str,
+    channel: UpdateChannel,
+    platform_key: &str,
+) -> Result<Option<AvailableUpdate>> {
+    let mini_launcher = launcher_version_is_mini(current_version);
     let (latest_version, latest_platforms) = match channel {
         UpdateChannel::Stable => (manifest.version.clone(), &manifest.platforms),
         UpdateChannel::Canary => {
@@ -519,7 +529,7 @@ pub(crate) fn check_update(
             (canary.version.clone(), &canary.platforms)
         }
     };
-    let update_available = launcher_version_is_newer(current_version, &latest_version)
+    let update_available = launcher_version_is_newer(current_version, &latest_version, channel)
         .ok_or_else(|| {
             tracing::warn!(
                 "Launcher update manifest contains an invalid version: {}",
@@ -1530,17 +1540,31 @@ fn launcher_update_platform_key() -> &'static str {
     }
 }
 
-/// 比较版本号，判断 latest 是否严格大于 current。
+/// 按所选通道判断 latest 是否可更新：先比较 core，同号正式版选择金丝雀
+/// 时允许进入预发布，金丝雀选择正式版时允许回到同号正式版。
 ///
 /// # Returns
 /// 任一版本号无法解析时返回 None（调用方按无效清单处理）。
-fn launcher_version_is_newer(current: &str, latest: &str) -> Option<bool> {
+fn launcher_version_is_newer(current: &str, latest: &str, channel: UpdateChannel) -> Option<bool> {
     let current = parse_launcher_version(current)?;
     let latest = parse_launcher_version(latest)?;
-    Some(latest > current)
+    if latest.core != current.core {
+        return Some(latest.core > current.core);
+    }
+    Some(match (current.prerelease_rank, latest.prerelease_rank) {
+        (None, Some(_)) => channel == UpdateChannel::Canary,
+        (Some(_), None) => true,
+        (Some(current), Some(latest)) => latest > current,
+        (None, None) => false,
+    })
 }
 
-/// 解析启动器版本号为可比较的四元组 (major, minor, patch, 后缀序号)。
+struct LauncherVersion {
+    core: (u64, u64, u64),
+    prerelease_rank: Option<u64>,
+}
+
+/// 解析启动器版本号为 core 与可选的预发布序号。
 ///
 /// 支持 `v` 前缀、`-` 预发布后缀与 `+` 构建元数据；后缀序号取预发布段
 /// 末尾的连续数字（如 build.3 -> 3，无数字视为 0），实现 alpha/beta 之类
@@ -1548,7 +1572,7 @@ fn launcher_version_is_newer(current: &str, latest: &str) -> Option<bool> {
 ///
 /// # Returns
 /// 格式非法（缺段、段非数字、后缀非法）时返回 None。
-fn parse_launcher_version(version: &str) -> Option<(u64, u64, u64, u64)> {
+fn parse_launcher_version(version: &str) -> Option<LauncherVersion> {
     let version = version.strip_prefix('v').unwrap_or(version);
     // 构建元数据（+ 后段）只做合法性校验，不参与比较。
     let version = match version.split_once('+') {
@@ -1568,24 +1592,27 @@ fn parse_launcher_version(version: &str) -> Option<(u64, u64, u64, u64)> {
         return None;
     }
     // 后缀序号：取预发布段末尾连续数字并倒序重组（如 rc12 -> 12）。
-    // 正式版（无预发布段）取 u64::MAX，保证同 core 版本下
-    // 3.0.2 > 3.0.2-canary.*（预发布不应高于正式发布，切换通道时能
-    // 从金丝雀回到同号正式版）。
-    let suffix_rank = if suffix.is_empty() {
-        u64::MAX
+    // 正式版显式保留为 None，同号跨通道的更新策略由调用方决定。
+    let prerelease_rank = if suffix.is_empty() {
+        None
     } else {
-        suffix
-            .chars()
-            .rev()
-            .take_while(|c| c.is_ascii_digit())
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>()
-            .parse::<u64>()
-            .unwrap_or(0)
+        Some(
+            suffix
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>()
+                .parse::<u64>()
+                .unwrap_or(0),
+        )
     };
-    Some((major, minor, patch, suffix_rank))
+    Some(LauncherVersion {
+        core: (major, minor, patch),
+        prerelease_rank,
+    })
 }
 
 /// 判断语义化版本后缀是否合法：非空且以 `.` 分隔的各段均由 ASCII 字母、
@@ -2332,20 +2359,91 @@ mod tests {
     /// 版本比较：合法版本可比较，非法版本返回 None。
     #[test]
     fn test_launcher_update_versions_must_be_valid() {
-        assert_eq!(launcher_version_is_newer("2.1.6", "2.1.7"), Some(true));
-        assert_eq!(
-            launcher_version_is_newer("2.1.6", "2.1.6+build.1"),
-            Some(false)
-        );
-        assert_eq!(launcher_version_is_newer("2.1.6", "not-a-version"), None);
-        assert_eq!(launcher_version_is_newer("2.1", "2.1.7"), None);
-        assert_eq!(launcher_version_is_newer("2.1.6", "2.1.7-"), None);
+        let newer = |current: &str, latest: &str| {
+            launcher_version_is_newer(current, latest, UpdateChannel::Stable)
+        };
+        assert_eq!(newer("2.1.6", "2.1.7"), Some(true));
+        assert_eq!(newer("2.1.6", "2.1.6+build.1"), Some(false));
+        assert_eq!(newer("2.1.6", "not-a-version"), None);
+        assert_eq!(newer("2.1", "2.1.7"), None);
+        assert_eq!(newer("2.1.6", "2.1.7-"), None);
     }
 
-    /// 金丝雀版本排序：时间戳后缀单调递增，正式版恒高于同 core 预发布。
+    /// 同主版本号的通道切换应选中目标通道的版本与载荷。
+    #[test]
+    fn launcher_update_selection_respects_selected_channel() {
+        let canary_version = "3.0.3-canary.a5913db0.20261026100000";
+        let platform_key = "windows-x86_64";
+        let mut manifest: LauncherUpdateManifest = serde_json::from_value(serde_json::json!({
+            "version": "3.0.3",
+            "platforms": { platform_key: {
+                "url": "https://updates.example/stable.exe", "sha256": "a".repeat(64)
+            } },
+            "canary": {
+                "version": canary_version,
+                "platforms": { platform_key: {
+                    "url": "https://updates.example/canary.exe", "sha256": "b".repeat(64)
+                } }
+            }
+        }))
+        .unwrap();
+        for (current, channel, expected_version) in [
+            ("3.0.3", UpdateChannel::Stable, None),
+            ("3.0.3", UpdateChannel::Canary, Some(canary_version)),
+            (canary_version, UpdateChannel::Canary, None),
+            (canary_version, UpdateChannel::Stable, Some("3.0.3")),
+            (
+                "3.0.3-canary.ffffffff.20261026090000",
+                UpdateChannel::Canary,
+                Some(canary_version),
+            ),
+            (
+                "3.0.3-canary.00000000.20261026110000",
+                UpdateChannel::Canary,
+                None,
+            ),
+            ("3.0.4", UpdateChannel::Canary, None),
+            (
+                "3.0.4-canary.00000000.20261026110000",
+                UpdateChannel::Stable,
+                None,
+            ),
+            ("3.0.2", UpdateChannel::Canary, Some(canary_version)),
+            (
+                "3.0.2-canary.00000000.20261026110000",
+                UpdateChannel::Stable,
+                Some("3.0.3"),
+            ),
+        ] {
+            let update = select_launcher_update(&manifest, current, channel, platform_key).unwrap();
+            assert_eq!(
+                update.as_ref().map(|update| update.version.as_str()),
+                expected_version,
+                "current={current}, channel={channel:?}"
+            );
+            if let Some(update) = update {
+                let (url, digest) = match channel {
+                    UpdateChannel::Stable => ("https://updates.example/stable.exe", "a".repeat(64)),
+                    UpdateChannel::Canary => ("https://updates.example/canary.exe", "b".repeat(64)),
+                };
+                assert_eq!(update.payload.url, url);
+                assert_eq!(update.payload.sha256, digest);
+            }
+        }
+        manifest.canary = None;
+        assert!(
+            select_launcher_update(&manifest, "3.0.3", UpdateChannel::Canary, platform_key)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// 金丝雀版本排序：时间戳后缀单调递增，正式通道优先同号正式版。
     #[test]
     fn test_launcher_update_channel_version_ordering() {
-        let newer = |current: &str, latest: &str| launcher_version_is_newer(current, latest);
+        let newer = |current: &str, latest: &str| {
+            launcher_version_is_newer(current, latest, UpdateChannel::Stable)
+        };
         assert_eq!(
             newer(
                 "3.0.2-canary.9f3a2b1c.20261026175030",
