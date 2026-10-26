@@ -283,7 +283,7 @@ launcher:
   error: "操作未完成"
   launch_failed: "啟動失敗"
   packing_log: "正在打包日誌"
-  need_log_help: "如需協助，請下載錯誤日誌並傳送給對方，而不是截圖或拍攝這個介面。"
+  need_log_help: "如需協助，請下載錯誤日誌並傳送給對方，而不是截圖或拍攝這個介面。畫出來也不行！"
   not_supported: "目前平台不支援"
   settings: "設定"
   settings_language: "介面語言"

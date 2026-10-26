@@ -283,7 +283,7 @@ launcher:
   error: "Something went wrong"
   launch_failed: "Launch failed"
   packing_log: "Packing logs"
-  need_log_help: "If you need help, download the error log and send it to us — don't screenshot or photograph this window."
+  need_log_help: "If you need help, download the error log and send it to us — don't screenshot or photograph this window. Drawing it isn't OK either!"
   not_supported: "Not supported on this platform"
   settings: "Settings"
   settings_language: "Language"
