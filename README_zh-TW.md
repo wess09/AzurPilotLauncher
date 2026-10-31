@@ -340,8 +340,8 @@ graph TD
     </tr>
     <tr>
       <td><b>Node.js（建置前端）</b></td>
-      <td><img src="https://img.shields.io/badge/缺失-明確提示-orange?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
-      <td>首次啟動建置 WebUI 需要 Node.js / npm；未安裝時啟動器會明確報錯並引導安裝後再啟動</td>
+      <td><img src="https://img.shields.io/badge/缺失-自動下載-22c55e?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
+      <td>建置 WebUI 前自動檢查 Node.js / npm；缺失或過舊時自動下載通過驗證的可攜式執行環境，無需手動安裝</td>
     </tr>
   </tbody>
 </table>
@@ -413,7 +413,7 @@ graph TD
 | 3 | **依賴版本鎖定** | Python 套件由啟動器在本機呼叫 uv，按專案鎖定檔同步 |
 | 4 | **adb 策略** | 不再重新啟動與替換 adb |
 | 5 | **目錄結構調整** | Python 環境位於 `.venv`，Git/ADB 位於 `.azurpilot/tools`，兩者獨立維護 |
-| 6 | **本機建置前端** | Python 依賴就緒後由 deploy 腳本呼叫 Node.js/npm 建置 WebUI |
+| 6 | **本機建置前端** | Python 依賴就緒後自動補齊 Node.js/npm，再由 deploy 腳本建置 WebUI |
 
 ---
 

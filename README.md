@@ -340,8 +340,8 @@ graph TD
     </tr>
     <tr>
       <td><b>Node.js（构建前端）</b></td>
-      <td><img src="https://img.shields.io/badge/缺失-明确提示-orange?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
-      <td>首次启动构建 WebUI 需要 Node.js / npm；未安装时启动器会明确报错并引导安装后再启动</td>
+      <td><img src="https://img.shields.io/badge/缺失-自动下载-22c55e?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
+      <td>构建 WebUI 前自动检查 Node.js / npm；缺失或过旧时自动下载校验过的便携运行时，无需手动安装</td>
     </tr>
   </tbody>
 </table>
@@ -413,7 +413,7 @@ graph TD
 | 3 | **依赖版本锁定** | Python 包由启动器在本机调用 uv，按项目锁文件同步 |
 | 4 | **adb 策略** | 不再重启和替换 adb |
 | 5 | **目录结构调整** | Python 环境位于 `.venv`，Git/ADB 位于 `.azurpilot/tools`，两者独立维护 |
-| 6 | **本机构建前端** | Python 依赖就绪后由 deploy 脚本调用 Node.js/npm 构建 WebUI |
+| 6 | **本机构建前端** | Python 依赖就绪后自动补齐 Node.js/npm，再由 deploy 脚本构建 WebUI |
 
 ---
 

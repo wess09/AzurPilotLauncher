@@ -834,7 +834,7 @@ fn validate_files(id: &str, files: &BTreeMap<String, u64>) -> Result<()> {
 }
 
 /// 不跟随已有符号链接、junction 或挂载点，避免管理员进程写出安装目录。
-fn secure_target(root: &Path, name: &str) -> Result<PathBuf> {
+pub(crate) fn secure_target(root: &Path, name: &str) -> Result<PathBuf> {
     let relative = relative(name)?;
     let mut path = root.to_path_buf();
     for part in relative.components() {

@@ -340,8 +340,8 @@ graph TD
     </tr>
     <tr>
       <td><b>Node.js (frontend build)</b></td>
-      <td><img src="https://img.shields.io/badge/Missing-Clear%20prompt-orange?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
-      <td>The first launch needs Node.js / npm to build the WebUI; when absent the launcher reports a clear error and guides you to install it first</td>
+      <td><img src="https://img.shields.io/badge/Missing-Auto%20download-22c55e?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
+      <td>Checks Node.js / npm before building the WebUI and automatically downloads a verified portable runtime if missing or outdated</td>
     </tr>
   </tbody>
 </table>
@@ -413,7 +413,7 @@ Compared with the bundled Electron launcher of [AzurLaneAutoScript](https://gith
 | 3 | **Pinned dependency versions** | Python packages are synced on this machine by uv according to the project lock file |
 | 4 | **adb policy** | adb is no longer restarted or replaced |
 | 5 | **Adjusted directory layout** | The Python environment lives in `.venv` while Git/ADB live in `.azurpilot/tools`, maintained independently |
-| 6 | **Local frontend build** | Once Python dependencies are ready the deploy script builds the WebUI via Node.js/npm |
+| 6 | **Local frontend build** | Once Python dependencies are ready, automatically prepare Node.js/npm, then build the WebUI through the deploy script |
 
 ---
 

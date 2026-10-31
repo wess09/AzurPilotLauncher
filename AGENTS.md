@@ -6,7 +6,7 @@
 
 ## 项目概述
 
-AzurPilot Launcher：[AzurLaneAutoScript](https://github.com/LmeSzinc/AzurLaneAutoScript) 的跨平台（Windows/macOS/Linux）桌面启动器，**Tauri 2 + Rust**，`frontend/` 使用 React + TypeScript + Vite，生产静态资源由 Tauri 内嵌。启动器 exe 仅内嵌 uv；**部署**只下载 CI 打包的 git/adb 二进制组件与后端 master 上的 deploy 脚本/模板（raw 直连 CNB/GitHub，见 `docs/runtime-components.md`）；**启动**由内嵌 uv 安装最新稳定 Python 3.14.x、运行 `deploy.git` 拉取仓库源码与资源、uv sync 同步依赖后由 `deploy.app` 构建前端（无 Node.js 时报错），再启动 `gui.py`。源码、资源、Python、依赖与前端一律不经 CI 构建。
+AzurPilot Launcher：[AzurLaneAutoScript](https://github.com/LmeSzinc/AzurLaneAutoScript) 的跨平台（Windows/macOS/Linux）桌面启动器，**Tauri 2 + Rust**，`frontend/` 使用 React + TypeScript + Vite，生产静态资源由 Tauri 内嵌。启动器 exe 仅内嵌 uv；**部署**只下载 CI 打包的 git/adb 二进制组件与后端 master 上的 deploy 脚本/模板（raw 直连 CNB/GitHub，见 `docs/runtime-components.md`）；**启动**由内嵌 uv 安装最新稳定 Python 3.14.x、运行 `deploy.git` 拉取仓库源码与资源、uv sync 同步依赖，自动补齐 Node.js 后由 `deploy.app` 构建前端，再启动 `gui.py`。源码、资源、Python、依赖与前端一律不经 CI 构建。
 
 ## 常用命令
 
@@ -37,6 +37,7 @@ cargo check            # 仅检查编译
 - `src/main.rs`：模块入口、日志、信任登录、时间炸弹及通用窗口/文件命令。
 - `src/components.rs`：`.azurpilot/tools/` 下 git/adb 二进制组件的按需下载、ZIP 校验、事务提交/恢复，以及 deploy 引导脚本/模板的仓库 raw 直连下载（跟随 master，按系统选模板，`config/` 下 json 一律不碰）。
 - `src/setup.rs`：内嵌 uv 引导、Python 3.14.x 安装与可重定位 `.venv`、deploy 脚本驱动的 git 拉取/前端构建/uv sync（多镜像回退）、配置迁移与用户主动环境修复。
+- `src/nodejs.rs`：构建后端前端前检测 Node.js/npm；缺失或版本不足时自动下载带固定 SHA-256 的 Node.js 24 便携包，放入 `.azurpilot/tools/nodejs/`，仅设置构建子进程 PATH。三平台均支持 x64/ARM64，解压复用 `.venv` Python，不修改系统 Node.js。
 - `src/sources.rs`：自动下载平台选择、Python/PyPI 镜像预设；系统简体中文且北京时间才优先 CNB，否则 GitHub。
 - `src/backend.rs` / `backend_process.rs`：后端进程组与 Windows Job，退出不连带关闭独立模拟器。
 - `src/backend_env.rs`：同时注入 `AP_` / `ALAS_` 后端环境协议，双归属标记均匹配时才兜底清理子进程。

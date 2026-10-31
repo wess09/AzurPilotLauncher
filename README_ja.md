@@ -340,8 +340,8 @@ graph TD
     </tr>
     <tr>
       <td><b>Node.js（フロントエンド構築）</b></td>
-      <td><img src="https://img.shields.io/badge/不足-明確な案内-orange?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
-      <td>初回起動時の WebUI 構築には Node.js / npm が必要です。未導入の場合はランチャーが明確にエラーを表示し、導入を案内します</td>
+      <td><img src="https://img.shields.io/badge/不足-自動ダウンロード-22c55e?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js"></td>
+      <td>WebUI 構築前に Node.js / npm を確認し、未導入または古い場合は検証済みのポータブル実行環境を自動ダウンロードします</td>
     </tr>
   </tbody>
 </table>
@@ -413,7 +413,7 @@ graph TD
 | 3 | **依存バージョンの固定** | Python パッケージはランチャーがローカルの uv でプロジェクトのロックファイルに従い同期 |
 | 4 | **adb ポリシー** | adb の再起動・置き換えは行いません |
 | 5 | **ディレクトリ構成の変更** | Python 環境は `.venv` に、Git/ADB は `.azurpilot/tools` に置かれ、独立して管理されます |
-| 6 | **ローカルでのフロントエンド構築** | Python 依存の準備完了後、deploy スクリプトが Node.js/npm で WebUI を構築します |
+| 6 | **ローカルでのフロントエンド構築** | Python 依存の準備完了後、Node.js/npm を自動で用意し、deploy スクリプトで WebUI を構築します |
 
 ---
 

@@ -1232,20 +1232,30 @@ gm.git_install()
 /// 经内嵌 Python 脚本调用 `deploy.app.AppManager` 构建前端资源。
 ///
 /// 复用上游 `ensure_frontend`：已有匹配指纹的 dist 直接跳过；缺失时经
-/// npm 安装依赖并构建（镜像源回退由上游实现）。无 Node.js 的机器会以
-/// 上游报错退出，错误信息进入错误页。
+/// npm 安装依赖并构建（镜像源回退由上游实现）。构建前自动补齐 Node.js，
+/// 将选中的运行时目录仅注入构建子进程的 PATH。
 ///
 /// # Errors
 /// 用户取消、子进程启动失败或非零退出时返回 Err。
 fn app_update(
-    status_updater: impl FnMut(SplashUpdate),
-    cancel_requested: &AtomicBool,
+    mut status_updater: impl FnMut(SplashUpdate),
+    cancel_requested: &Arc<AtomicBool>,
+    sources: &Preferences,
 ) -> Result<()> {
+    let node_bin = crate::nodejs::ensure(
+        &azurpilot_repo_dir(),
+        &venv_python(),
+        cancel_requested.clone(),
+        sources,
+        &mut status_updater,
+    )
+    .with_context(|| t!("dialog.nodejs_install_failed").to_string())?;
     let script = "import deploy.app\ndeploy.app.AppManager().app_update()\n";
     let mut cmd = Command::new(venv_python());
     cmd.args(["-u", "-c", script]);
     isolate_python_child_environment(&mut cmd);
     bypass_proxy_for_child(&mut cmd);
+    crate::nodejs::configure_command(&mut cmd, &node_bin)?;
     run_command(&mut cmd, status_updater, ScriptPhase::App, cancel_requested)
 }
 
@@ -1253,7 +1263,7 @@ fn app_update(
 fn sync_dependencies_and_frontend(
     mut status_updater: impl FnMut(SplashUpdate),
     bootstrap_uv: &Path,
-    cancel_requested: &AtomicBool,
+    cancel_requested: &Arc<AtomicBool>,
     sources: &Preferences,
     build_frontend: bool,
 ) -> Result<()> {
@@ -1271,7 +1281,7 @@ fn sync_dependencies_and_frontend(
             )
             .with_subtitle(t!("setup.syncing", tip = get_tip())),
         );
-        app_update(&mut status_updater, cancel_requested)?;
+        app_update(&mut status_updater, cancel_requested, sources)?;
     }
     Ok(())
 }
@@ -2937,7 +2947,7 @@ mod tests {
         fs::create_dir_all(root.path().join("deploy")).unwrap();
         fs::write(root.path().join("deploy/app.py"), "from rich.console import Console\nfrom pathlib import Path\nclass AppManager:\n    def app_update(self):\n        Console()\n        Path('frontend-ready').write_text('dependencies installed first')\n").unwrap();
         let uv = bootstrap_uv_path().unwrap();
-        let cancel = AtomicBool::new(false);
+        let cancel = Arc::new(AtomicBool::new(false));
         let mut sources = Preferences::default();
         sources.python_source = crate::sources::PythonSource::Astral;
         sources.pypi_source = crate::sources::PypiSource::Pypi;

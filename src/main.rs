@@ -21,6 +21,8 @@ mod launcher;
 /// 本机启动器 WS：控制、通知、心跳与免密票据。
 mod launcher_control;
 mod launcher_protocol;
+/// 后端前端构建所需的 Node.js 检测与便携运行时自动下载。
+mod nodejs;
 /// 平台原生通知与点击回调。
 mod notify;
 /// “阻止计算机自动睡眠”设置对应的三平台电源锁。

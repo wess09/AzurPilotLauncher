@@ -26,7 +26,7 @@ cargo test --locked --all-targets
 cargo build --locked --release --features custom-protocol
 ```
 
-Windows 的 Rust 测试和启动器均需要管理员终端。发布必须先构建前端并启用 `custom-protocol`，否则 debug 配置会使用开发服务器。`build.rs` 不执行 npm 安装。生产字体、视频、JS 和 CSS 均由 Tauri 内嵌，用户运行首页不需要 Node.js；后端 WebUI 在点击启动后由 deploy 脚本构建，需要本机 Node.js。
+Windows 的 Rust 测试和启动器均需要管理员终端。发布必须先构建前端并启用 `custom-protocol`，否则 debug 配置会使用开发服务器。`build.rs` 不执行 npm 安装。生产字体、视频、JS 和 CSS 均由 Tauri 内嵌，用户运行首页不需要 Node.js；后端 WebUI 在点击启动后由 deploy 脚本构建，构建前启动器会自动检查 Node.js/npm，缺失或过旧时下载经过 SHA-256 校验的便携运行时，无需用户手动安装。
 
 ## 用户流程
 

@@ -47,7 +47,8 @@
 3. 迁移 `config/deploy.yaml`（优先以下载的平台模板为起点，写入 Python、独立工具目录路径与 `InstallDependencies: true`）；
 4. 运行 `deploy.git.GitManager` 经 git/GitOverCDN 拉取仓库源码与资源；
 5. `uv sync --no-dev --no-install-project` 按 `uv.lock` 同步依赖，多 PyPI 镜像重锁回退；
-6. 依赖安装完成后运行 `deploy.app`（`ensure_frontend`）构建前端；无 Node.js 的机器明确报错进入错误页。
+6. 检查 Node.js 和 npm：优先复用启动器私有运行时或系统中 Node.js ≥22.12.0 且带 npm 的环境；缺失或过旧时自动下载 Node.js 24.22.2 便携包（Windows ZIP、macOS/Linux tar.gz，均支持 x64/ARM64），使用内置官方 SHA-256 校验后由 `.venv` Python 解压到暂存目录，确认可执行后替换 `.azurpilot/tools/nodejs/` 下对应版本目录。国内源偏好先用 npm 镜像，否则先用 Node.js 官方源，失败后回退另一源；取消或失败保留原有环境。仅为构建子进程设置 PATH，不修改系统安装或系统 PATH。
+7. 运行 `deploy.app`（`ensure_frontend`）构建前端；已有匹配指纹的 dist 由上游跳过。
 
 启动 gui.py 时清除旧的 `AZURPILOT_PREBUILT` 标记，只设置 `AZURPILOT_NO_UV_BOOTSTRAP=1`。后端使用正常源码模式，不再检查旧六组件协议。Git/ADB 保存在 `.azurpilot/tools/`，与 Python 的 `.venv` 生命周期分开。
 
