@@ -8,7 +8,7 @@
 //! - 迁移与校验 `config/deploy.yaml` 部署配置（`migrate_dependency_config`）；
 //! - 运行 deploy 脚本拉取仓库代码（`git_update`，最多重试 20 次）；
 //! - 按 `uv.lock` 同步 Python 依赖，再构建前端（`app_update`）；
-//! - 用户主动修复时，重下组件并仅重建 `.venv`，保留代码、配置与缓存。
+//! - 用户主动修复时，重下组件与 deploy 引导文件、重建 `.venv`，保留其他代码、用户配置与缓存。
 //!
 //! 阶段进度通过 [`SplashUpdate`] 回调上报启动画面；所有长时间操作均支持
 //! 经 `cancel_requested` 原子标志请求取消。
@@ -530,7 +530,7 @@ pub fn setup_azurpilot_repo(
     Ok(())
 }
 
-/// 用户主动修复：重下 git/adb 引导组件、删除 `.venv` 并重建工具与依赖。
+/// 用户主动修复：替换 git/adb 组件与 deploy 引导文件、删除 `.venv` 并重建工具与依赖。
 ///
 /// 与完整 setup 不同，此流程跳过 git 更新；只在用户确认后执行。
 ///

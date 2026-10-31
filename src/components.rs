@@ -457,8 +457,10 @@ fn install(
                     warn!("Using complete installed runtime offline: {error:#}");
                     return Ok(());
                 }
-                old.as_ref().map(|r| r.manifest.clone())
-                    .or_else(|| cached_manifest(root)).ok_or(error)?
+                old.as_ref()
+                    .map(|r| r.manifest.clone())
+                    .or_else(|| cached_manifest(root))
+                    .ok_or(error)?
             }
         }
     };
@@ -526,7 +528,7 @@ fn apply_manifest(
         }
     }
     let bootstrap_files =
-        download_deploy_bootstrap(root, &manifest, client, &cancel, sources, progress)?;
+        download_deploy_bootstrap(root, &manifest, client, &cancel, sources, repair, progress)?;
     let receipt = Receipt {
         manifest: manifest.clone(),
         platform: platform(),
@@ -596,12 +598,14 @@ pub(crate) fn platform_template_file(sources: &Preferences) -> &'static str {
 ///
 /// 清单跟随 master：文件内容不锁定摘要，双源（国内优先 CNB）按序回退，
 /// 每个文件原子写入；任一必需文件全源失败时部署失败。
+/// 普通部署只补齐缺失/空文件，显式修复重新下载并替换全部清单文件。
 fn download_deploy_bootstrap(
     root: &Path,
     manifest: &Manifest,
     client: &Client,
     cancel: &Arc<AtomicBool>,
     sources: &Preferences,
+    repair: bool,
     progress: &mut impl FnMut(SplashUpdate),
 ) -> Result<BTreeSet<String>> {
     let template = platform_template_file(sources);
@@ -623,8 +627,8 @@ fn download_deploy_bootstrap(
     let total = files.len();
     for (index, name) in files.iter().enumerate() {
         ensure_not_cancelled(cancel)?;
-        // Git 接管后允许脚本正常更新，只补缺失/空文件，不覆盖已存在的脚本。
-        if bootstrap_file_ready(root, name) {
+        // 普通部署保留 Git 接管后的文件，显式修复覆盖已有脚本与系统模板。
+        if !repair && bootstrap_file_ready(root, name) {
             continue;
         }
         progress(SplashUpdate::loading(
@@ -1177,7 +1181,33 @@ mod tests {
     fn explicit_repair_redownloads_cached_components_and_overwrites_existing_files() {
         let root = tempfile::tempdir().unwrap();
         let mut manifest = fixture(root.path(), 1);
+        manifest
+            .deploy
+            .files
+            .push("deploy/git_over_cdn/client.py".into());
         apply(root.path(), manifest.clone()).unwrap();
+        let sources = Preferences {
+            download_source: DownloadSource::Github,
+            ..Default::default()
+        };
+        let bootstrap_files: Vec<_> = manifest
+            .deploy
+            .files
+            .iter()
+            .filter(|name| name.starts_with("deploy/"))
+            .map(String::as_str)
+            .chain(std::iter::once(platform_template_file(&sources)))
+            .map(str::to_owned)
+            .collect();
+        let preserved = [
+            ("config/deploy.yaml", "Deploy: {}"),
+            ("config/user.json", "{}"),
+            ("custom.py", "# user code"),
+            ("deploy/custom.py", "# unlisted user script"),
+        ];
+        for (name, contents) in preserved {
+            fs::write(root.path().join(name), contents).unwrap();
+        }
         let receipt = read_receipt(root.path()).unwrap();
         let git = receipt.components["git"].files.keys().next().unwrap();
         let original = fs::read(root.path().join(git)).unwrap();
@@ -1191,7 +1221,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let address = listener.local_addr().unwrap();
-        let payloads: Vec<_> = manifest.platforms[&platform()]
+        let mut payloads: Vec<_> = manifest.platforms[&platform()]
             .iter()
             .map(|c| {
                 fs::read(
@@ -1201,9 +1231,15 @@ mod tests {
                 .unwrap()
             })
             .collect();
+        payloads.extend(
+            bootstrap_files
+                .iter()
+                .map(|name| format!("# refreshed {name}\n").into_bytes()),
+        );
         for component in manifest.platforms.get_mut(&platform()).unwrap() {
             component.urls = vec![format!("http://{address}/{}", component.id)];
         }
+        manifest.deploy.bases = vec![format!("http://{address}")];
         let server = thread::spawn(move || {
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             let mut requests = Vec::new();
@@ -1214,7 +1250,7 @@ mod tests {
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                             assert!(
                                 std::time::Instant::now() < deadline,
-                                "repair did not redownload a cached component"
+                                "repair did not redownload a component or bootstrap file"
                             );
                             thread::sleep(Duration::from_millis(10));
                         }
@@ -1246,13 +1282,63 @@ mod tests {
             Some(receipt.clone()),
             &client().unwrap(),
             true,
-            &Preferences::default(),
+            &sources,
         )
         .unwrap();
         let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 2 + bootstrap_files.len());
         assert!(requests[0].starts_with("GET /git "));
         assert!(requests[1].starts_with("GET /adb "));
+        for (index, name) in bootstrap_files.iter().enumerate() {
+            assert!(requests[index + 2].starts_with(&format!("GET /{name} ")));
+            assert_eq!(
+                fs::read_to_string(root.path().join(name)).unwrap(),
+                format!("# refreshed {name}\n")
+            );
+        }
+        for (name, contents) in preserved {
+            assert_eq!(
+                fs::read_to_string(root.path().join(name)).unwrap(),
+                contents
+            );
+        }
+        for name in &receipt.manifest.deploy.files {
+            if name.starts_with("config/") && name != platform_template_file(&sources) {
+                assert_eq!(
+                    fs::read_to_string(root.path().join(name)).unwrap(),
+                    "# bootstrap"
+                );
+            }
+        }
         assert_eq!(fs::read(root.path().join(git)).unwrap(), original);
+        assert!(!deployment_required(root.path()));
+    }
+
+    #[test]
+    fn failed_bootstrap_repair_preserves_existing_files() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = fixture(root.path(), 1);
+        apply(root.path(), manifest.clone()).unwrap();
+        let receipt = fs::read(root.path().join(RECEIPT)).unwrap();
+
+        // 清单的 raw 源不可访问：修复必须报错，不能跳过已有文件而误报成功。
+        assert!(download_deploy_bootstrap(
+            root.path(),
+            &manifest,
+            &client().unwrap(),
+            &Arc::new(AtomicBool::new(false)),
+            &Preferences::default(),
+            true,
+            &mut |_| {},
+        )
+        .is_err());
+        for name in &manifest.deploy.files {
+            assert_eq!(
+                fs::read_to_string(root.path().join(name)).unwrap(),
+                "# bootstrap"
+            );
+        }
+        assert_eq!(fs::read(root.path().join(RECEIPT)).unwrap(), receipt);
         assert!(!deployment_required(root.path()));
     }
 
@@ -1524,6 +1610,10 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert!(requests[0].contains(platform_template_file(&sources)));
         assert!(!deployment_required(root.path()));
+        assert_eq!(
+            fs::read_to_string(root.path().join(BOOTSTRAP_MARKER)).unwrap(),
+            "# already downloaded"
+        );
         assert_eq!(
             fs::read_to_string(root.path().join("config/user.json")).unwrap(),
             "keep"

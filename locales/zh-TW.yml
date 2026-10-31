@@ -326,7 +326,7 @@ launcher:
   export_gui_log: "匯出 WebUI 日誌"
   details: "檢視錯誤詳情"
   repair_title: "重建執行環境？"
-  repair_body: "重新部署 Python、ADB 與依賴。程式碼、設定、日誌與已下載的元件包會保留。完成後不會自動啟動。"
+  repair_body: "重新下載並替換 Git、ADB、deploy 腳本及系統範本，重建 Python 與依賴。保留其他程式碼、使用者設定、日誌與下載快取。完成後請手動啟動。"
   repair_confirm: "開始修復"
   cancel: "取消"
   click_cancel_hint: "點擊取消"

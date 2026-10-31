@@ -326,7 +326,7 @@ launcher:
   export_gui_log: "Export WebUI log"
   details: "Error details"
   repair_title: "Rebuild the runtime environment?"
-  repair_body: "Redeploy Python, ADB, and dependencies. Code, settings, logs, and downloaded component archives are kept. Launch manually when repair completes."
+  repair_body: "Download and replace Git, ADB, deploy scripts, and the system template, then rebuild Python and dependencies. Other code, user settings, logs, and download caches are kept. Launch manually when repair completes."
   repair_confirm: "Start repair"
   cancel: "Cancel"
   click_cancel_hint: "Click to cancel"

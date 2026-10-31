@@ -29,7 +29,7 @@
 | `adb` | Google platform-tools 的 adb 及其 DLL/许可，安装到 `.azurpilot/tools/adb/` |
 | `deploy` | 非组件：清单列出 `deploy/**` 部署脚本与 `config/deploy.template*.yaml` 四个分系统模板的 raw 下载路径。启动器按 `DownloadSource` 排序双源逐文件下载（非空校验、原子写入），`config/` 下的 json 等其余文件一律不下载、不修改 |
 
-deploy 引导文件按清单逐项检查，只下载缺失或为空的脚本和当前系统模板。全部就绪后才提交部署记录；中途失败后再次点击会补齐剩余文件。已有非空文件由 git 更新接管，不被引导下载覆盖。模板选择与后端 `get_deploy_template` 一致：Windows 用 `deploy.template.yaml`、macOS/Linux 用 `deploy.template-linux.yaml`，国内网络环境（系统简体中文且北京时间，或显式选择 CNB）自动改用对应 `-cn` 变体。
+普通部署时，deploy 引导文件按清单逐项检查，只下载缺失或为空的脚本和当前系统模板。全部就绪后才提交部署记录；中途失败后再次点击会补齐剩余文件。已有非空文件由 git 更新接管，普通部署不覆盖；显式环境修复会重新下载并替换清单中的全部 `deploy/` 脚本和当前系统模板。模板选择与后端 `get_deploy_template` 一致：Windows 用 `deploy.template.yaml`、macOS/Linux 用 `deploy.template-linux.yaml`，国内网络环境（系统简体中文且北京时间，或显式选择 CNB）自动改用对应 `-cn` 变体。
 
 ## 部署与启动流程
 
@@ -51,7 +51,7 @@ deploy 引导文件按清单逐项检查，只下载缺失或为空的脚本和�
 
 启动 gui.py 时清除旧的 `AZURPILOT_PREBUILT` 标记，只设置 `AZURPILOT_NO_UV_BOOTSTRAP=1`。后端使用正常源码模式，不再检查旧六组件协议。Git/ADB 保存在 `.azurpilot/tools/`，与 Python 的 `.venv` 生命周期分开。
 
-环境修复（首页确认后）：优先读取当前线上清单，忽略现有组件和 ZIP 缓存，重新联网下载 git/adb ZIP，经原有 ZIP SHA-256 校验后覆盖安装，再删除并重建 `.venv`（Python + requests + uv sync）。保留代码、配置、日志；下载失败或取消不会预先删除原组件和有效缓存。运行中必须先停止服务，修复完成后等待用户点击启动。
+环境修复（首页确认后）：优先读取当前线上清单，忽略现有组件和 ZIP 缓存，重新联网下载 git/adb ZIP，经原有 ZIP SHA-256 校验后覆盖安装；同时从仓库 raw 源重新下载并逐文件原子替换清单中的全部 `deploy/` 脚本和当前系统模板，不再跳过已有非空文件。随后删除并重建 `.venv`（Python + requests + uv sync）。保留其他代码、用户配置（包括 `config/deploy.yaml` 与 JSON）、日志和清单外文件；下载失败或取消不会预先删除原组件、引导文件和有效缓存，已完成替换的引导文件保留。运行中必须先停止服务，修复完成后等待用户点击启动。
 
 ## 校验、取消与恢复
 

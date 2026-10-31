@@ -326,7 +326,7 @@ launcher:
   export_gui_log: "WebUI ログを保存"
   details: "エラーの詳細"
   repair_title: "実行環境を再構築しますか？"
-  repair_body: "Python・ADB・依存関係を再配置します。コード、設定、ログ、ダウンロード済みパッケージは保持されます。完了後は手動で起動してください。"
+  repair_body: "Git・ADB・deploy スクリプト・システム用テンプレートを再ダウンロードして置き換え、Python と依存関係を再構築します。その他のコード、ユーザー設定、ログ、ダウンロードキャッシュは保持されます。完了後は手動で起動してください。"
   repair_confirm: "修復を開始"
   cancel: "キャンセル"
   click_cancel_hint: "クリックでキャンセル"
