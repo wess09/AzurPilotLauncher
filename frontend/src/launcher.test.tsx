@@ -117,7 +117,7 @@ describe("launcher actions", () => {
     fireEvent.click(screen.getByRole("option", { name: "Taobao mirror" }));
     await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", { settings: { ...settings, pythonSource: "npmmirror" } }));
   });
-  it("saves the Node.js mirror independently and restores it when reopening settings", async () => {
+  it("saves the Node.js mirror independently and restores it after restarting the launcher", async () => {
     let settings = { launchOnStartup: false, autoStartService: false, keepWebviewOnTray: false, reducedMotion: false, preventSleep: false, audioEnabled: false, updateChannel: "stable", updateSource: "auto", language: null, downloadSource: "auto", pythonSource: "npmmirror", nodejsSource: "auto", pypiSource: "auto" };
     bridge.command.mockImplementation(async (name: string, args?: { settings: typeof settings }) => {
       if (name === "settings_set" && args) settings = args.settings;
@@ -130,8 +130,10 @@ describe("launcher actions", () => {
     expect(options.map(option => option.textContent)).toEqual(["Auto", "Taobao mirror", "Nanjing University", "Official source"]);
     fireEvent.click(screen.getByRole("option", { name: "Nanjing University" }));
     await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", { settings: { ...settings, nodejsSource: "nju", pythonSource: "npmmirror" } }));
-    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Close" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    // 重挂载验证保存值，避免依赖 Fluent UI 关闭弹窗时在 jsdom 中异步恢复焦点。
+    cleanup();
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     const restored = await screen.findByRole("combobox", { name: "Node.js source" });
     expect(restored.textContent).toContain("Nanjing University");
   });
