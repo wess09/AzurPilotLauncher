@@ -25,10 +25,11 @@ export const languageOptions = [
   { value: "en", label: "English" },
 ] as const;
 
-type SourceLabel = "download" | "python" | "pypi" | "hint" | "auto" | "cnb" | "github" | "nju" | "ustc" | "npmmirror" | "aliyun" | "astral" | "pypi_name" | "tsinghua" | "tencent" | "huawei";
+type SourceLabel = "download" | "python" | "nodejs" | "pypi" | "hint" | "auto" | "official" | "cnb" | "github" | "nju" | "ustc" | "npmmirror" | "aliyun" | "astral" | "pypi_name" | "tsinghua" | "tencent" | "huawei";
 const sourceGroups = [
   { field: "downloadSource", label: "download", options: ["auto", "cnb", "github"] },
   { field: "pythonSource", label: "python", options: ["auto", "nju", "ustc", "npmmirror", "aliyun", "cnb", "astral"] },
+  { field: "nodejsSource", label: "nodejs", options: ["auto", "npmmirror", "nju", "official"] },
   { field: "pypiSource", label: "pypi", options: ["auto", "pypi", "tsinghua", "ustc", "aliyun", "tencent", "huawei", "nju"] },
 ] as const;
 
@@ -97,6 +98,7 @@ export function SettingsDialog({
       language: null,
       downloadSource: "auto",
       pythonSource: "auto",
+      nodejsSource: "auto",
       pypiSource: "auto",
     };
     void command<LauncherSettings>("settings_get")

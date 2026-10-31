@@ -615,7 +615,7 @@ export function App() {
       {settingsOpen && (
         <SettingsDialog
           title={t("settings")}
-          sourceLabels={{ download: t("settings_download_source"), python: t("settings_python_source"), pypi: t("settings_pypi_source"), hint: t("settings_sources_hint"), auto: t("source_auto"), cnb: t("source_cnb"), github: t("source_github"), nju: t("source_nju"), ustc: t("source_ustc"), npmmirror: t("source_npmmirror"), aliyun: t("source_aliyun"), astral: t("source_astral"), pypi_name: t("source_pypi"), tsinghua: t("source_tsinghua"), tencent: t("source_tencent"), huawei: t("source_huawei") }}
+          sourceLabels={{ download: t("settings_download_source"), python: t("settings_python_source"), nodejs: t("settings_nodejs_source"), pypi: t("settings_pypi_source"), hint: t("settings_sources_hint"), auto: t("source_auto"), official: t("source_official"), cnb: t("source_cnb"), github: t("source_github"), nju: t("source_nju"), ustc: t("source_ustc"), npmmirror: t("source_npmmirror"), aliyun: t("source_aliyun"), astral: t("source_astral"), pypi_name: t("source_pypi"), tsinghua: t("source_tsinghua"), tencent: t("source_tencent"), huawei: t("source_huawei") }}
           platform={context.platform}
           languageLabel={t("settings_language")}
           autoLanguageLabel={t("lang_auto")}

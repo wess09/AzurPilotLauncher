@@ -254,9 +254,11 @@ tips:
 launcher:
   settings_download_source: "コンポーネントの取得元"
   settings_python_source: "Python の取得元"
+  settings_nodejs_source: "Node.js の取得元"
   settings_pypi_source: "PyPI の取得元"
-  settings_sources_hint: "自動：システム言語が簡体字中国語でタイムゾーンが北京の場合は CNB、それ以外は GitHub を優先します。Python と PyPI のミラーはデプロイと修復時に適用されます。"
+  settings_sources_hint: "自動：システム言語が簡体字中国語で北京時間の場合は中国国内のミラー、それ以外は公式を優先します。Node.js のミラーは個別に選択でき、失敗時は別の取得元に切り替えます。使用可能な実行環境は再利用します。"
   source_auto: "自動"
+  source_official: "公式"
   source_cnb: "CNB"
   source_github: "GitHub"
   source_nju: "南京大学"

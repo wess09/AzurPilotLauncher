@@ -137,6 +137,7 @@ impl Store {
             sources: crate::sources::Preferences {
                 download_source: read_source(raw("downloadSource")),
                 python_source: read_source(raw("pythonSource")),
+                nodejs_source: read_source(raw("nodejsSource")),
                 pypi_source: read_source(raw("pypiSource")),
             },
         }
@@ -225,6 +226,10 @@ impl Store {
                 serde_json::to_value(settings.sources.python_source)?,
             ),
             (
+                "nodejsSource",
+                serde_json::to_value(settings.sources.nodejs_source)?,
+            ),
+            (
                 "pypiSource",
                 serde_json::to_value(settings.sources.pypi_source)?,
             ),
@@ -300,16 +305,19 @@ mod tests {
         use crate::sources::*;
         let store = Store::in_memory();
         assert_eq!(store.get().sources.download_source, DownloadSource::Auto);
+        assert_eq!(store.get().sources.nodejs_source, NodejsSource::Auto);
         let mut next = store.get();
         next.sources = Preferences {
             download_source: DownloadSource::Github,
             python_source: PythonSource::Npmmirror,
+            nodejs_source: NodejsSource::Nju,
             pypi_source: PypiSource::Ustc,
         };
         store.set(&next).unwrap();
         let read = store.get().sources;
         assert_eq!(read.download_source, DownloadSource::Github);
         assert_eq!(read.python_source, PythonSource::Npmmirror);
+        assert_eq!(read.nodejs_source, NodejsSource::Nju);
         assert_eq!(read.pypi_source, PypiSource::Ustc);
         store
             .connection
@@ -324,6 +332,37 @@ mod tests {
         let mut serialized = serde_json::to_value(next).unwrap();
         serialized["pythonSource"] = "https://example.com/script".into();
         assert!(serde_json::from_value::<Settings>(serialized).is_err());
+    }
+
+    #[test]
+    fn legacy_settings_default_nodejs_source_and_reject_custom_download_urls() {
+        use crate::sources::NodejsSource;
+        let store = Store::in_memory();
+        let mut settings = store.get();
+        settings.sources.nodejs_source = NodejsSource::Npmmirror;
+        store.set(&settings).unwrap();
+        assert_eq!(store.get().sources.nodejs_source, NodejsSource::Npmmirror);
+        let mut serialized = serde_json::to_value(settings).unwrap();
+        serialized.as_object_mut().unwrap().remove("nodejsSource");
+        assert_eq!(
+            serde_json::from_value::<Settings>(serialized.clone())
+                .unwrap()
+                .sources
+                .nodejs_source,
+            NodejsSource::Auto
+        );
+        serialized["nodejsSource"] = "https://example.com/node.zip".into();
+        assert!(serde_json::from_value::<Settings>(serialized).is_err());
+        store
+            .connection
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE settings SET value = 'invalid' WHERE key = 'nodejsSource'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(store.get().sources.nodejs_source, NodejsSource::Auto);
     }
 }
 

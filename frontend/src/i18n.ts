@@ -4,9 +4,11 @@ import dictionaries from "virtual:launcher-locales";
 const keys = [
   "settings_download_source",
   "settings_python_source",
+  "settings_nodejs_source",
   "settings_pypi_source",
   "settings_sources_hint",
   "source_auto",
+  "source_official",
   "source_cnb",
   "source_github",
   "source_nju",

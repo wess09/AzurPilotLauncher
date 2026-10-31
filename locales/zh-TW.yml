@@ -254,9 +254,11 @@ tips:
 launcher:
   settings_download_source: "元件下載來源"
   settings_python_source: "Python 下載來源"
+  settings_nodejs_source: "Node.js 下載來源"
   settings_pypi_source: "PyPI 來源"
-  settings_sources_hint: "自動選源：系統為簡體中文且使用北京時間時優先 CNB，其餘優先 GitHub。Python 與 PyPI 鏡像於啟動部署與修復時生效。"
+  settings_sources_hint: "自動選源：系統為簡體中文且使用北京時間時優先國內來源，其餘優先官方來源。Node.js 可獨立選擇鏡像，下載失敗時自動切換備用來源；已有可用執行環境直接沿用。"
   source_auto: "自動"
+  source_official: "官方來源"
   source_cnb: "CNB"
   source_github: "GitHub"
   source_nju: "南京大學"

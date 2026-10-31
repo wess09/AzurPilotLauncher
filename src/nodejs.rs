@@ -354,19 +354,10 @@ fn ensure_with_candidates(
         .prefix(".install-")
         .tempdir_in(parent)?;
     let archive = temporary.path().join(distribution.filename());
-    let official = format!(
-        "https://nodejs.org/dist/v{VERSION}/{}",
-        distribution.filename()
-    );
-    let mirror = format!(
-        "https://registry.npmmirror.com/-/binary/node/v{VERSION}/{}",
-        distribution.filename()
-    );
-    let urls = if sources.download_source.prefer_cnb() {
-        vec![mirror, official]
-    } else {
-        vec![official, mirror]
-    };
+    let urls =
+        sources
+            .nodejs_source
+            .urls(sources.download_source, VERSION, &distribution.filename());
     let client = Client::builder()
         .https_only(true)
         .connect_timeout(Duration::from_secs(15))
@@ -576,6 +567,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let sources = Preferences {
             download_source: crate::sources::DownloadSource::Github,
+            nodejs_source: crate::sources::NodejsSource::Official,
             ..Default::default()
         };
         let bin = ensure_with_candidates(
@@ -619,5 +611,33 @@ mod tests {
         .unwrap();
         assert_eq!(bin, reused);
         assert!(!downloaded_again);
+    }
+
+    #[test]
+    #[ignore = "downloads Node.js from both mirror sites to verify pinned digests"]
+    fn real_nodejs_mirrors_match_pinned_digest() {
+        use crate::sources::{DownloadSource, NodejsSource};
+        let package = distribution(env::consts::OS, env::consts::ARCH).unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        let archive = temporary.path().join(package.filename());
+        let client = Client::builder()
+            .https_only(true)
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(180))
+            .build()
+            .unwrap();
+        for source in [NodejsSource::Npmmirror, NodejsSource::Nju] {
+            let urls = source.urls(DownloadSource::Github, VERSION, &package.filename());
+            // 限制为所选镜像，保证测试不能借助官方回退掩盖镜像地址错误。
+            download(
+                &client,
+                &urls[..1],
+                package.sha256,
+                &archive,
+                Arc::new(AtomicBool::new(false)),
+                &mut |_| {},
+            )
+            .unwrap();
+        }
     }
 }

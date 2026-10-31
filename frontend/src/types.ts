@@ -60,6 +60,7 @@ export interface LauncherSettings {
   language: string | null;
   downloadSource: "auto" | "cnb" | "github";
   pythonSource: "auto" | "nju" | "ustc" | "npmmirror" | "aliyun" | "cnb" | "astral";
+  nodejsSource: "auto" | "official" | "npmmirror" | "nju";
   pypiSource: "auto" | "pypi" | "tsinghua" | "ustc" | "aliyun" | "tencent" | "huawei" | "nju";
 }
 export const busy = (s: Snapshot) =>

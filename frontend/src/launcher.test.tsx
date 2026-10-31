@@ -117,6 +117,24 @@ describe("launcher actions", () => {
     fireEvent.click(screen.getByRole("option", { name: "Taobao mirror" }));
     await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", { settings: { ...settings, pythonSource: "npmmirror" } }));
   });
+  it("saves the Node.js mirror independently and restores it when reopening settings", async () => {
+    let settings = { launchOnStartup: false, autoStartService: false, keepWebviewOnTray: false, reducedMotion: false, preventSleep: false, audioEnabled: false, updateChannel: "stable", updateSource: "auto", language: null, downloadSource: "auto", pythonSource: "npmmirror", nodejsSource: "auto", pypiSource: "auto" };
+    bridge.command.mockImplementation(async (name: string, args?: { settings: typeof settings }) => {
+      if (name === "settings_set" && args) settings = args.settings;
+      return name === "settings_get" || name === "settings_set" ? settings : undefined;
+    });
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("combobox", { name: "Node.js source" }));
+    const options = await screen.findAllByRole("option");
+    expect(options.map(option => option.textContent)).toEqual(["Auto", "Taobao mirror", "Nanjing University", "Official source"]);
+    fireEvent.click(screen.getByRole("option", { name: "Nanjing University" }));
+    await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", { settings: { ...settings, nodejsSource: "nju", pythonSource: "npmmirror" } }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Close" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const restored = await screen.findByRole("combobox", { name: "Node.js source" });
+    expect(restored.textContent).toContain("Nanjing University");
+  });
   it("pauses the background video when reduced motion is enabled", async () => {
     const settings = { launchOnStartup: false, autoStartService: false, keepWebviewOnTray: false, reducedMotion: false, preventSleep: false, audioEnabled: false, updateChannel: "stable", updateSource: "auto", language: null, downloadSource: "auto", pythonSource: "auto", pypiSource: "auto" };
     bridge.command.mockImplementation(async (name: string, args?: { settings: unknown }) => name === "settings_set" ? args?.settings : name === "settings_get" ? settings : undefined);

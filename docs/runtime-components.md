@@ -47,7 +47,7 @@
 3. 迁移 `config/deploy.yaml`（优先以下载的平台模板为起点，写入 Python、独立工具目录路径与 `InstallDependencies: true`）；
 4. 运行 `deploy.git.GitManager` 经 git/GitOverCDN 拉取仓库源码与资源；
 5. `uv sync --no-dev --no-install-project` 按 `uv.lock` 同步依赖，多 PyPI 镜像重锁回退；
-6. 检查 Node.js 和 npm：优先复用启动器私有运行时或系统中 Node.js ≥22.12.0 且带 npm 的环境；缺失或过旧时自动下载 Node.js 24.22.2 便携包（Windows ZIP、macOS/Linux tar.gz，均支持 x64/ARM64），使用内置官方 SHA-256 校验后由 `.venv` Python 解压到暂存目录，确认可执行后替换 `.azurpilot/tools/nodejs/` 下对应版本目录。国内源偏好先用 npm 镜像，否则先用 Node.js 官方源，失败后回退另一源；取消或失败保留原有环境。仅为构建子进程设置 PATH，不修改系统安装或系统 PATH。
+6. 检查 Node.js 和 npm：优先复用启动器私有运行时或系统中 Node.js ≥22.12.0 且带 npm 的环境；缺失或过旧时自动下载 Node.js 24.22.2 便携包（Windows ZIP、macOS/Linux tar.gz，均支持 x64/ARM64），使用内置官方 SHA-256 校验后由 `.venv` Python 解压到暂存目录，确认可执行后替换 `.azurpilot/tools/nodejs/` 下对应版本目录。设置中的“Node.js 下载源”支持自动、淘宝镜像、南京大学和官方源；自动模式按组件下载偏好选择国内镜像或官方优先，显式选择优先使用所选站点，失败或摘要不匹配时继续尝试备用站点。所有来源共用官方固定摘要；取消或失败保留原有环境。仅为构建子进程设置 PATH，不修改系统安装或系统 PATH。
 7. 运行 `deploy.app`（`ensure_frontend`）构建前端；已有匹配指纹的 dist 由上游跳过。
 
 启动 gui.py 时清除旧的 `AZURPILOT_PREBUILT` 标记，只设置 `AZURPILOT_NO_UV_BOOTSTRAP=1`。后端使用正常源码模式，不再检查旧六组件协议。Git/ADB 保存在 `.azurpilot/tools/`，与 Python 的 `.venv` 生命周期分开。
@@ -92,4 +92,4 @@ Windows 的正式 manifest 保持 `requireAdministrator`；组件测试可用 `_
 
 ## 自动选源与命名设置
 
-自动模式必须同时满足系统原始语言为简体中文、IANA 时区为 `Asia/Shanghai`（含北京时间别名）才优先 CNB；其余优先 GitHub。组件 ZIP 与 deploy raw 下载均按此排序双源回退。设置保存到启动器 SQLite 数据库，支持组件来源、Python 来源和 PyPI 来源；Python 镜像注入 `UV_PYTHON_INSTALL_MIRROR` 首选，PyPI 镜像作为 uv sync 与 requests 安装的首选索引，`config/deploy.yaml` 中的 `PypiMirror` 用户配置仍具最高优先级。
+自动模式必须同时满足系统原始语言为简体中文、IANA 时区为 `Asia/Shanghai`（含北京时间别名）才优先 CNB；其余优先 GitHub。组件 ZIP 与 deploy raw 下载均按此排序双源回退。设置保存到启动器 SQLite 数据库，支持组件来源、Python 来源、Node.js 来源和 PyPI 来源；旧设置缺少 `nodejsSource` 时默认自动。Node.js 选源仅在需要下载运行时时生效，已有可用运行时直接复用。Python 镜像注入 `UV_PYTHON_INSTALL_MIRROR` 首选，PyPI 镜像作为 uv sync 与 requests 安装的首选索引，`config/deploy.yaml` 中的 `PypiMirror` 用户配置仍具最高优先级。

@@ -254,9 +254,11 @@ tips:
 launcher:
   settings_download_source: "Component source"
   settings_python_source: "Python source"
+  settings_nodejs_source: "Node.js source"
   settings_pypi_source: "PyPI source"
-  settings_sources_hint: "Auto prefers CNB only for a Simplified Chinese system using Beijing time; otherwise GitHub. Python and PyPI mirrors apply during deployment and repair."
+  settings_sources_hint: "Auto prefers Chinese mirrors for a Simplified Chinese system using Beijing time; otherwise official sources. Node.js mirrors can be selected independently and fall back on download failure. Existing usable runtimes are reused."
   source_auto: "Auto"
+  source_official: "Official source"
   source_cnb: "CNB"
   source_github: "GitHub"
   source_nju: "Nanjing University"

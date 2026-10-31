@@ -23,6 +23,15 @@ pub enum PythonSource {
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+pub enum NodejsSource {
+    #[default]
+    Auto,
+    Official,
+    Npmmirror,
+    Nju,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PypiSource {
     #[default]
     Auto,
@@ -40,6 +49,7 @@ pub enum PypiSource {
 pub struct Preferences {
     pub download_source: DownloadSource,
     pub python_source: PythonSource,
+    pub nodejs_source: NodejsSource,
     pub pypi_source: PypiSource,
 }
 
@@ -113,6 +123,28 @@ impl PythonSource {
         }
     }
 }
+impl NodejsSource {
+    pub fn urls(
+        self,
+        download_source: DownloadSource,
+        version: &str,
+        filename: &str,
+    ) -> Vec<String> {
+        const OFFICIAL: &str = "https://nodejs.org/dist";
+        const NPMMIRROR: &str = "https://registry.npmmirror.com/-/binary/node";
+        const NJU: &str = "https://mirrors.nju.edu.cn/nodejs-release";
+        let bases = match self {
+            Self::Auto if download_source.prefer_cnb() => [NPMMIRROR, NJU, OFFICIAL],
+            Self::Auto | Self::Official => [OFFICIAL, NPMMIRROR, NJU],
+            Self::Npmmirror => [NPMMIRROR, NJU, OFFICIAL],
+            Self::Nju => [NJU, NPMMIRROR, OFFICIAL],
+        };
+        bases
+            .iter()
+            .map(|base| format!("{base}/v{version}/{filename}"))
+            .collect()
+    }
+}
 impl PypiSource {
     pub fn index(self, download_source: DownloadSource) -> &'static str {
         match self {
@@ -168,5 +200,36 @@ mod tests {
         ];
         assert_eq!(DownloadSource::Github.order_urls(&urls)[0], urls[1]);
         assert_eq!(DownloadSource::Cnb.order_urls(&urls)[0], urls[0]);
+    }
+
+    #[test]
+    fn nodejs_sources_preserve_fallbacks_and_explicit_selection_overrides_auto() {
+        let version = "24.22.2";
+        let filename = "node-v24.22.2-win-arm64.zip";
+        let hosts = |source: NodejsSource, preference| {
+            source
+                .urls(preference, version, filename)
+                .iter()
+                .map(|url| {
+                    let url = reqwest::Url::parse(url).unwrap();
+                    assert_eq!(url.scheme(), "https");
+                    assert!(url.path().ends_with(&format!("/v{version}/{filename}")));
+                    url.host_str().unwrap().to_owned()
+                })
+                .collect::<Vec<_>>()
+        };
+        let domestic = vec!["registry.npmmirror.com", "mirrors.nju.edu.cn", "nodejs.org"];
+        let official = vec!["nodejs.org", "registry.npmmirror.com", "mirrors.nju.edu.cn"];
+        assert_eq!(hosts(NodejsSource::Auto, DownloadSource::Cnb), domestic);
+        assert_eq!(hosts(NodejsSource::Auto, DownloadSource::Github), official);
+        assert_eq!(hosts(NodejsSource::Official, DownloadSource::Cnb), official);
+        assert_eq!(
+            hosts(NodejsSource::Npmmirror, DownloadSource::Github),
+            domestic
+        );
+        assert_eq!(
+            hosts(NodejsSource::Nju, DownloadSource::Github),
+            vec!["mirrors.nju.edu.cn", "registry.npmmirror.com", "nodejs.org"]
+        );
     }
 }

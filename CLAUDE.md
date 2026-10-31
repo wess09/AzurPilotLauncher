@@ -98,7 +98,7 @@ locales/
 - `windows.rs`：WebUI 窗口、导航失败时本地 `#/connection-error` React 页面、标题栏注入。
 - `components.rs`：git/adb 组件的按清单下载、校验、事务提交与恢复；deploy 引导脚本与分系统模板的仓库 raw 下载。
 - `setup.rs`：内嵌 uv、Python 与 `.venv`、deploy 脚本驱动的拉取/前端构建/依赖同步；修复重下组件并重建 `.venv`，保留代码与缓存。
-- `nodejs.rs`：后端前端构建前复用达标的 Node.js/npm，否则自动下载 SHA-256 校验的 Node.js 24 便携包到 `.azurpilot/tools/nodejs/`，仅为构建子进程设置 PATH；Windows/macOS/Linux 的 x64/ARM64 均支持。
+- `nodejs.rs`：后端前端构建前复用达标的 Node.js/npm，否则自动下载 SHA-256 校验的 Node.js 24 便携包到 `.azurpilot/tools/nodejs/`，仅为构建子进程设置 PATH；Windows/macOS/Linux 的 x64/ARM64 均支持。设置中的 Node.js 来源支持自动/淘宝镜像/南京大学/官方，失败或摘要不匹配时依次回退，共用官方固定摘要。
 - `sources.rs` / `settings.rs`：按系统语言与真实时区自动选择 CNB/GitHub，保存可覆盖的组件、Python、PyPI 源。
 - `power.rs`：“阻止计算机自动睡眠”设置的三平台电源锁（Windows `SetThreadExecutionState` 专用线程 / macOS `IOPMAssertion` / Linux `systemd-inhibit` 子进程随宿主退出），只阻止空闲睡眠、不阻止息屏；`windows.rs` 同步原生窗口与 WebView 可见性，隐藏或最小化时自动暂停背景视频、释放 Video Wake Lock，恢复后按动效偏好播放；“减弱动态效果”始终暂停背景视频。
 - `task_process.rs` / `backend_process.rs`：任务进程组及 Windows Job；`cancel.rs` 让 HTTP 等待可取消。
