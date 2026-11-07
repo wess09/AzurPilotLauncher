@@ -47,6 +47,11 @@ impl LauncherChannel {
             bail!("launcher session stopped");
         }
         let ready = self.ready.lock().unwrap();
+        // 只读的登录票据可以等连接就绪再发；修改状态的请求（如 scheduler.pause）
+        // 在未连接时直接失败，避免用户以为没生效、重连后却被执行。
+        if !*ready && method != "login.issue" {
+            bail!("launcher not connected");
+        }
         let request = Outgoing {
             id: format!("launcher-{}", self.counter.fetch_add(1, Ordering::Relaxed)),
             method,
