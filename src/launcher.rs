@@ -711,6 +711,22 @@ impl Launcher {
         restore_main_window_from_any_thread(self.app.clone(), self.port, self.recreate.clone());
     }
 
+    /// 经当前后端会话的启动器 WS 调用后端方法；后端未运行时返回错误。
+    pub(crate) fn backend_call(
+        &self,
+        method: &'static str,
+        timeout: Duration,
+    ) -> Result<serde_json::Value> {
+        let channel = self
+            .session
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|session| session.channel.clone())
+            .context("backend session not running")?;
+        channel.call(method, timeout)
+    }
+
     pub(crate) fn webui_url(&self) -> String {
         let channel = self
             .session
@@ -1093,12 +1109,20 @@ fn create_tray(app: &mut tauri::App) -> Result<()> {
     let toggle = MenuItemBuilder::new(t!("tray.toggle_visibility"))
         .id("toggle")
         .build(app)?;
+    let scheduler = MenuItemBuilder::new(t!("tray.scheduler_unavailable"))
+        .id("scheduler")
+        .enabled(false)
+        .build(app)?;
+    let scheduler_toggle =
+        crate::tray_scheduler::TraySchedulerToggle::new(app.handle().clone(), scheduler.clone());
+    scheduler_toggle.spawn_poller();
     let quit = MenuItemBuilder::new(t!("tray.quit"))
         .id("quit")
         .build(app)?;
     let menu = MenuBuilder::new(app)
         .item(&home)
         .item(&toggle)
+        .item(&scheduler)
         .separator()
         .item(&quit)
         .build()?;
@@ -1107,9 +1131,10 @@ fn create_tray(app: &mut tauri::App) -> Result<()> {
         .tooltip("AzurPilot")
         .menu(&menu)
         .show_menu_on_left_click(cfg!(target_os = "macos"))
-        .on_menu_event(|app, event| {
+        .on_menu_event(move |app, event| {
             let controller = app.state::<Arc<Launcher>>();
             match event.id().as_ref() {
+                "scheduler" => scheduler_toggle.toggle(),
                 "home" => {
                     let _ = show_launcher_home(app);
                 }

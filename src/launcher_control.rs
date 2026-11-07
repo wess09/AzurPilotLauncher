@@ -36,13 +36,14 @@ pub struct LauncherChannel {
 }
 
 impl LauncherChannel {
-    pub fn login_ticket(&self) -> Result<String> {
+    /// 向后端发一个空参数请求并等待结果。
+    pub fn call(&self, method: &'static str, timeout: Duration) -> Result<Value> {
         let (reply, receiver) = mpsc::channel();
         let request = Outgoing {
             id: format!("launcher-{}", self.counter.fetch_add(1, Ordering::Relaxed)),
-            method: "login.issue",
+            method,
             reply,
-            deadline: Instant::now() + Duration::from_secs(3),
+            deadline: Instant::now() + timeout,
         };
         if self.stop.load(Ordering::SeqCst) {
             bail!("launcher session stopped");
@@ -50,9 +51,13 @@ impl LauncherChannel {
         self.sender
             .try_send(request)
             .context("launcher request queue unavailable")?;
-        let result = receiver
-            .recv_timeout(Duration::from_secs(3))
-            .context("launcher login timed out")??;
+        receiver
+            .recv_timeout(timeout)
+            .with_context(|| format!("launcher request {method} timed out"))?
+    }
+
+    pub fn login_ticket(&self) -> Result<String> {
+        let result = self.call("login.issue", Duration::from_secs(3))?;
         let ticket = result
             .get("ticket")
             .and_then(Value::as_str)

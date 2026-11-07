@@ -124,6 +124,11 @@ dialog:
 
 tray:
   toggle_visibility: "Show / Hide"
+  pause_scheduler: "Pause Tasks"
+  resume_scheduler: "Resume Tasks"
+  scheduler_unavailable: "Scheduler not connected"
+  pausing_scheduler: "Pausing…"
+  resuming_scheduler: "Resuming…"
   quit: "Quit"
   tooltip: "AzurPilot"
 
