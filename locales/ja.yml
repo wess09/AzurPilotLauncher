@@ -124,6 +124,11 @@ dialog:
 
 tray:
   toggle_visibility: "表示 / 非表示"
+  pause_scheduler: "タスクを一時停止"
+  resume_scheduler: "タスクを再開"
+  scheduler_unavailable: "スケジューラ未接続"
+  pausing_scheduler: "一時停止中…"
+  resuming_scheduler: "再開中…"
   quit: "終了"
   tooltip: "AzurPilot"
 

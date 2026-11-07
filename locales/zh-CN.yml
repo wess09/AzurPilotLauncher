@@ -124,6 +124,11 @@ dialog:
 
 tray:
   toggle_visibility: "显示 / 隐藏"
+  pause_scheduler: "暂停任务"
+  resume_scheduler: "继续任务"
+  scheduler_unavailable: "调度器未连接"
+  pausing_scheduler: "正在暂停…"
+  resuming_scheduler: "正在继续…"
   quit: "退出"
   tooltip: "AzurPilot"
 

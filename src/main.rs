@@ -39,6 +39,8 @@ use windows::*;
 mod components;
 /// 首次部署、组件更新与后端配置。
 mod setup;
+#[cfg(any(windows, target_os = "macos"))]
+mod tray_scheduler;
 /// 窗口工具（控制台附着状态等平台辅助）。
 mod window_util;
 
