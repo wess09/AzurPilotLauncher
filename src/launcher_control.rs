@@ -31,6 +31,8 @@ struct Outgoing {
 pub struct LauncherChannel {
     sender: mpsc::SyncSender<Outgoing>,
     stop: Arc<AtomicBool>,
+    /// 当前连接已完成 hello、可以收发请求。只在 worker 线程里置位和清除。
+    ready: AtomicBool,
     socket: Mutex<Option<TcpStream>>,
     counter: AtomicU64,
 }
@@ -47,6 +49,9 @@ impl LauncherChannel {
         };
         if self.stop.load(Ordering::SeqCst) {
             bail!("launcher session stopped");
+        }
+        if !self.ready.load(Ordering::SeqCst) {
+            bail!("launcher not connected");
         }
         self.sender
             .try_send(request)
@@ -84,6 +89,7 @@ pub fn start_launcher_channel(
     let channel = Arc::new(LauncherChannel {
         sender,
         stop,
+        ready: AtomicBool::new(false),
         socket: Mutex::new(None),
         counter: AtomicU64::new(1),
     });
@@ -104,6 +110,10 @@ pub fn start_launcher_channel(
                 &mut completed,
             );
             *worker.socket.lock().unwrap() = None;
+            // 连接已断：先关闭就绪开关，再把队列里还没发出的请求判失败。
+            // 否则它们会留到下一条连接上发送（90 秒的截止时间还没过）。
+            worker.ready.store(false, Ordering::SeqCst);
+            fail_queued(&receiver, "launcher disconnected");
             if worker.stop.load(Ordering::SeqCst) {
                 break;
             }
@@ -133,6 +143,14 @@ pub fn start_launcher_channel(
 fn send(socket: &mut WebSocket<TcpStream>, message: Value) -> Result<()> {
     socket.send(Message::Text(message.to_string().into()))?;
     Ok(())
+}
+
+/// 把队列里所有还没发出的请求判失败并移出队列。
+/// 请求只允许在它入队时所属的那条连接上发送，所以连接结束或尚未就绪时都要调用。
+fn fail_queued(receiver: &mpsc::Receiver<Outgoing>, reason: &'static str) {
+    while let Ok(outgoing) = receiver.try_recv() {
+        let _ = outgoing.reply.send(Err(anyhow!(reason)));
+    }
 }
 
 fn request(id: &str, method: &str, params: Value) -> Value {
@@ -216,11 +234,9 @@ fn run_connection(
                     if outgoing.deadline <= Instant::now() {
                         continue;
                     }
-                    send(
-                        &mut socket,
-                        request(&outgoing.id, outgoing.method, json!({})),
-                    )?;
+                    let frame = request(&outgoing.id, outgoing.method, json!({}));
                     pending.insert(outgoing.id.clone(), outgoing);
+                    send(&mut socket, frame)?;
                 }
                 pending.retain(|_, outgoing| {
                     if outgoing.deadline > Instant::now() {
@@ -282,7 +298,13 @@ fn run_connection(
                                 {
                                     bail!("launcher protocol rejected");
                                 }
+                                // 新连接就绪前进队的请求不能带到这条连接上发送，全部判失败。
+                                fail_queued(
+                                    receiver,
+                                    "launcher request dropped before connection ready",
+                                );
                                 ready = true;
+                                channel.ready.store(true, Ordering::SeqCst);
                             } else if let Some(outgoing) = pending.remove(&id) {
                                 let result = if ok && error.is_none() {
                                     result.context("missing launcher result")
@@ -391,5 +413,37 @@ fn execute(handler: &dyn ChannelHandler, id: &str, method: &str, params: Value) 
             "AUTOSTART_FAILED",
             "unable to change or query autostart",
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fail_queued_rejects_every_waiting_request_and_empties_the_queue() {
+        let (sender, receiver) = mpsc::sync_channel(4);
+        let mut replies = Vec::new();
+        for n in 0..2 {
+            let (reply, rx) = mpsc::channel();
+            sender
+                .try_send(Outgoing {
+                    id: format!("launcher-{n}"),
+                    method: "scheduler.pause",
+                    reply,
+                    deadline: Instant::now() + Duration::from_secs(90),
+                })
+                .unwrap();
+            replies.push(rx);
+        }
+
+        fail_queued(&receiver, "launcher disconnected");
+
+        for rx in replies {
+            let error = rx.try_recv().unwrap().unwrap_err();
+            assert_eq!(error.to_string(), "launcher disconnected");
+        }
+        // 队列已清空：之后的连接不会再收到这些请求。
+        assert!(receiver.try_recv().is_err());
     }
 }
