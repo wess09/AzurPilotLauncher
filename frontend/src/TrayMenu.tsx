@@ -64,6 +64,7 @@ export function TrayMenu() {
       className={styles.menu}
       role="menu"
       aria-label="AzurPilot"
+      data-motion={motion ? "on" : "off"}
       style={motion ? undefined : { animation: "none" }}
     >
       {items.map((item) => (

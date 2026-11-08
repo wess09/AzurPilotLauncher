@@ -135,6 +135,7 @@ export function ContextMenu({
       ref={ref}
       className={styles.menu}
       role="menu"
+      data-motion={motion ? "on" : "off"}
       style={{ left: menu.x, top: menu.y, animation: motion ? undefined : "none" }}
     >
       {items.map((item, index) => (

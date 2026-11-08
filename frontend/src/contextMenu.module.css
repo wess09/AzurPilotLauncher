@@ -12,6 +12,18 @@
   animation: contextMenuIn 120ms ease-out;
 }
 
+.item:hover:not(:disabled) {
+  background: var(--colorSubtleBackgroundHover);
+}
+
+.item:active:not(:disabled) {
+  background: var(--colorSubtleBackgroundPressed);
+}
+
+.item:disabled {
+  color: var(--colorNeutralForeground3);
+}
+
 .item {
   display: block;
   width: 100%;
@@ -26,22 +38,64 @@
   text-align: left;
   cursor: default;
   user-select: none;
-}
-
-.item:hover:not(:disabled) {
-  background: var(--colorSubtleBackgroundHover);
-}
-
-.item:active:not(:disabled) {
-  background: var(--colorSubtleBackgroundPressed);
-}
-
-.item:disabled {
-  color: var(--colorNeutralForeground3);
-}
-
-.item:focus {
+  /* 系统焦点框对菜单没有意义：键盘焦点改用下面的 NS2 式彩虹环。 */
+  position: relative;
   outline: none;
+}
+
+/* Tab 焦点环：贴着菜单项的 2px 彩虹描边循环转动（仅键盘焦点显示）。 */
+.item:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 5px;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--ring-angle, 0deg),
+    #ff5c7a,
+    #ff9f43,
+    #ffe14d,
+    #4be07a,
+    #4dc3ff,
+    #9d5cff,
+    #ff5c7a
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.35));
+  animation: ringSpin 3s linear infinite;
+  pointer-events: none;
+}
+
+/* 让 conic-gradient 的起始角可动画（WebView2/Chromium 支持；不支持的
+   引擎降级为静态彩虹环）。 */
+@property --ring-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes ringSpin {
+  to {
+    --ring-angle: 360deg;
+  }
+}
+
+/* 减弱动态效果（设置项或系统偏好）：环保留但停止转动。 */
+.menu[data-motion="off"] .item::after {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .item::after {
+    animation: none;
+  }
 }
 
 .separator {
