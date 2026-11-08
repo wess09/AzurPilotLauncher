@@ -27,6 +27,8 @@
   text-align: left;
   cursor: default;
   user-select: none;
+  /* 窗口激活时的系统焦点框对菜单没有意义，悬停高亮已足够。 */
+  outline: none;
 }
 
 .item:hover {

@@ -161,8 +161,9 @@ pub(crate) fn show_tray_menu_popup(
         }
         *last = Some(Instant::now());
     }
-    // 按指针所在显示器换算物理尺寸，并夹在显示器范围内；任务栏通常在
-    // 底部，弹窗默认出现在指针上方，顶部任务栏则改为下方。
+    // 按指针所在显示器换算物理尺寸；任务栏通常在底部，弹窗贴着指针
+    // 右上方弹出（对齐 QQ NT / 原生托盘习惯）：菜单左缘略偏左于指针、
+    // 向右延伸，越过屏幕右缘时整体左移夹回屏内；顶部任务栏则改到下方。
     let monitor = app
         .monitor_from_point(cursor.x, cursor.y)?
         .or_else(|| app.primary_monitor().ok().flatten());
@@ -173,13 +174,13 @@ pub(crate) fn show_tray_menu_popup(
     let (logical_width, logical_height) = TRAY_MENU_LOGICAL_SIZE;
     let width = (logical_width * scale) as i32;
     let height = (logical_height * scale) as i32;
-    let mut x = cursor.x as i32 - width / 2;
+    let mut x = cursor.x as i32 - 8;
     let mut y = cursor.y as i32 - height - 8;
     if let Some(monitor) = &monitor {
         let (left, top) = (monitor.position().x, monitor.position().y);
         let right = left + monitor.size().width as i32;
         let bottom = top + monitor.size().height as i32;
-        x = x.clamp(left + 8, (right - width - 8).max(left + 8));
+        x = x.min(right - width - 8).max(left + 8);
         if y < top + 8 {
             y = cursor.y as i32 + 8;
         }

@@ -40,6 +40,10 @@
   color: var(--colorNeutralForeground3);
 }
 
+.item:focus {
+  outline: none;
+}
+
 .separator {
   height: 1px;
   margin: 4px 0;
