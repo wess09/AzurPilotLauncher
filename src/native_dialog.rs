@@ -20,38 +20,44 @@ pub(crate) fn show_connection_error_dialog(app: &tauri::AppHandle) {
         let _ = existing.set_focus();
         return;
     }
-    let result = WebviewWindowBuilder::new(
-        app,
-        CONNECTION_WINDOW_LABEL,
-        // 用 query 而非 hash 标记弹窗路由：Tauri 拼接 devUrl/dist 基址时
-        // query 可靠保留（hash 实测会被丢弃导致白屏）。
-        WebviewUrl::App("index.html?window=connection".into()),
-    )
-    .title("AzurPilot")
-    .inner_size(480.0, 248.0)
-    .resizable(false)
-    .maximizable(false)
-    .minimizable(false)
-    // WinUI 3 浮层形态：无系统标题栏，窗口透明 + 内容自绘 8px 圆角，
-    // 标题行内自绘关闭键与拖动区（见 ConnectionWindow）。
-    // 亚克力材质：Win10+ Acrylic 模糊透出背后内容（对齐系统错误弹窗观感）。
-    .decorations(false)
-    .transparent(true)
-    .effects(tauri::utils::config::WindowEffectsConfig {
-        effects: vec![tauri::utils::WindowEffect::Acrylic],
-        state: None,
-        radius: None,
-        color: None,
-    })
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .center()
-    // 与 tauri.conf.json 中的窗口保持一致：禁用系统代理等参数，
-    // 否则系统代理（如 Clash）会拦截 127.0.0.1 的页面请求导致白屏。
-    .additional_browser_args(
-        "--enable-features=msWebView2EnableDraggableRegions --disable-features=ElasticOverscroll,msWebOOUI,msPdfOOUI,msSmartScreenProtection --no-proxy-server --autoplay-policy=no-user-gesture-required",
-    )
-    .build();
+    let result = {
+        let builder = WebviewWindowBuilder::new(
+            app,
+            CONNECTION_WINDOW_LABEL,
+            // 用 query 而非 hash 标记弹窗路由：Tauri 拼接 devUrl/dist 基址时
+            // query 可靠保留（hash 实测会被丢弃导致白屏）。
+            WebviewUrl::App("index.html?window=connection".into()),
+        )
+        .title("AzurPilot")
+        .inner_size(480.0, 248.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        // WinUI 3 浮层形态：无系统标题栏，内容自绘 8px 圆角，
+        // 标题行内自绘关闭键与拖动区（见 ConnectionWindow）。
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .center()
+        // 与 tauri.conf.json 中的窗口保持一致：禁用系统代理等参数，
+        // 否则系统代理（如 Clash）会拦截 127.0.0.1 的页面请求导致白屏。
+        .additional_browser_args(
+            "--enable-features=msWebView2EnableDraggableRegions --disable-features=ElasticOverscroll,msWebOOUI,msPdfOOUI,msSmartScreenProtection --no-proxy-server --autoplay-policy=no-user-gesture-required",
+        );
+        // 透明窗口与亚克力材质是 Windows 专属 API（macOS 需
+        // macos-private-api feature 才有 transparent）；其余平台使用
+        // 不透明弹窗（CSS 已提供 8px 圆角与阴影）。
+        #[cfg(windows)]
+        let builder = builder
+            .transparent(true)
+            .effects(tauri::utils::config::WindowEffectsConfig {
+                effects: vec![tauri::utils::WindowEffect::Acrylic],
+                state: None,
+                radius: None,
+                color: None,
+            });
+        builder.build()
+    };
     if let Err(error) = result {
         tracing::warn!("Failed to open connection dialog window: {error:?}");
     }
