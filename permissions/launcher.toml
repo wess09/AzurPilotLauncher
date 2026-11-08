@@ -29,3 +29,8 @@ commands.allow = [
   "window_minimize", "window_toggle_maximize", "window_close",
   "window_exit_application", "window_start_dragging", "window_is_maximized",
 ]
+
+[[permission]]
+identifier = "allow-window-exit"
+description = "Close, drag or exit from the standalone connection error dialog."
+commands.allow = ["window_exit_application", "window_close", "window_start_dragging"]

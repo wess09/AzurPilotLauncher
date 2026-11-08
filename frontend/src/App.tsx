@@ -198,11 +198,10 @@ export function App() {
   };
   const phase = state?.phase ?? "checking";
   const active = !!state && busy(state);
-  const error = connection ? state?.connection_error : state?.error;
-  const shownError = error || actionError || bridgeError;
-  const mainAction = connection
-    ? "retry_backend_connection"
-    : state?.can_update
+  const error = state?.error;
+  // 连接错误整页收敛为单个报错弹窗（ConnectionDialog），不再走通用错误弹窗。
+  const shownError = connection ? null : error || actionError || bridgeError;
+  const mainAction = state?.can_update
       ? "launcher_install_update"
       : phase === "error" && state?.operation === "check"
         ? "launcher_check_update"
@@ -213,9 +212,7 @@ export function App() {
             : state?.deployment_required
               ? "launcher_deploy"
               : "launcher_start";
-  const mainLabel = connection
-    ? "retry_connection"
-    : state?.can_update
+  const mainLabel = state?.can_update
       ? "update"
       : phase === "error" && state?.operation === "check"
         ? "retry_check"
@@ -229,7 +226,6 @@ export function App() {
               ? "retry_start"
               : "start";
   const canAct =
-    connection ||
     state?.can_update ||
     (state?.backend_running && phase === "running") ||
     state?.can_start ||
@@ -275,20 +271,19 @@ export function App() {
     75: "err_backend",
     76: "err_backend",
   };
-  const errorTitle = connection
-    ? t("connection_title")
-    : (state?.error_code != null && errorCodeTitles[state.error_code]) ||
-      (!state || !state.operation
-        ? t("error")
-        : state.operation === "repair"
-          ? t("repair_failed")
-          : state.operation === "deploy"
-            ? t("deploy_failed")
-            : state.operation === "update"
-              ? t("update_failed")
-              : state.operation === "check"
-                ? t("check_failed")
-                : t("launch_failed"));
+  const errorTitle =
+    (state?.error_code != null && errorCodeTitles[state.error_code]) ||
+    (!state || !state.operation
+      ? t("error")
+      : state.operation === "repair"
+        ? t("repair_failed")
+        : state.operation === "deploy"
+          ? t("deploy_failed")
+          : state.operation === "update"
+            ? t("update_failed")
+            : state.operation === "check"
+              ? t("check_failed")
+              : t("launch_failed"));
   const handleLaunchClick = () => {
     if (armCancel) {
       setArmCancel(false);
@@ -310,7 +305,8 @@ export function App() {
       />
       <div className={styles.shade} />
       {!connection && (
-        <header
+        <>
+      <header
           className={styles.titlebar}
           data-tauri-drag-region
           onPointerDown={(e) => {
@@ -368,21 +364,12 @@ export function App() {
               />
             </div>
         </header>
-      )}
-      <main className={`${styles.main} ${connection ? styles.connection : ""}`}>
-        <section className={styles.hero}>
-          {connection && (
-            <>
-              <h1>{t("connection_title")}</h1>
-              <p className={styles.description}>{t("connection_body")}</p>
-            </>
-          )}
-        </section>
+      <main className={styles.main}>
+        <section className={styles.hero} />
         {idle || launching ? (
           <div className={styles.idleBar}>
             <div className={styles.secondaryActions}>
-              {!connection && (
-                <Button
+              <Button
                   appearance="transparent"
                   size="small"
                   icon={<Wrench16Regular />}
@@ -394,7 +381,6 @@ export function App() {
                 >
                   {t("repair")}
                 </Button>
-              )}
               <Button
                 appearance="transparent"
                 size="small"
@@ -474,8 +460,7 @@ export function App() {
           </section>
           <div className={styles.actions}>
               <div className={styles.secondaryActions}>
-                {!connection && (
-                  <Button
+                <Button
                     appearance="transparent"
                     size="small"
                     icon={<Wrench16Regular />}
@@ -487,8 +472,7 @@ export function App() {
                   >
                     {t("repair")}
                   </Button>
-                )}
-                {state?.can_stop && !connection && (
+                {state?.can_stop && (
                   <Button
                     appearance="transparent"
                     size="small"
@@ -508,30 +492,14 @@ export function App() {
                 >
                   {t("export_log")}
                 </Button>
-                {connection && (
-                  <Button
-                    appearance="transparent"
-                    size="small"
-                    icon={<ArrowDownload16Regular />}
-                    onClick={() => void act("download_today_gui_log")}
-                    disabled={pending}
-                  >
-                    {t("export_gui_log")}
-                  </Button>
-                )}
-                {(connection ||
-                  (phase === "error" &&
+                {(phase === "error" &&
                     state?.operation !== "check" &&
-                    state?.operation !== "update")) && (
+                    state?.operation !== "update") && (
                   <Button
                     appearance="transparent"
                     size="small"
                     icon={<ArrowLeft16Regular />}
-                    onClick={() =>
-                      void act(
-                        connection ? "launcher_show_home" : "launcher_back",
-                      )
-                    }
+                    onClick={() => void act("launcher_back")}
                     disabled={pending}
                   >
                     {t("back")}
@@ -574,6 +542,8 @@ export function App() {
           </div>
         )}
       </main>
+        </>
+      )}
       {dialog && (
         <Confirm
           title={t(dialog === "repair" ? "repair_title" : "close_title")}

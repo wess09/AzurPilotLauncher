@@ -38,9 +38,14 @@ pub(crate) fn local_page_url(app: &tauri::AppHandle, hash: &str) -> Result<Url> 
 pub(crate) fn show_launcher_home(app: &tauri::AppHandle) -> Result<()> {
     #[cfg(target_os = "macos")]
     set_macos_activation_policy(app, true);
-    if let Some(window) = app.get_webview_window("launcher") {
-        reveal_window(&window)?;
-    }
+    let app_handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = app_handle.get_webview_window("launcher") {
+            if let Err(e) = reveal_window(&window) {
+                tracing::warn!("Failed to reveal launcher window: {e:?}");
+            }
+        }
+    });
     Ok(())
 }
 
@@ -65,7 +70,10 @@ fn set_webview_visible(window: &WebviewWindow, visible: bool) {
         window.with_webview(move |webview| {
             // SAFETY: with_webview 将闭包调度到 WebView2 所属的 UI 线程。
             if let Err(error) = unsafe { webview.controller().SetIsVisible(visible) } {
-                warn!(label, visible, "Failed to set WebView2 visibility: {error:?}");
+                warn!(
+                    label,
+                    visible, "Failed to set WebView2 visibility: {error:?}"
+                );
             }
         })
     };
@@ -203,6 +211,8 @@ pub(crate) fn navigate_backend_or_error(
                 return Ok(false);
             }
             window.navigate(Url::parse(&url)?)?;
+            // 后端已恢复：连接错误独立弹窗完成使命，随之关闭。
+            crate::native_dialog::close_connection_dialog(window.app_handle());
             Ok(true)
         }
         Err(e) => {
@@ -225,6 +235,8 @@ pub(crate) fn navigate_to_backend_error(
     let controller = window.state::<Arc<launcher::Launcher>>();
     controller.connection_error(error_detail.to_owned());
     window.navigate(local_page_url(window.app_handle(), "#/connection-error")?)?;
+    // 打开独立连接错误弹窗窗口（真 OS 顶层窗口，非页面内浮层）。
+    crate::native_dialog::show_connection_error_dialog(window.app_handle());
     Ok(())
 }
 
@@ -301,6 +313,34 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle, port: u16) -> Result<We
     Ok(main_window)
 }
 
+#[cfg(windows)]
+fn bring_window_to_foreground(window: &WebviewWindow) {
+    if let Ok(hwnd) = window.hwnd() {
+        use winapi::shared::windef::HWND;
+        use winapi::um::winuser::*;
+        let raw_hwnd = hwnd.0 as HWND;
+        unsafe {
+            if IsIconic(raw_hwnd) != 0 {
+                ShowWindow(raw_hwnd, SW_RESTORE);
+            } else {
+                ShowWindow(raw_hwnd, SW_SHOW);
+            }
+            let foreground = GetForegroundWindow();
+            let foreground_thread = GetWindowThreadProcessId(foreground, std::ptr::null_mut());
+            let current_thread = winapi::um::processthreadsapi::GetCurrentThreadId();
+            if foreground_thread != 0 && foreground_thread != current_thread {
+                AttachThreadInput(current_thread, foreground_thread, 1);
+                BringWindowToTop(raw_hwnd);
+                SetForegroundWindow(raw_hwnd);
+                AttachThreadInput(current_thread, foreground_thread, 0);
+            } else {
+                BringWindowToTop(raw_hwnd);
+                SetForegroundWindow(raw_hwnd);
+            }
+        }
+    }
+}
+
 /// 显示窗口并聚焦；若窗口处于最小化状态先还原。
 ///
 /// # Errors
@@ -311,6 +351,8 @@ pub(crate) fn reveal_window(window: &WebviewWindow) -> tauri::Result<()> {
     }
     window.show()?;
     set_webview_visible(window, true);
+    #[cfg(windows)]
+    bring_window_to_foreground(window);
     window.set_focus()?;
     Ok(())
 }
@@ -333,9 +375,7 @@ pub(crate) fn minimize_main_window_to_tray(app: &tauri::AppHandle) {
                 tracing::info!("Hiding main window while trayed (keep WebView enabled)");
                 let _ = hide_window(&window);
             } else {
-                tracing::info!(
-                    "Destroying main window to release WebView resources while trayed"
-                );
+                tracing::info!("Destroying main window to release WebView resources while trayed");
                 if let Err(e) = window.destroy() {
                     warn!("Failed to destroy main window for tray mode: {:?}", e);
                 }
@@ -755,5 +795,64 @@ pub(crate) fn main_window_titlebar_injection_script() -> String {
         }
         "#);
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TAURI_CONFIG_SOURCE: &str = include_str!("../tauri.conf.json");
+
+    /// 标题栏应使用 WebView 可拖拽区域（pointerdown + app-region）支持触摸拖动。
+    #[test]
+    fn test_titlebars_use_webview_draggable_regions_for_touch_dragging() {
+        #[cfg(not(target_os = "macos"))]
+        let titlebar_script = main_window_titlebar_injection_script();
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert!(titlebar_script.contains("touch-action:none"));
+            assert!(titlebar_script.contains("addEventListener('pointerdown'"));
+            assert!(titlebar_script.contains("window_start_dragging"));
+            assert!(titlebar_script.contains("-webkit-app-region:no-drag"));
+            assert!(titlebar_script.contains(
+                ".azurpilot-titlebar-drag-zone{position:absolute;inset:0 148px 0 0;height:100%;pointer-events:none"
+            ));
+            assert!(titlebar_script.contains("getComputedStyle(element).cursor === 'pointer'"));
+            assert!(titlebar_script.contains("min-height:28px"));
+            assert!(titlebar_script.contains("background:rgba(250,250,247,.78)"));
+            assert!(titlebar_script.contains(".icon-close{color:#e64f58}"));
+            assert!(titlebar_script.contains("--azurpilot-titlebar-height:56px"));
+            assert!(titlebar_script.contains("transform:translateY(-6px) scale(.96)"));
+            assert!(!titlebar_script.contains("scale(.72)"));
+            assert!(titlebar_script.contains("azurpilot-close-menu"));
+            assert!(!titlebar_script.contains("azurpilot-close-optics"));
+            assert!(!titlebar_script.contains("azurpilot-island-open"));
+            assert!(titlebar_script.contains("__AZURPILOT_OPEN_CLOSE_PROMPT"));
+            assert!(titlebar_script.contains("window_exit_application"));
+            assert!(!titlebar_script.contains("addEventListener('scroll'"));
+            assert!(!titlebar_script.contains("MutationObserver"));
+            assert!(titlebar_script.contains("data-theme*="));
+            assert!(titlebar_script.contains("#azurpilot-launcher-titlebar.is-dark"));
+        }
+    }
+
+    /// tauri.conf.json 中 Windows 窗口应启用 WebView2 拖拽区域等浏览器参数。
+    #[test]
+    fn test_windows_enable_webview_draggable_regions() {
+        let config: serde_json::Value =
+            serde_json::from_str(TAURI_CONFIG_SOURCE).expect("valid config");
+        let windows = config["app"]["windows"].as_array().expect("window configs");
+
+        for window in windows {
+            let args = window["additionalBrowserArgs"]
+                .as_str()
+                .expect("draggable regions arguments");
+            assert!(args.contains("msWebView2EnableDraggableRegions"));
+            assert!(args.contains("ElasticOverscroll"));
+            assert!(args.contains("msWebOOUI,msPdfOOUI,msSmartScreenProtection"));
+            assert!(args.contains("--no-proxy-server"));
+        }
     }
 }

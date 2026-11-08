@@ -1,6 +1,6 @@
 [package]
 name = "azurpilot"
-version = "3.0.6"
+version = "3.0.7"
 description = "AzurPilot launcher built with Tauri"
 authors = ["Jianfeng Zhang <swordfeng123@gmail.com>"]
 edition = "2021"
@@ -52,7 +52,7 @@ message = "测试已结束，请安装正式版"
 nix = { version = "0.30", features = ["signal", "process"] }
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["consoleapi", "fileapi", "handleapi", "jobapi2", "minwinbase", "processthreadsapi", "processenv", "sddl", "synchapi", "sysinfoapi", "tlhelp32", "winbase", "winnt", "winuser"] }
+winapi = { version = "0.3", features = ["consoleapi", "dwmapi", "fileapi", "handleapi", "jobapi2", "libloaderapi", "minwinbase", "processthreadsapi", "processenv", "sddl", "synchapi", "sysinfoapi", "tlhelp32", "winbase", "wingdi", "winnt", "winuser"] }
 tauri-winrt-notification = "0.7.2"
 windows-registry = "0.4"
 

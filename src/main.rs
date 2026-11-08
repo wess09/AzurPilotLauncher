@@ -15,12 +15,16 @@ mod backend_env;
 #[cfg(windows)]
 mod backend_process;
 mod cancel;
+mod format_util;
+mod fs_util;
 /// 多语言（i18n）初始化与本地化支持。
 mod i18n;
 mod launcher;
 /// 本机启动器 WS：控制、通知、心跳与免密票据。
 mod launcher_control;
 mod launcher_protocol;
+/// 连接错误的 zsui 原生弹窗（Windows；非 Windows 由 React 弹窗负责）。
+mod native_dialog;
 /// 后端前端构建所需的 Node.js 检测与便携运行时自动下载。
 mod nodejs;
 /// 平台原生通知与点击回调。
@@ -81,8 +85,6 @@ const WINDOWS_TRAY_ICON: &[u8] = include_bytes!("../icons/icon.png");
 const BACKEND_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 const BACKEND_NAVIGATION_TIMEOUT: Duration = Duration::from_secs(10);
 const TIME_BOMB_CONFIG_SOURCE: &str = include_str!("../Cargo.toml");
-#[cfg(test)]
-const TAURI_CONFIG_SOURCE: &str = include_str!("../tauri.conf.json");
 /// 预览"跳过更新检查"模式的命令行参数：横线与斜杠两种风格都接受，
 /// 便于测试时模拟"无更新可用"的启动路径。
 const PREVIEW_NO_UPDATE_ARGS: &[&str] = &[
@@ -443,13 +445,14 @@ fn download_log_file(
         .map_err(|e| e.to_string())?
         .join("log")
         .join(&filename);
-    let data = fs::read(&source_path).map_err(|e| {
-        t!(
+    if !source_path.is_file() {
+        return Err(t!(
             "errors.read_log_file",
             path = source_path.to_string_lossy().to_string(),
-            error = e.to_string()
+            error = "file not found".to_string()
         )
-    })?;
+        .to_string());
+    }
 
     app_handle
         .dialog()
@@ -457,6 +460,7 @@ fn download_log_file(
         .set_file_name(&filename)
         .save_file(move |path| {
             let log_name_for_save = log_name.clone();
+            let source_path_for_save = source_path.clone();
             let result: Result<()> = (move || {
                 let file_path = path.as_ref().and_then(FilePath::as_path).ok_or_else(|| {
                     anyhow!(t!(
@@ -464,7 +468,7 @@ fn download_log_file(
                         path = format!("{:?}", &path)
                     ))
                 })?;
-                fs::write(file_path, &data)?;
+                fs::copy(&source_path_for_save, file_path)?;
                 info!("Saved {} log to {:?}", log_name_for_save, file_path);
                 Ok(())
             })();
@@ -688,8 +692,8 @@ async fn retry_backend_connection(
     window: WebviewWindow,
     controller: State<'_, Arc<launcher::Launcher>>,
 ) -> std::result::Result<bool, String> {
-    // Tauri 的本地 main capability 已校验调用来源，无需再次读取原生 URL。
-    if window.label() != "main" {
+    // main 与独立连接弹窗窗口均可发起重试；capabilities 已限定本地窗口。
+    if window.label() != "main" && window.label() != "connection" {
         warn!("Rejected backend retry from window '{}'", window.label());
         return Err(t!("launcher.forbidden").to_string());
     }
@@ -717,10 +721,21 @@ async fn retry_backend_connection(
         return Ok(false);
     }
     let url = Url::parse(&target_url).map_err(|e| e.to_string())?;
-    window.navigate(url).map_err(|e| {
+    // 无论由哪个窗口发起，导航回 WebUI 的都是 main 窗口。
+    let target = if window.label() == "main" {
+        Some(window.clone())
+    } else {
+        window.app_handle().get_webview_window("main")
+    };
+    let Some(target) = target else {
+        return Ok(false);
+    };
+    target.navigate(url).map_err(|e| {
         error!("Failed to navigate to reconnected backend: {e:?}");
         e.to_string()
     })?;
+    // 后端已恢复：连接错误独立弹窗随之关闭（弹窗窗口自身调用时亦然）。
+    crate::native_dialog::close_connection_dialog(window.app_handle());
     Ok(true)
 }
 
@@ -777,4 +792,48 @@ __AZURPILOT_TITLEBAR_SCRIPT__
 
 fn backend_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::Builder as TempDirBuilder;
+
+    /// 时间炸弹段 enabled 时应能解析出配置（且与 enabled 值一致）。
+    #[test]
+    fn test_time_bomb_config_parses_when_enabled() {
+        let section =
+            cargo_toml_section("package.metadata.azurpilot.time-bomb").expect("section exists");
+        let enabled = cargo_toml_value(section, "enabled").as_deref() == Some("true");
+        let config = time_bomb_config().expect("time bomb config parses");
+        assert_eq!(config.is_some(), enabled);
+    }
+
+    /// cargo_toml_value 应能读到 expires-at 与中文 message 字段。
+    #[test]
+    fn test_cargo_toml_value_reads_time_bomb_fields() {
+        let section =
+            cargo_toml_section("package.metadata.azurpilot.time-bomb").expect("section exists");
+        assert!(cargo_toml_value(section, "expires-at").is_some());
+        assert_eq!(
+            Some("测试已结束，请安装正式版".to_owned()),
+            cargo_toml_value(section, "message")
+        );
+    }
+
+    /// 截断日志文件应把已存在的旧内容清空。
+    #[test]
+    fn test_truncate_log_file_replaces_existing_contents() {
+        let temp_dir = TempDirBuilder::new()
+            .prefix("launcher-log-truncate-test-")
+            .tempdir()
+            .expect("create temporary log directory");
+        let filename = "launcher.txt";
+        let path = temp_dir.path().join(filename);
+        fs::write(&path, "old launcher log").expect("write old log");
+
+        truncate_log_file(temp_dir.path(), filename).expect("truncate launcher log");
+
+        assert_eq!(fs::read(&path).expect("read truncated log"), b"");
+    }
 }
