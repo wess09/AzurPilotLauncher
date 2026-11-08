@@ -5,6 +5,8 @@ import { App } from "./App";
 import { ConnectionWindow } from "./ConnectionWindow";
 import { TrayMenu } from "./TrayMenu";
 import { launcherDarkTheme, launcherLightTheme } from "./theme";
+// 全局 NS2 彩虹焦点环：覆盖 Fluent 组件默认的深色焦点框。
+import "./focusRing.css";
 
 // 开发预览可用 ?theme=dark|light 强制主题，生产始终跟随系统。
 const forced =
