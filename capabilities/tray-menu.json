@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tray-menu-local",
+  "description": "The Windows tray popup menu may read its locale and settings, run tray actions and hide itself.",
+  "windows": ["tray_menu"],
+  "permissions": ["allow-launcher-read", "allow-tray-menu"]
+}

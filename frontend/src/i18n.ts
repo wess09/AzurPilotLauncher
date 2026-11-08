@@ -118,6 +118,11 @@ const keys = [
   "progress",
   "dependencies",
   "service",
+  "toggle_home",
+  "ctx_refresh",
+  "ctx_copy",
+  "ctx_paste",
+  "ctx_select_all",
 ] as const;
 export type Key = (typeof keys)[number];
 export function translator(locale: string) {

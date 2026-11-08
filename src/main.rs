@@ -37,6 +37,8 @@ mod progress;
 mod settings;
 mod sources;
 mod task_process;
+/// Windows 托盘右键自绘弹窗菜单（原生 HMENU 不可定制样式）。
+mod tray_menu;
 mod updater;
 mod windows;
 use windows::*;

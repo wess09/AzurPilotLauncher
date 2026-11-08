@@ -28,11 +28,11 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::Emitter;
+// 原生菜单仅在 macOS 使用：Windows 托盘右键由 tray_menu 自绘弹窗接管。
+#[cfg(target_os = "macos")]
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
 #[cfg(any(windows, target_os = "macos"))]
-use tauri::{
-    menu::{MenuBuilder, MenuItemBuilder},
-    tray::TrayIconBuilder,
-};
+use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use tracing::{debug, info, warn};
@@ -292,6 +292,11 @@ impl Launcher {
 
     pub(crate) fn port(&self) -> u16 {
         self.port
+    }
+
+    /// main 窗口重建标记：托盘“显示/隐藏”走恢复路径时需要。
+    pub(crate) fn recreate(&self) -> Arc<AtomicBool> {
+        self.recreate.clone()
     }
 
     pub(crate) fn snapshot(&self) -> Snapshot {
@@ -894,12 +899,13 @@ pub(crate) fn authorize(window: &WebviewWindow, home_only: bool) -> Result<(), S
     // 来源由 permissions/launcher.toml 和 capabilities/*.json 交给 Tauri
     // 按本次 IPC 的调用来源校验；这里仅保留窗口标签的防御性检查。
     // 不再读取 WebView 当前 URL，避免 WKWebView 的 URL 查询差异误拒本地调用。
-    if window.label() != "launcher" && (home_only || window.label() != "main") {
-        warn!(
-            "Rejected IPC from window '{}': home_only={}",
-            window.label(),
-            home_only
-        );
+    // tray_menu 弹窗只做只读调用（读语言、设置）。
+    let label = window.label();
+    if label != "launcher"
+        && (home_only
+            || (label != "main" && label != crate::tray_menu::TRAY_MENU_LABEL))
+    {
+        warn!("Rejected IPC from window '{}': home_only={}", label, home_only);
         return Err(t!("launcher.forbidden").to_string());
     }
     Ok(())
@@ -1045,7 +1051,8 @@ pub(crate) fn run() -> Result<()> {
             crate::download_log_archive, crate::prompt_log_archive_path,
             crate::settings::settings_get, crate::settings::settings_set,
             crate::window_hide, crate::window_minimize, crate::window_toggle_maximize, crate::window_close, crate::window_exit_application,
-            crate::window_start_dragging, crate::window_is_maximized
+            crate::window_start_dragging, crate::window_is_maximized,
+            crate::tray_menu::tray_menu_action, crate::tray_menu::tray_menu_hide
         ])
         .setup(move |app| {
             let controller = Arc::new(Launcher { app: app.handle().clone(), model: Mutex::new(Model::new()), changed: Condvar::new(),
@@ -1141,6 +1148,14 @@ pub(crate) fn run() -> Result<()> {
             }
             tauri::RunEvent::WindowEvent {
                 label,
+                event: tauri::WindowEvent::Focused(false),
+                ..
+            } if label == crate::tray_menu::TRAY_MENU_LABEL => {
+                // 托盘自绘菜单弹窗失焦即收起，对齐原生菜单交互。
+                crate::tray_menu::hide_tray_menu_window(app);
+            }
+            tauri::RunEvent::WindowEvent {
+                label,
                 event: tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_),
                 ..
             } => {
@@ -1158,76 +1173,81 @@ pub(crate) fn run() -> Result<()> {
 
 #[cfg(any(windows, target_os = "macos"))]
 fn create_tray(app: &mut tauri::App) -> Result<()> {
-    let home = MenuItemBuilder::new(t!("launcher.home"))
-        .id("home")
-        .build(app)?;
-    let toggle = MenuItemBuilder::new(t!("tray.toggle_visibility"))
-        .id("toggle")
-        .build(app)?;
-    let quit = MenuItemBuilder::new(t!("tray.quit"))
-        .id("quit")
-        .build(app)?;
-    let menu = MenuBuilder::new(app)
-        .item(&home)
-        .item(&toggle)
-        .separator()
-        .item(&quit)
-        .build()?;
-    TrayIconBuilder::with_id("main-tray")
+    // Windows 的原生托盘菜单是 Win32 HMENU，由系统绘制、无法自定义样式：
+    // 右键改由 tray_menu 自绘弹窗接管，不再挂原生菜单；macOS 保留系统菜单。
+    #[cfg(not(windows))]
+    let menu = {
+        let home = MenuItemBuilder::new(t!("launcher.home"))
+            .id("home")
+            .build(app)?;
+        let toggle = MenuItemBuilder::new(t!("tray.toggle_visibility"))
+            .id("toggle")
+            .build(app)?;
+        let quit = MenuItemBuilder::new(t!("tray.quit"))
+            .id("quit")
+            .build(app)?;
+        MenuBuilder::new(app)
+            .item(&home)
+            .item(&toggle)
+            .separator()
+            .item(&quit)
+            .build()?
+    };
+    #[cfg(windows)]
+    app.manage(crate::tray_menu::TrayMenuState::default());
+    let builder = TrayIconBuilder::with_id("main-tray")
         .icon(tray_icon_for_platform())
         .tooltip("AzurPilot")
-        .menu(&menu)
         .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| {
-            let controller = app.state::<Arc<Launcher>>();
-            match event.id().as_ref() {
-                "home" => {
-                    let _ = show_launcher_home(app);
+            crate::tray_menu::handle_tray_menu_action(app, event.id().as_ref());
+        })
+        .on_tray_icon_event(|tray, event| {
+            #[cfg(windows)]
+            match event {
+                // 左键/双击：后端运行中直接开 WebUI，否则回首页。
+                tauri::tray::TrayIconEvent::Click {
+                    button: tauri::tray::MouseButton::Left,
+                    button_state: tauri::tray::MouseButtonState::Up,
+                    ..
                 }
-                "toggle" => {
+                | tauri::tray::TrayIconEvent::DoubleClick {
+                    button: tauri::tray::MouseButton::Left,
+                    ..
+                } => {
+                    let controller = tray.app_handle().state::<Arc<Launcher>>();
                     if controller.snapshot().backend_running {
-                        toggle_main_window_visibility(
-                            app,
-                            controller.port,
-                            controller.recreate.clone(),
-                        );
+                        controller.open_webui();
                     } else {
-                        let _ = show_launcher_home(app);
+                        let _ = show_launcher_home(tray.app_handle());
                     }
                 }
-                "quit" => {
-                    if controller.snapshot().can_cancel {
-                        let _ = show_launcher_home(app);
-                        let _ = app.emit_to("launcher", "launcher://close-requested", ());
-                    } else {
-                        let _ = controller.exit();
+                // 右键：弹出（或收起）自绘菜单弹窗。
+                tauri::tray::TrayIconEvent::Click {
+                    button: tauri::tray::MouseButton::Right,
+                    button_state: tauri::tray::MouseButtonState::Up,
+                    position,
+                    ..
+                } => {
+                    if let Err(error) =
+                        crate::tray_menu::show_tray_menu_popup(tray.app_handle(), position)
+                    {
+                        warn!("Failed to show tray menu popup: {error:#}");
                     }
                 }
                 _ => {}
             }
-        })
-        .on_tray_icon_event(|tray, event| {
-            #[cfg(windows)]
-            if let tauri::tray::TrayIconEvent::Click {
-                button: tauri::tray::MouseButton::Left,
-                button_state: tauri::tray::MouseButtonState::Up,
-                ..
-            } | tauri::tray::TrayIconEvent::DoubleClick {
-                button: tauri::tray::MouseButton::Left,
-                ..
-            } = event
-            {
-                let controller = tray.app_handle().state::<Arc<Launcher>>();
-                if controller.snapshot().backend_running {
-                    controller.open_webui();
-                } else {
-                    let _ = show_launcher_home(tray.app_handle());
-                }
-            }
             #[cfg(not(windows))]
             let _ = (tray, event);
-        })
-        .build(app)?;
+        });
+    #[cfg(not(windows))]
+    let builder = builder.menu(&menu);
+    builder.build(app)?;
+    // 预建隐藏弹窗：首次右键免 WebView2 初始化延迟。
+    #[cfg(windows)]
+    if let Err(error) = crate::tray_menu::ensure_tray_menu_window(app.handle()) {
+        warn!("Failed to prebuild tray menu window: {error:#}");
+    }
     Ok(())
 }
 #[cfg(not(any(windows, target_os = "macos")))]

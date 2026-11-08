@@ -25,6 +25,7 @@ import { command, getContext, native, subscribe } from "./bridge";
 import { translator } from "./i18n";
 import { acceptSnapshot, busy, type Context, type LauncherSettings, type Snapshot } from "./types";
 import { Confirm } from "./Confirm";
+import { ContextMenu } from "./ContextMenu";
 import { ErrorDialog } from "./ErrorDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import background from "../../bg/bg.mp4";
@@ -544,6 +545,8 @@ export function App() {
       </main>
         </>
       )}
+      {/* 拦截系统默认右键菜单，改用跟随主题的自定义菜单。 */}
+      <ContextMenu locale={localeOverride ?? context.locale} motion={!reducedMotion} />
       {dialog && (
         <Confirm
           title={t(dialog === "repair" ? "repair_title" : "close_title")}
