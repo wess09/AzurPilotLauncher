@@ -11,6 +11,38 @@
   inherits: false;
 }
 
+/* 焦点离开所有元素落在 body/html 时，keyborg 也会把属性挂上去——
+   这种"焦点在文档根"的状态不该画出环，否则等于给整窗描边。 */
+body[data-fui-focus-visible]::after,
+html[data-fui-focus-visible]::after {
+  content: none !important;
+}
+
+/* keyborg 对任何聚焦元素都标属性：普通元素可能带原生 outline，
+   统一压掉，焦点指示只走彩虹环。Fluent 的焦点指示也不只 ::after：
+   主按钮走 box-shadow（shadow2 黑影 + 内嵌黑/白双环），副按钮会把
+   border-color 染成 colorStrokeFocus2——全部按掉，否则彩虹环外面
+   还会叠一层黑框。 */
+[data-fui-focus-visible] {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+button[data-fui-focus-visible],
+a[data-fui-focus-visible] {
+  border-color: transparent !important;
+}
+
+/* Fluent 组件普遍 position: static + overflow: hidden，而 ::after 是
+   absolute：不设定位锚就会逃逸到视口，把整个窗口描上一圈环。被标记的
+   控件（Fluent Button/Switch/Checkbox/Link 均渲染为 button/a/input）
+   就地转为 containing block，让环贴着控件本体画。 */
+button[data-fui-focus-visible],
+a[data-fui-focus-visible],
+input[data-fui-focus-visible] {
+  position: relative;
+}
+
 [data-fui-focus-visible]::after {
   content: "" !important;
   position: absolute !important;
