@@ -583,7 +583,10 @@ pub(crate) fn main_window_titlebar_injection_script() -> String {
             titlebar.id = 'azurpilot-launcher-titlebar';
             titlebar.innerHTML = '<div class="azurpilot-titlebar-drag-zone" aria-hidden="true"></div><div class="header-icon"><button type="button" class="icon icon-hide" data-action="hide" aria-label="'+i18n.hideLabel+'" title="'+i18n.hideLabel+'"><svg viewBox="0 0 6 6"><rect x="1" y="1" width="4" height="4" rx="1"/><path d="M2 3h2"/></svg></button><button type="button" class="icon icon-minimize" data-action="minimize" aria-label="'+i18n.minimizeLabel+'" title="'+i18n.minimizeTitle+'"><svg viewBox="0 0 6 6"><line x1="1" y1="3" x2="5" y2="3"/></svg></button><button type="button" class="icon icon-maximize" data-action="maximize" aria-label="'+i18n.maximizeLabel+'" title="'+i18n.maximizeTitle+'"><svg viewBox="0 0 6 6" class="svg-restore" style="display:none"><polyline points="1,3 1,1 3,1"/><polyline points="3,5 5,5 5,3"/></svg><svg viewBox="0 0 6 6" class="svg-maximize"><polyline points="1,2.5 1,1 2.5,1"/><polyline points="3.5,5 5,5 5,3.5"/></svg></button><button type="button" class="icon icon-close" data-action="close" aria-label="'+i18n.closeLabel+'" title="'+i18n.closeTitle+'"><svg viewBox="0 0 6 6"><line x1="1" y1="1" x2="5" y2="5"/><line x1="5" y1="1" x2="1" y2="5"/></svg></button></div>';
             document.body.dataset.azurpilotCustomTitlebar = 'true';
-            document.body.prepend(titlebar);
+            // 挂载到 documentElement（html 直子级）：部分 WebUI 页面（如首次
+            // 运行向导）会给 body 子树加 transform/filter，body 内的 fixed
+            // 会退化为相对该容器定位导致控件乱窜；html 直子级永远相对视口。
+            document.documentElement.appendChild(titlebar);
             const maximizeButton = titlebar.querySelector('[data-action="maximize"]');
             let closeMenu = document.getElementById('azurpilot-close-menu');
             if (!closeMenu) {
@@ -596,34 +599,33 @@ pub(crate) fn main_window_titlebar_injection_script() -> String {
                 closeMenu.querySelector('[data-close-action="minimize"]').textContent = i18n.minimizeToTrayAction;
                 closeMenu.querySelector('[data-close-action="exit"]').textContent = i18n.exitAction;
                 closeMenu.addEventListener('pointerdown', event => event.stopPropagation());
-                document.body.appendChild(closeMenu);
+                document.documentElement.appendChild(closeMenu);
             }
             const syncTitlebarLayout = () => {
                 try {
                     const topbar = document.querySelector('.topbar, header, #topbar, [class*="topbar"], [class*="Header"]');
                     let h = 0;
-                    let topOffset = 0;
                     if (topbar) {
                         const rect = topbar.getBoundingClientRect();
-                        if (rect.height > 20) {
+                        // 只认可"贴视口顶且高度合理"的顶栏：过高的容器（如
+                        // 首次运行向导里类名含 Header 的大块容器）或不在窗口
+                        // 顶部的一律视为误判，控件条保持固定在窗口右上角。
+                        if (rect.height > 20 && rect.height <= 120 && rect.top <= 4) {
                             h = rect.height;
-                            topOffset = rect.top;
                         }
                     }
                     if (!h) {
                         const computed = getComputedStyle(document.documentElement).getPropertyValue('--topbar-height').trim();
                         if (computed) {
                             const parsed = parseFloat(computed);
-                            if (!isNaN(parsed) && parsed > 20) {
+                            if (!isNaN(parsed) && parsed > 20 && parsed <= 120) {
                                 h = parsed;
                             }
                         }
                     }
                     if (h > 0) {
                         titlebar.style.height = h + 'px';
-                        if (topOffset >= 0) {
-                            titlebar.style.top = topOffset + 'px';
-                        }
+                        titlebar.style.top = '0px';
                     }
                 } catch (_) {}
             };
