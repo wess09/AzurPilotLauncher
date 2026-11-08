@@ -34,13 +34,18 @@ a[data-fui-focus-visible] {
 }
 
 /* Fluent 组件普遍 position: static + overflow: hidden，而 ::after 是
-   absolute：不设定位锚就会逃逸到视口，把整个窗口描上一圈环。被标记的
-   控件（Fluent Button/Switch/Checkbox/Link 均渲染为 button/a/input）
-   就地转为 containing block，让环贴着控件本体画。 */
+   absolute：不设定位锚就会逃逸到视口画成整窗环。被标记的控件就地转为
+   containing block；环画在控件外侧，还要放开 overflow 让出界部分不被
+   裁掉（按钮内容不越界，放开无副作用）。 */
 button[data-fui-focus-visible],
 a[data-fui-focus-visible],
 input[data-fui-focus-visible] {
   position: relative;
+}
+
+button[data-fui-focus-visible],
+a[data-fui-focus-visible] {
+  overflow: visible;
 }
 
 [data-fui-focus-visible]::after {
@@ -49,9 +54,9 @@ input[data-fui-focus-visible] {
   pointer-events: none !important;
   z-index: 1 !important;
   border: none !important;
-  /* Fluent 默认外扩贴外缘；改贴内侧 2px，更接近 NS2 的环抱感。 */
-  inset: 2px !important;
-  border-radius: 5px !important;
+  /* 环画在控件外侧 1px 间隙处（NS2 的环抱感），圆角随外扩同心放大。 */
+  inset: -3px !important;
+  border-radius: 7px !important;
   padding: 2px !important;
   background: conic-gradient(
       from var(--ns2-ring-angle, 0deg),
