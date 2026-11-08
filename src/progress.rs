@@ -60,6 +60,7 @@ impl SplashUpdate {
         }
     }
 
+    #[allow(dead_code)]
     pub fn error(
         title: impl Into<String>,
         detail: impl Into<String>,

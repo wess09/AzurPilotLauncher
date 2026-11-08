@@ -337,7 +337,9 @@ fn run_connection(
                                 bail!("invalid launcher event");
                             }
                             if !notifications.contains(&id) {
-                                handler.notification(data)?;
+                                if let Err(error) = handler.notification(data) {
+                                    warn!("Failed to display notification event {id}: {error:#}");
+                                }
                                 notifications.push_back(id.clone());
                                 if notifications.len() > 128 {
                                     notifications.pop_front();

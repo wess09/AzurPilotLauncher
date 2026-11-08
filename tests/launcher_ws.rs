@@ -59,7 +59,10 @@ fn accept(listener: &TcpListener) -> WebSocket<TcpStream> {
     let hello = read(&mut socket);
     assert_eq!(hello["method"], "session.hello");
     assert_eq!(hello["params"]["protocolVersion"], 2);
-    assert_eq!(hello["params"]["launcherVersion"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        hello["params"]["launcherVersion"],
+        env!("CARGO_PKG_VERSION")
+    );
     write(
         &mut socket,
         json!({"type":"response","id":"hello","ok":true,

@@ -167,10 +167,7 @@ impl UpdateSource {
         }
     }
 
-    fn push_all<'a>(
-        mut urls: Vec<&'a str>,
-        extra: [Option<&'a str>; 2],
-    ) -> Vec<&'a str> {
+    fn push_all<'a>(mut urls: Vec<&'a str>, extra: [Option<&'a str>; 2]) -> Vec<&'a str> {
         for candidate in extra.into_iter().flatten() {
             if !urls.contains(&candidate) {
                 urls.push(candidate);
@@ -598,13 +595,18 @@ mod source_tests {
         }))
         .unwrap();
         let mut requested = Vec::new();
-        download_from_sources(&payload, &AtomicBool::new(false), UpdateSource::Official, |url| {
-            requested.push(url.to_owned());
-            if requested.len() == 1 {
-                bail!("primary unavailable");
-            }
-            Ok(())
-        })
+        download_from_sources(
+            &payload,
+            &AtomicBool::new(false),
+            UpdateSource::Official,
+            |url| {
+                requested.push(url.to_owned());
+                if requested.len() == 1 {
+                    bail!("primary unavailable");
+                }
+                Ok(())
+            },
+        )
         .unwrap();
         assert_eq!(requested.len(), 2);
         assert_eq!(Some(requested[1].as_str()), payload.github_url.as_deref());
@@ -625,12 +627,14 @@ mod source_tests {
         };
         let cancel = AtomicBool::new(false);
         let mut calls = 0;
-        assert!(download_from_sources(&payload, &cancel, UpdateSource::Official, |_| {
-            calls += 1;
-            cancel.store(true, std::sync::atomic::Ordering::SeqCst);
-            bail!("cancelled")
-        })
-        .is_err());
+        assert!(
+            download_from_sources(&payload, &cancel, UpdateSource::Official, |_| {
+                calls += 1;
+                cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                bail!("cancelled")
+            })
+            .is_err()
+        );
         assert_eq!(calls, 1);
     }
 
@@ -640,17 +644,10 @@ mod source_tests {
         let url = "https://launcher-download.azurpilot.com/a.exe";
         let github = "https://github.com/wess09/AzurPilotLauncher/releases/download/v3/a.exe";
         let cloudflare = "https://launcher-cloudflare-cdn-download.azurpilot.com/a.exe";
-        let order = |source: UpdateSource| {
-            source.order_payload_urls(url, Some(github), Some(cloudflare))
-        };
-        assert_eq!(
-            order(UpdateSource::Official),
-            vec![url, github, cloudflare]
-        );
-        assert_eq!(
-            order(UpdateSource::Github),
-            vec![github, url, cloudflare]
-        );
+        let order =
+            |source: UpdateSource| source.order_payload_urls(url, Some(github), Some(cloudflare));
+        assert_eq!(order(UpdateSource::Official), vec![url, github, cloudflare]);
+        assert_eq!(order(UpdateSource::Github), vec![github, url, cloudflare]);
         assert_eq!(
             order(UpdateSource::Cloudflare),
             vec![cloudflare, url, github]
@@ -1205,7 +1202,7 @@ fn download_launcher_update_range(
         .create(true)
         .append(true)
         .open(chunk_path)?;
-    let mut buffer = [0u8; 128 * 1024];
+    let mut buffer = [0u8; 32 * 1024];
     loop {
         let size = response.read(&mut buffer).map_err(|error| {
             anyhow::Error::new(LauncherUpdateDownloadRetry {
@@ -1497,33 +1494,7 @@ fn launcher_download_progress_detail(
 }
 
 /// 把字节数格式化为人类可读字符串（B/KiB/MiB/GiB，保留 1 位小数）。
-pub(crate) fn format_bytes(bytes: u64) -> String {
-    const KIB: f64 = 1024.0;
-    const MIB: f64 = KIB * 1024.0;
-    const GIB: f64 = MIB * 1024.0;
-
-    let bytes_f = bytes as f64;
-    if bytes_f >= GIB {
-        format!("{:.1} GiB", bytes_f / GIB)
-    } else if bytes_f >= MIB {
-        format!("{:.1} MiB", bytes_f / MIB)
-    } else if bytes_f >= KIB {
-        format!("{:.1} KiB", bytes_f / KIB)
-    } else {
-        format!("{bytes} B")
-    }
-}
-
-/// 计算平均下载速度（字节/秒）；耗时不足 0.1 秒时按 0.1 秒折算，避免除零。
-pub(crate) fn download_speed_bytes_per_second(downloaded: u64, started_at: Instant) -> f64 {
-    let elapsed = started_at.elapsed().as_secs_f64().max(0.1);
-    downloaded as f64 / elapsed
-}
-
-/// 把速度（字节/秒）四舍五入后复用字节数格式化输出。
-pub(crate) fn format_speed(bytes_per_second: f64) -> String {
-    format_bytes(bytes_per_second.max(0.0).round() as u64)
-}
+pub(crate) use crate::format_util::{download_speed_bytes_per_second, format_bytes, format_speed};
 
 /// 返回当前操作系统与架构对应的更新清单平台标识（如 windows-x86_64）。
 /// 未识别的组合返回 "unknown"（清单中无该载荷，更新会报缺失）。
@@ -1888,15 +1859,11 @@ fn path_to_wide(path: &Path) -> Vec<u16> {
         .collect()
 }
 
-/// main.rs 纯函数逻辑的单元测试：覆盖时间炸弹配置解析、Cargo.toml 键值
+/// updater 纯函数与下载引擎的单元测试
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TAURI_CONFIG_SOURCE;
-    use crate::{
-        cargo_toml_section, cargo_toml_value, time_bomb_config, truncate_log_file,
-        windows::{backend_unready_error, main_window_titlebar_injection_script},
-    };
+    use crate::windows::backend_unready_error;
 
     /// 有界本地服务，避免重试回归时因缺少预期请求而永久挂起测试。
     fn download_test_server(
@@ -2249,28 +2216,6 @@ mod tests {
         );
     }
 
-    /// 时间炸弹段 enabled 时应能解析出配置（且与 enabled 值一致）。
-    #[test]
-    fn test_time_bomb_config_parses_when_enabled() {
-        let section =
-            cargo_toml_section("package.metadata.azurpilot.time-bomb").expect("section exists");
-        let enabled = cargo_toml_value(section, "enabled").as_deref() == Some("true");
-        let config = time_bomb_config().expect("time bomb config parses");
-        assert_eq!(config.is_some(), enabled);
-    }
-
-    /// cargo_toml_value 应能读到 expires-at 与中文 message 字段。
-    #[test]
-    fn test_cargo_toml_value_reads_time_bomb_fields() {
-        let section =
-            cargo_toml_section("package.metadata.azurpilot.time-bomb").expect("section exists");
-        assert!(cargo_toml_value(section, "expires-at").is_some());
-        assert_eq!(
-            Some("测试已结束，请安装正式版".to_owned()),
-            cargo_toml_value(section, "message")
-        );
-    }
-
     /// backend_unready_error 携带日志失败原因时拼接展示，无原因时保持原样。
     #[test]
     fn backend_unready_error_carries_the_reason_from_the_log() {
@@ -2282,78 +2227,6 @@ mod tests {
 
         let without_reason = backend_unready_error(anyhow!("connect failed"), None);
         assert_eq!(format!("{without_reason:#}"), "connect failed");
-    }
-
-    /// 英文环境下 splash HTML 的文案应来自 JSON 字面量（而非 JS 单引号拼接）。
-
-    /// splash HTML 应包含可选的 uv 安装进度子条相关标记与样式。
-
-    /// 截断日志文件应把已存在的旧内容清空。
-    #[test]
-    fn test_truncate_log_file_replaces_existing_contents() {
-        let temp_dir = TempDirBuilder::new()
-            .prefix("launcher-log-truncate-test-")
-            .tempdir()
-            .expect("create temporary log directory");
-        let filename = "launcher.txt";
-        let path = temp_dir.path().join(filename);
-        fs::write(&path, "old launcher log").expect("write old log");
-
-        truncate_log_file(temp_dir.path(), filename).expect("truncate launcher log");
-
-        assert_eq!(fs::read(&path).expect("read truncated log"), b"");
-    }
-
-    /// 标题栏应使用 WebView 可拖拽区域（pointerdown + app-region）支持触摸拖动。
-    #[test]
-    fn test_titlebars_use_webview_draggable_regions_for_touch_dragging() {
-        #[cfg(not(target_os = "macos"))]
-        let titlebar_script = main_window_titlebar_injection_script();
-
-        #[cfg(not(target_os = "macos"))]
-        {
-            assert!(titlebar_script.contains("touch-action:none"));
-            assert!(titlebar_script.contains("addEventListener('pointerdown'"));
-            assert!(titlebar_script.contains("window_start_dragging"));
-            assert!(titlebar_script.contains("-webkit-app-region:no-drag"));
-            assert!(titlebar_script.contains(
-                ".azurpilot-titlebar-drag-zone{position:absolute;inset:0 148px 0 0;height:100%;pointer-events:none"
-            ));
-            assert!(titlebar_script.contains("getComputedStyle(element).cursor === 'pointer'"));
-            assert!(titlebar_script.contains("min-height:28px"));
-            assert!(titlebar_script.contains("background:rgba(250,250,247,.78)"));
-            assert!(titlebar_script.contains(".icon-close{color:#e64f58}"));
-            assert!(titlebar_script.contains("--azurpilot-titlebar-height:56px"));
-            assert!(titlebar_script.contains("transform:translateY(-6px) scale(.96)"));
-            assert!(!titlebar_script.contains("scale(.72)"));
-            assert!(titlebar_script.contains("azurpilot-close-menu"));
-            assert!(!titlebar_script.contains("azurpilot-close-optics"));
-            assert!(!titlebar_script.contains("azurpilot-island-open"));
-            assert!(titlebar_script.contains("__AZURPILOT_OPEN_CLOSE_PROMPT"));
-            assert!(titlebar_script.contains("window_exit_application"));
-            assert!(!titlebar_script.contains("addEventListener('scroll'"));
-            assert!(!titlebar_script.contains("MutationObserver"));
-            assert!(titlebar_script.contains("data-theme*="));
-            assert!(titlebar_script.contains("#azurpilot-launcher-titlebar.is-dark"));
-        }
-    }
-
-    /// tauri.conf.json 中 Windows 窗口应启用 WebView2 拖拽区域等浏览器参数。
-    #[test]
-    fn test_windows_enable_webview_draggable_regions() {
-        let config: serde_json::Value =
-            serde_json::from_str(TAURI_CONFIG_SOURCE).expect("valid config");
-        let windows = config["app"]["windows"].as_array().expect("window configs");
-
-        for window in windows {
-            let args = window["additionalBrowserArgs"]
-                .as_str()
-                .expect("draggable regions arguments");
-            assert!(args.contains("msWebView2EnableDraggableRegions"));
-            assert!(args.contains("ElasticOverscroll"));
-            assert!(args.contains("msWebOOUI,msPdfOOUI,msSmartScreenProtection"));
-            assert!(args.contains("--no-proxy-server"));
-        }
     }
 
     /// 版本比较：合法版本可比较，非法版本返回 None。

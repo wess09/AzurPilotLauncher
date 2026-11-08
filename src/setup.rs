@@ -27,13 +27,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    mpsc::{self, RecvTimeoutError, Sender},
+    mpsc::{self, RecvTimeoutError},
     Arc,
 };
 use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
+use crate::fs_util::is_symlink_or_reparse_point;
 use crate::sources::Preferences;
 use crate::window_util::CreateNoWindow as _;
 use rust_i18n::t;
@@ -112,8 +113,6 @@ impl UvProgressState {
 const MAX_UPDATE_RETRIES: usize = 20;
 /// 每次重试之间的固定间隔。
 const RETRY_DELAY: Duration = Duration::from_secs(1);
-/// 删除 `.venv` 等目录时的最大重试次数（文件被占用时按退避间隔重试）。
-const CLEANUP_RETRIES: usize = 20;
 /// 要安装的 Python 版本：仅锁定 3.14 系列，具体补丁版由 uv 解析当时的
 /// 最新稳定版，不随启动器写死。
 const PYTHON_VERSION: &str = "3.14";
@@ -270,7 +269,10 @@ fn prepend_path_to_env(key: &str, path: PathBuf) {
     if let Some(ref old_path) = &std::env::var_os(key) {
         paths.extend(std::env::split_paths(old_path));
     }
-    std::env::set_var(key, std::env::join_paths(paths).unwrap());
+    match std::env::join_paths(paths) {
+        Ok(joined) => std::env::set_var(key, joined),
+        Err(e) => warn!("Failed to join paths for {key}: {e}"),
+    }
 }
 
 /// 仓库内虚拟环境目录：`.venv`（所有平台一致）。
@@ -324,6 +326,25 @@ fn git_tool_root() -> PathBuf {
         .unwrap_or_else(|| root.join(crate::components::TOOLS_DIR).join("git"))
 }
 
+/// 清理因历史进程崩溃或异常退出遗留在系统临时目录下的孤儿 bootstrap 目录。
+fn clean_orphan_bootstrap_dirs() {
+    let temp = std::env::temp_dir();
+    let current_dir_name = format!("azurpilot-bootstrap-{}", std::process::id());
+    if let Ok(entries) = fs::read_dir(&temp) {
+        for entry in entries.flatten() {
+            if let Ok(file_type) = entry.file_type() {
+                if file_type.is_dir() {
+                    let file_name = entry.file_name();
+                    let name = file_name.to_string_lossy();
+                    if name.starts_with("azurpilot-bootstrap-") && name != current_dir_name {
+                        let _ = fs::remove_dir_all(entry.path());
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// 取得本次进程用于引导的 uv 可执行文件路径。
 ///
 /// 优先级：内嵌二进制（释放到带进程 ID 的临时目录，避免多实例冲突）>
@@ -332,11 +353,15 @@ fn git_tool_root() -> PathBuf {
 /// # Errors
 /// 未内嵌且系统上找不到 uv 时返回 Err（提示用户 uv 未找到）。
 fn bootstrap_uv_path() -> Result<PathBuf> {
+    clean_orphan_bootstrap_dirs();
     // 临时目录带进程 ID：防止同一台机器并行运行多个启动器实例时互相覆盖
     let dir = std::env::temp_dir().join(format!("azurpilot-bootstrap-{}", std::process::id()));
     fs::create_dir_all(&dir)?;
     let path = dir.join(if cfg!(windows) { "uv.exe" } else { "uv" });
-    if !path.exists() {
+    if !path.exists()
+        || (!BOOTSTRAP_UV.is_empty()
+            && fs::metadata(&path).map(|m| m.len()).unwrap_or(0) != BOOTSTRAP_UV.len() as u64)
+    {
         if BOOTSTRAP_UV.is_empty() {
             if let Some(path_uv) = std::env::var_os("UV").map(PathBuf::from) {
                 return Ok(path_uv);
@@ -652,224 +677,110 @@ fn remove_venv_path_for_repair(venv: &Path, cancel_requested: &AtomicBool) -> Re
     Ok(())
 }
 
-/// 带取消检查与退避重试的删除循环（恢复流程专用）。
-///
-/// 每次删除尝试前后
-/// 都检查取消标志，保证用户取消时能尽快中止。
-///
-/// # Errors
-/// 用户取消或重试用尽仍失败时返回 Err。
-pub(crate) fn remove_venv_entry_with_retry(
-    path: &Path,
-    cancel_requested: &AtomicBool,
-) -> Result<()> {
-    let mut last_error = None;
-    for attempt in 0..CLEANUP_RETRIES {
-        if cancel_requested.load(Ordering::SeqCst) {
-            bail!(t!("launcher.cancelled"));
-        }
-
-        match remove_venv_entry(path, cancel_requested) {
-            Ok(()) => return Ok(()),
-            Err(error) => {
-                last_error = Some(error);
-                if !path.exists() {
-                    return Ok(());
-                }
-                wait_for_venv_recovery_retry(
-                    Duration::from_millis(250 + attempt as u64 * 100),
-                    cancel_requested,
-                )?;
-            }
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| {
-        anyhow!(t!(
-            "errors.delete_failed",
-            error = path.display().to_string()
-        ))
-    }))
-}
-
-/// 递归删除 `.venv` 内的单个条目（恢复流程专用，逐步检查取消标志）。
-///
-/// 符号链接与 Reparse Point 只删链接本身、不递归目标——防止
-/// `.venv` 内的链接指向目录外时误删外部文件。
-///
-/// # Errors
-/// 用户取消或删除失败时返回 Err。
-fn remove_venv_entry(path: &Path, cancel_requested: &AtomicBool) -> Result<()> {
-    if cancel_requested.load(Ordering::SeqCst) {
-        bail!(t!("launcher.cancelled"));
-    }
-
-    let metadata = fs::symlink_metadata(path)?;
-    if is_symlink_or_reparse_point(&metadata) {
-        return remove_venv_link_or_reparse_point(path, &metadata);
-    }
-
-    clear_readonly(path)?;
-    if metadata.is_dir() {
-        for entry in fs::read_dir(path)? {
-            if cancel_requested.load(Ordering::SeqCst) {
-                bail!(t!("launcher.cancelled"));
-            }
-            remove_venv_entry(&entry?.path(), cancel_requested)?;
-        }
-        fs::remove_dir(path).with_context(|| {
-            t!(
-                "errors.delete_dir_failed",
-                error = path.display().to_string()
-            )
-        })?;
-    } else {
-        fs::remove_file(path).with_context(|| {
-            t!(
-                "errors.delete_file_failed",
-                error = path.display().to_string()
-            )
-        })?;
-    }
-    Ok(())
-}
-
-/// 判断给定元数据是否为符号链接或 Windows Reparse Point。
-///
-/// Reparse Point（含 junction）在标准 `is_symlink()` 下不可见，
-/// Windows 需额外检查文件属性位，二者都不应被递归删除。
-fn is_symlink_or_reparse_point(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
-        return metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0;
-    }
-
-    #[cfg(not(windows))]
-    false
-}
-
-/// 删除符号链接或 Reparse Point 本身（不递归目标内容）。
-///
-/// Windows 需区分"指向目录"与"指向文件"两种链接选用不同 API；
-/// Unix 一律按文件链接删除。
-///
-/// # Errors
-/// 删除失败时返回 Err（含 i18n 错误信息）。
-fn remove_venv_link_or_reparse_point(path: &Path, _metadata: &fs::Metadata) -> Result<()> {
-    #[cfg(windows)]
-    let result = if fs::metadata(path)
-        .map(|target_metadata| target_metadata.is_dir())
-        .unwrap_or(false)
-    {
-        fs::remove_dir(path)
-    } else {
-        fs::remove_file(path)
-    };
-
-    #[cfg(not(windows))]
-    let result = fs::remove_file(path);
-
-    result.with_context(|| {
-        t!(
-            "errors.delete_file_failed",
-            error = path.display().to_string()
-        )
-    })
-}
-
-/// 在重试间隔内以 50ms 粒度小步等待，随时响应取消请求。
-///
-/// 不能用一次长 sleep——用户取消后应立刻停止而不是等完整间隔。
-///
-/// # Errors
-/// 等待期间检测到取消请求时返回 Err。
-fn wait_for_venv_recovery_retry(delay: Duration, cancel_requested: &AtomicBool) -> Result<()> {
-    let deadline = Instant::now() + delay;
-    while Instant::now() < deadline {
-        if cancel_requested.load(Ordering::SeqCst) {
-            bail!(t!("launcher.cancelled"));
-        }
-        thread::sleep(
-            Duration::from_millis(50).min(deadline.saturating_duration_since(Instant::now())),
-        );
-    }
-    Ok(())
-}
-
-/// 清除路径的只读属性（Windows 删除只读文件前必须先清位）。
-///
-/// 路径已消失时静默成功；非只读时不做任何操作。
-///
-/// # Errors
-/// 属性修改失败时返回 Err。
-fn clear_readonly(path: &Path) -> Result<()> {
-    let Ok(metadata) = fs::metadata(path) else {
-        return Ok(());
-    };
-    let mut permissions = metadata.permissions();
-    if permissions.readonly() {
-        permissions.set_readonly(false);
-        fs::set_permissions(path, permissions)
-            .with_context(|| t!("errors.chmod_failed", error = path.display().to_string()))?;
-    }
-    Ok(())
-}
+/// 跨平台带重试与取消感知的目录递归删除，复用底层 fs_util 工具。
+pub(crate) use crate::fs_util::remove_dir_all_with_retry as remove_venv_entry_with_retry;
 
 /// 在独立线程中逐块读取子进程输出流，按自定义协议切分事件并转发。
 ///
-/// git/uv 的进度输出使用"前缀:内容"格式（如 uv 的 `Resolved: ...`），
-/// 本函数按 ASCII 范围识别可打印字符：遇到非可打印字符（进度条
-/// 回车重绘、二进制块等）立即截断发送，避免进度条刷屏；遇到冒号
-/// 时若发现重复前缀模式则切分出完整事件提前发送。最终每个事件以
-/// `(is_err, 文本)` 形式送入通道，由主循环统一消费。
-fn pipe_lines(read: impl Read + Send + 'static, tx: Sender<(bool, String)>, is_err: bool) {
+/// 使用标准的流式 UTF-8 增量解码器，保留合法的中文字符与多语言输出；
+/// 仅针对 ASCII 控制字符（如回车 \r 重绘、换行 \n 及终端转义序列）进行事件边界截断；
+/// 遇到冒号时若发现重复前缀模式则切分出完整事件提前发送。
+fn pipe_lines(
+    read: impl Read + Send + 'static,
+    tx: mpsc::SyncSender<(bool, String)>,
+    is_err: bool,
+) {
     thread::spawn(move || {
         let mut reader = BufReader::new(read);
-        let mut buffer = "".to_owned();
+        let mut raw_buf = Vec::new();
+        let mut buffer = String::new();
+        let mut chunk = [0u8; 1024];
+
         loop {
-            let mut line = [0u8; 64];
-            match reader.read(&mut line) {
+            match reader.read(&mut chunk) {
                 Ok(0) | Err(_) => break,
                 Ok(size) => {
-                    for c in &line[0..size] {
-                        // 非 ASCII 可打印字符：视为进度重绘等噪声，截断当前缓冲
-                        if *c < 32 || *c > 127 {
-                            if !buffer.is_empty() {
-                                let _ = tx.send((is_err, buffer));
-                                buffer = "".to_owned();
+                    raw_buf.extend_from_slice(&chunk[..size]);
+                    let mut processed = 0;
+
+                    while processed < raw_buf.len() {
+                        match std::str::from_utf8(&raw_buf[processed..]) {
+                            Ok(valid_str) => {
+                                for ch in valid_str.chars() {
+                                    handle_pipe_char(ch, &mut buffer, &tx, is_err);
+                                }
+                                processed = raw_buf.len();
                             }
-                        } else if *c as char == ':' {
-                            // "A:A..." 形式的重复前缀说明上一事件已完整，切分发送
-                            let mut cut = 0usize;
-                            if let Some((l, r)) = buffer.split_once(':') {
-                                if r.ends_with(l) {
-                                    cut = r.len() + 1;
+                            Err(e) => {
+                                let valid_len = e.valid_up_to();
+                                if valid_len > 0 {
+                                    if let Ok(valid_str) = std::str::from_utf8(
+                                        &raw_buf[processed..processed + valid_len],
+                                    ) {
+                                        for ch in valid_str.chars() {
+                                            handle_pipe_char(ch, &mut buffer, &tx, is_err);
+                                        }
+                                    }
+                                    processed += valid_len;
+                                }
+                                match e.error_len() {
+                                    Some(err_len) => {
+                                        processed += err_len;
+                                    }
+                                    None => {
+                                        break;
+                                    }
                                 }
                             }
-                            if cut > 0 {
-                                let (l, r) = buffer.split_at(cut);
-                                let _ = tx.send((is_err, l.to_owned()));
-                                buffer = r.to_owned();
-                            }
-                            buffer.push(*c as char);
-                        } else {
-                            buffer.push(*c as char);
                         }
+                    }
+
+                    if processed > 0 {
+                        raw_buf.drain(..processed);
                     }
                 }
             }
         }
+
+        if !raw_buf.is_empty() {
+            let s = String::from_utf8_lossy(&raw_buf);
+            for ch in s.chars() {
+                handle_pipe_char(ch, &mut buffer, &tx, is_err);
+            }
+        }
+
         if !buffer.is_empty() {
             let _ = tx.send((is_err, buffer));
         }
     });
+}
+
+fn handle_pipe_char(
+    c: char,
+    buffer: &mut String,
+    tx: &mpsc::SyncSender<(bool, String)>,
+    is_err: bool,
+) {
+    if (c as u32) < 32 && c != '\t' {
+        if !buffer.is_empty() {
+            let _ = tx.send((is_err, std::mem::take(buffer)));
+        }
+    } else if c == ':' {
+        let mut cut = 0usize;
+        if let Some((l, r)) = buffer.split_once(':') {
+            if r.ends_with(l) {
+                cut = r.len() + 1;
+            }
+        }
+        if cut > 0 {
+            let (l, r) = buffer.split_at(cut);
+            let _ = tx.send((is_err, l.to_owned()));
+            *buffer = r.to_owned();
+        }
+        buffer.push(c);
+    } else {
+        buffer.push(c);
+    }
 }
 
 /// 运行一个长时间子命令（git 更新或 uv 同步），实时解析输出并上报进度。
@@ -890,11 +801,13 @@ fn run_command(
     let is_deps = matches!(phase, ScriptPhase::Dependencies);
     let is_app = matches!(phase, ScriptPhase::App);
 
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = crate::task_process::TaskChild::spawn(cmd)?;
 
-    // 接收读取线程输出的通道：(是否 stderr, 行文本)
-    let (tx, rx) = mpsc::channel::<(bool, String)>();
+    // 接收读取线程输出的有界通道（防止高速日志产生内存积压）
+    let (tx, rx) = mpsc::sync_channel::<(bool, String)>(256);
 
     // 为 stdout 启动一个读取线程
     if let Some(stdout) = child.take_stdout() {
@@ -924,6 +837,12 @@ fn run_command(
     let mut last_wait_update = started_at;
     const UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 
+    let max_timeout = match phase {
+        ScriptPhase::Git => Duration::from_secs(10 * 60),
+        ScriptPhase::Dependencies => Duration::from_secs(25 * 60),
+        ScriptPhase::App => Duration::from_secs(15 * 60),
+    };
+
     // 主循环：收取输出行，转发到日志与启动画面进度回调
     loop {
         if cancel_requested.load(Ordering::SeqCst) {
@@ -931,6 +850,11 @@ fn run_command(
             let _ = child.kill();
             let _ = child.wait();
             bail!(t!("launcher.cancelled"));
+        }
+        if started_at.elapsed() > max_timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("Command execution timed out after {:?}", max_timeout);
         }
         // 短超时保证无输出时的取消与进度刷新也及时响应。
         match rx.recv_timeout(UPDATE_INTERVAL) {
@@ -2408,19 +2332,37 @@ fn files_match(left: &Path, right: &Path) -> Result<bool> {
         return Ok(false);
     }
 
-    let left_bytes = fs::read(left).with_context(|| {
+    let left_file = fs::File::open(left).with_context(|| {
         t!(
             "errors.read_file_failed",
             error = left.display().to_string()
         )
     })?;
-    let right_bytes = fs::read(right).with_context(|| {
+    let right_file = fs::File::open(right).with_context(|| {
         t!(
             "errors.read_file_failed",
             error = right.display().to_string()
         )
     })?;
-    Ok(left_bytes == right_bytes)
+
+    let mut left_reader = BufReader::with_capacity(64 * 1024, left_file);
+    let mut right_reader = BufReader::with_capacity(64 * 1024, right_file);
+
+    let mut left_buf = [0u8; 64 * 1024];
+    let mut right_buf = [0u8; 64 * 1024];
+
+    loop {
+        let left_n = left_reader.read(&mut left_buf)?;
+        let right_n = right_reader.read(&mut right_buf)?;
+
+        if left_n != right_n || left_buf[..left_n] != right_buf[..right_n] {
+            return Ok(false);
+        }
+        if left_n == 0 {
+            break;
+        }
+    }
+    Ok(true)
 }
 
 /// 把子进程的一行输出转换为启动画面进度更新（无法识别时返回 `None`）。
@@ -2753,28 +2695,9 @@ fn parse_transfer_size_bytes(size: &str) -> Option<u64> {
     (bytes.is_finite() && bytes >= 0.0 && bytes <= u64::MAX as f64).then_some(bytes.round() as u64)
 }
 
-/// 把字节数格式化为人类可读体积（自动选择 B/KiB/MiB/GiB 单位，一位小数）。
-fn format_transfer_size(bytes: u64) -> String {
-    const KIB: f64 = 1024.0;
-    const MIB: f64 = KIB * 1024.0;
-    const GIB: f64 = MIB * 1024.0;
-
-    let bytes = bytes as f64;
-    if bytes >= GIB {
-        format!("{:.1} GiB", bytes / GIB)
-    } else if bytes >= MIB {
-        format!("{:.1} MiB", bytes / MIB)
-    } else if bytes >= KIB {
-        format!("{:.1} KiB", bytes / KIB)
-    } else {
-        format!("{bytes:.0} B")
-    }
-}
-
-/// 把字节每秒的速率格式化为人类可读体积速率（负数按 0 处理）。
-fn format_transfer_speed(bytes_per_second: f64) -> String {
-    format_transfer_size(bytes_per_second.max(0.0).round() as u64)
-}
+use crate::format_util::{
+    format_bytes as format_transfer_size, format_speed as format_transfer_speed,
+};
 
 /// 把 0-100 的百分比线性缩放到 `[start, end]` 区间（进度条分段衔接用）。
 fn scale_progress(percentage: impl Into<f64>, start: impl Into<f64>, end: impl Into<f64>) -> f64 {

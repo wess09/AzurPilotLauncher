@@ -9,9 +9,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::Result;
 #[cfg(windows)]
 use anyhow::anyhow;
+use anyhow::Result;
 #[cfg(target_os = "linux")]
 use notify_rust::{Hint, Notification};
 use rust_i18n::t;
@@ -92,7 +92,11 @@ enum NotificationType {
 }
 
 /// 显示经过 WS 协议校验的通知；不记录通知正文。
-pub fn display(app: &tauri::AppHandle, data: serde_json::Value, on_click: &NotificationClickHandler) -> Result<()> {
+pub fn display(
+    app: &tauri::AppHandle,
+    data: serde_json::Value,
+    on_click: &NotificationClickHandler,
+) -> Result<()> {
     let payload = serde_json::from_value::<NotifyPayload>(data)?;
     show_notification(app, payload, on_click);
     Ok(())

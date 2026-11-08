@@ -23,9 +23,7 @@ pub fn init() {
 /// 供设置模块在用户切换界面语言、以及启动时恢复已保存语言时调用，
 /// 保证 Rust 侧消息与前端界面语言一致。
 pub fn apply_override(language: Option<&str>) {
-    let locale = language
-        .map(normalize_locale)
-        .unwrap_or_else(detect_locale);
+    let locale = language.map(normalize_locale).unwrap_or_else(detect_locale);
     rust_i18n::set_locale(&locale);
     tracing::info!("i18n locale overridden to: {}", locale);
 }

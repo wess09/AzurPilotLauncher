@@ -47,6 +47,12 @@ pub(crate) struct Component {
     pub size: u64,
     pub urls: Vec<String>,
 }
+
+#[derive(Deserialize)]
+struct StableRuntimeEnvelope {
+    runtime: Manifest,
+}
+
 /// deploy 引导下载信息：raw 基址（跟随 master）与文件清单，由 CI 生成。
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct DeployBootstrap {
@@ -155,8 +161,8 @@ pub(crate) fn remember_manifest(root: &Path, value: serde_json::Value) -> Result
     let manifest: Manifest = serde_json::from_value(value)?;
     manifest.validate(&platform())?;
     let target = secure_target(root, CACHED_MANIFEST)?;
-    fs::create_dir_all(target.parent().unwrap())?;
-    let mut temporary = tempfile::NamedTempFile::new_in(target.parent().unwrap())?;
+    let parent = crate::fs_util::ensure_parent_dir(&target)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
     temporary.write_all(&serde_json::to_vec(&manifest)?)?;
     temporary.as_file().sync_all()?;
     temporary.persist(target).map_err(|e| e.error)?;
@@ -389,13 +395,9 @@ fn fetch_manifest(client: &Client, cancel: Arc<AtomicBool>) -> Result<Manifest> 
             if bytes.len() > 2 * 1024 * 1024 {
                 bail!("Component manifest too large");
             }
-            let stable: serde_json::Value = serde_json::from_slice(&bytes)?;
-            let manifest: Manifest = serde_json::from_value(
-                stable
-                    .get("runtime")
-                    .context("stable.json is missing runtime components")?
-                    .clone(),
-            )?;
+            let envelope: StableRuntimeEnvelope = serde_json::from_slice(&bytes)
+                .context("stable.json is missing valid runtime components")?;
+            let manifest = envelope.runtime;
             manifest.validate(&platform())?;
             Ok(manifest)
         })();
@@ -536,8 +538,8 @@ fn apply_manifest(
         bootstrap_files,
     };
     let target_receipt = transaction.join("new").join(RECEIPT);
-    fs::create_dir_all(target_receipt.parent().unwrap())?;
-    fs::write(target_receipt, serde_json::to_vec(&receipt)?)?;
+    crate::fs_util::ensure_parent_dir(&target_receipt)?;
+    fs::write(&target_receipt, serde_json::to_vec(&receipt)?)?;
     changed.insert(RECEIPT.into());
     ensure_not_cancelled(&cancel)?;
     progress(SplashUpdate::loading(
@@ -663,18 +665,13 @@ fn download_raw_file(
         let url = format!("{base}/{name}");
         let result = (|| -> Result<()> {
             let response = crate::cancel::request(client.get(&url), cancel)?.error_for_status()?;
-            let mut bytes = Vec::new();
-            crate::cancel::body(response, cancel.clone())
-                .take(16 * 1024 * 1024)
-                .read_to_end(&mut bytes)?;
-            if bytes.is_empty() {
+            let parent = crate::fs_util::ensure_parent_dir(&target).unwrap_or(root);
+            let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+            let mut reader = crate::cancel::body(response, cancel.clone()).take(16 * 1024 * 1024);
+            let copied = std::io::copy(&mut reader, &mut temporary)?;
+            if copied == 0 {
                 bail!("Empty response");
             }
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let mut temporary = tempfile::NamedTempFile::new_in(target.parent().unwrap_or(root))?;
-            temporary.write_all(&bytes)?;
             temporary.as_file().sync_all()?;
             temporary.persist(&target).map_err(|error| error.error)?;
             Ok(())
@@ -721,7 +718,7 @@ fn download(
     mut progress: impl FnMut(f64),
 ) -> Result<PathBuf> {
     let cache = secure_target(root, &format!(".azurpilot/cache/{}.zip", component.sha256))?;
-    fs::create_dir_all(cache.parent().unwrap())?;
+    let cache_parent = crate::fs_util::ensure_parent_dir(&cache)?;
     if !force_download
         && cache.is_file()
         && file_hash(&cache, &cancel)? == (component.sha256.clone(), component.size)
@@ -739,7 +736,7 @@ fn download(
             {
                 bail!("Component size differs from manifest");
             }
-            let mut temporary = tempfile::NamedTempFile::new_in(cache.parent().unwrap())?;
+            let mut temporary = tempfile::NamedTempFile::new_in(cache_parent)?;
             let mut body = crate::cancel::body(response, cancel.clone());
             let mut buffer = vec![0; 128 * 1024];
             let mut hash = Sha256::new();
@@ -868,6 +865,7 @@ fn unpack(
     let mut files = BTreeMap::new();
     let mut names = BTreeSet::new();
     let mut total = 0u64;
+    let mut buffer = vec![0u8; 128 * 1024];
     for index in 0..zip.len() {
         ensure_not_cancelled(cancel)?;
         let mut entry = zip.by_index(index)?;
@@ -893,11 +891,10 @@ fn unpack(
         if path.exists() {
             bail!("Overlapping component file: {name}");
         }
-        fs::create_dir_all(path.parent().unwrap())?;
+        crate::fs_util::ensure_parent_dir(&path)?;
         let mut file = File::create(&path)?;
         let expected = entry.size();
         let mut written = 0u64;
-        let mut buffer = vec![0; 128 * 1024];
         loop {
             ensure_not_cancelled(cancel)?;
             let count = entry.read(&mut buffer)?;
@@ -954,11 +951,11 @@ fn commit(root: &Path, changed: &BTreeSet<String>, cancel: &AtomicBool) -> Resul
             let backup = transaction.join("backup").join(&change.path);
             let staged = transaction.join("new").join(&change.path);
             if change.existed {
-                fs::create_dir_all(backup.parent().unwrap())?;
+                crate::fs_util::ensure_parent_dir(&backup)?;
                 fs::rename(&target, backup)?;
             }
             if staged.is_file() {
-                fs::create_dir_all(target.parent().unwrap())?;
+                crate::fs_util::ensure_parent_dir(&target)?;
                 fs::rename(staged, target)?;
             }
         }
@@ -977,7 +974,7 @@ fn commit(root: &Path, changed: &BTreeSet<String>, cancel: &AtomicBool) -> Resul
 fn clean_transaction(root: &Path) -> Result<()> {
     let transaction = secure_target(root, TRANSACTION)?;
     if transaction.exists() {
-        crate::setup::remove_venv_entry_with_retry(&transaction, &AtomicBool::new(false))?;
+        crate::fs_util::remove_dir_all_with_retry(&transaction, &AtomicBool::new(false))?;
     }
     Ok(())
 }
@@ -994,7 +991,7 @@ fn recover(root: &Path) -> Result<()> {
                 if target.exists() {
                     fs::remove_file(&target)?;
                 }
-                fs::create_dir_all(target.parent().unwrap())?;
+                crate::fs_util::ensure_parent_dir(&target)?;
                 fs::rename(backup, target)?;
             } else if !change.existed && target.is_file() {
                 fs::remove_file(target)?;
@@ -1091,7 +1088,7 @@ mod tests {
         for name in &manifest.deploy.files {
             let path = root.join(name);
             if !path.exists() {
-                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                crate::fs_util::ensure_parent_dir(&path).unwrap();
                 fs::write(path, "# bootstrap").unwrap();
             }
         }
@@ -1158,7 +1155,7 @@ mod tests {
         let manifest = fixture(root.path(), 1);
         for name in &manifest.deploy.files {
             let path = root.path().join(name);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            crate::fs_util::ensure_parent_dir(&path).unwrap();
             fs::write(path, "bootstrap").unwrap();
         }
         let (git, adb) = if cfg!(windows) {
@@ -1168,7 +1165,7 @@ mod tests {
         };
         for name in [git, adb] {
             let path = root.path().join(name);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            crate::fs_util::ensure_parent_dir(&path).unwrap();
             fs::write(path, "existing tool").unwrap();
         }
         remember_manifest(root.path(), serde_json::to_value(manifest).unwrap()).unwrap();

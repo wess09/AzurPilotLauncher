@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use chrono::Local;
 #[cfg(unix)]
 use command_group::{CommandGroup, GroupChild as BackendChild};
@@ -388,16 +388,31 @@ fn kill_processes_using_port(port: u16) -> Result<()> {
         let sys_pid = sysinfo::Pid::from_u32(pid);
         match sys.process(sys_pid) {
             Some(process) => {
-                info!(
-                    "Killing process {} ({}) using configured WebUI port {}",
-                    pid,
-                    process.name().to_string_lossy(),
-                    port
-                );
-                // sysinfo 的 kill 跨平台一致（Windows TerminateProcess，
-                // Unix SIGKILL），无需分支处理。
-                if !process.kill() {
-                    warn!("Failed to kill process {} using port {}", pid, port);
+                let proc_name = process.name().to_string_lossy().to_lowercase();
+                let is_python_or_uv = proc_name.contains("python") || proc_name.contains("uv");
+                let is_managed = backend_env::is_managed_child(process.environ(), current_pid);
+
+                if is_managed || is_python_or_uv {
+                    info!(
+                        "Killing managed/runtime process {} ({}) using configured WebUI port {}",
+                        pid,
+                        process.name().to_string_lossy(),
+                        port
+                    );
+                    // sysinfo 的 kill 跨平台一致（Windows TerminateProcess，
+                    // Unix SIGKILL），无需分支处理。
+                    if !process.kill() {
+                        warn!("Failed to kill process {} using port {}", pid, port);
+                    }
+                } else {
+                    warn!(
+                        "Port {port} is occupied by an unmanaged process {} (PID {pid}), refusing to kill",
+                        process.name().to_string_lossy()
+                    );
+                    bail!(
+                        "端口 {port} 被外部进程 {} (PID {pid}) 占用，请先关闭该程序或修改 WebUI 端口",
+                        process.name().to_string_lossy()
+                    );
                 }
             }
             None => {
@@ -526,22 +541,27 @@ fn local_address_uses_port(address: &str, port: u16) -> bool {
 impl Drop for ManagedBackend {
     fn drop(&mut self) {
         // child 仍为 Some 说明尚未走过 terminate（terminate 会 take 掉句柄），
-        // 直接强杀进程组即可；失败仅告警，不阻断后续的泄漏扫描。
+        // 直接强杀进程组并调用 wait 回收子进程内核表项，避免僵尸进程残留。
         if let Some(mut child) = self.child.take() {
             match child.kill() {
-                Ok(_) => {}
+                Ok(_) => {
+                    let _ = child.wait();
+                }
                 Err(e) => warn!("Failed to kill gui.py process: {:?}", e),
             }
         }
-        // 双归属标记均匹配时才补杀；任一标记被后端清除都视为显式脱离。
-        let sys = sysinfo::System::new_all();
-        for (pid, process) in sys.processes() {
-            if pid.as_u32() != std::process::id()
-                && backend_env::is_managed_child(process.environ(), std::process::id())
-            {
-                process.kill();
+        // 双归属标记均匹配时才补杀；在异步后台线程中执行全系统扫描，避免同步阻塞 UI/调用线程。
+        let current_pid = std::process::id();
+        std::thread::spawn(move || {
+            let sys = sysinfo::System::new_all();
+            for (pid, process) in sys.processes() {
+                if pid.as_u32() != current_pid
+                    && backend_env::is_managed_child(process.environ(), current_pid)
+                {
+                    let _ = process.kill();
+                }
             }
-        }
+        });
     }
 }
 
@@ -605,12 +625,22 @@ fn read_log_tail(path: &Path) -> Option<String> {
     if bytes.contains(&0) {
         return None;
     }
-    let text = String::from_utf8(bytes).ok()?;
+    // 起始偏移可能落在 UTF-8 多字节字符中间，先跳过开头的 UTF-8 连续字节（0x80..=0xBF）
+    let slice = if start > 0 {
+        let mut offset = 0;
+        while offset < bytes.len() && (bytes[offset] & 0xC0) == 0x80 {
+            offset += 1;
+        }
+        &bytes[offset..]
+    } else {
+        &bytes[..]
+    };
+    let text = String::from_utf8_lossy(slice);
     if start == 0 {
-        return Some(text);
+        return Some(text.into_owned());
     }
     // 起始偏移可能落在字符中间，丢掉不完整的首行。
-    Some(text.split_once('\n').map(|(_, tail)| tail.to_owned())?)
+    text.split_once('\n').map(|(_, tail)| tail.to_owned())
 }
 
 /// 日志行形如「时间 | 级别 | [GUI] AzurPilot Web服务启动失败：原因」，取最后一次的原因。

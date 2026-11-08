@@ -42,8 +42,7 @@ mod imp {
                 .name("prevent-sleep".to_string())
                 .spawn(move || {
                     while let Ok(enable) = receiver.recv() {
-                        let flags =
-                            ES_CONTINUOUS | if enable { ES_SYSTEM_REQUIRED } else { 0 };
+                        let flags = ES_CONTINUOUS | if enable { ES_SYSTEM_REQUIRED } else { 0 };
                         // 返回 0 表示失败；仅记录，后续切换会重新下发同一状态。
                         if unsafe { SetThreadExecutionState(flags) } == 0 {
                             tracing::warn!("SetThreadExecutionState failed");
@@ -52,7 +51,10 @@ mod imp {
                 })?;
             *guard = Some(sender);
         }
-        guard.as_ref().expect("worker sender present").send(enabled)?;
+        guard
+            .as_ref()
+            .expect("worker sender present")
+            .send(enabled)?;
         Ok(())
     }
 }
@@ -141,7 +143,9 @@ mod imp {
                     *guard = Some(id);
                     Ok(())
                 } else {
-                    Err(anyhow::anyhow!("IOPMAssertionCreateWithName failed: {status}"))
+                    Err(anyhow::anyhow!(
+                        "IOPMAssertionCreateWithName failed: {status}"
+                    ))
                 }
             }
         } else {
@@ -181,11 +185,15 @@ mod imp {
             }
             let mut command = Command::new("systemd-inhibit");
             command
-                .arg("--what").arg("sleep")
-                .arg("--who").arg("AzurPilot Launcher")
-                .arg("--why").arg("User requested to prevent system sleep")
+                .arg("--what")
+                .arg("sleep")
+                .arg("--who")
+                .arg("AzurPilot Launcher")
+                .arg("--why")
+                .arg("User requested to prevent system sleep")
                 .arg("--")
-                .arg("sleep").arg("infinity")
+                .arg("sleep")
+                .arg("infinity")
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
