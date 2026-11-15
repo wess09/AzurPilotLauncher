@@ -35,6 +35,7 @@ cargo check            # 仅检查编译
 - `src/updater.rs`：检查更新、用户显式更新、mTLS/摘要校验、平台替换与参数恢复。
 - `src/windows.rs`：窗口恢复、React 连接错误路由、保留的 WebUI 标题栏注入。
 - `src/main.rs`：模块入口、日志、信任登录、时间炸弹及通用窗口/文件命令。
+- `src/tray_menu.rs`：Windows 托盘右键自绘弹窗菜单（原生 Win32 HMENU 无法定制样式）：预建无边框透明窗口加载 `?view=tray`、DPI 定位、失焦/短时再点收起；菜单动作与 macOS 原生菜单共用 `handle_tray_menu_action`；ACL 见 `capabilities/tray-menu.json`。
 - `src/components.rs`：`.azurpilot/tools/` 下 git/adb 二进制组件的按需下载、ZIP 校验、事务提交/恢复，以及 deploy 引导脚本/模板的仓库 raw 直连下载（跟随 master，按系统选模板，`config/` 下 json 一律不碰）。
 - `src/setup.rs`：内嵌 uv 引导、Python 3.14.x 安装与可重定位 `.venv`、deploy 脚本驱动的 git 拉取/前端构建/uv sync（多镜像回退）、配置迁移与用户主动环境修复。
 - `src/nodejs.rs`：构建后端前端前检测 Node.js/npm；缺失或版本不足时自动下载带固定 SHA-256 的 Node.js 24 便携包，放入 `.azurpilot/tools/nodejs/`，仅设置构建子进程 PATH。下载源可在设置中独立选择自动/淘宝镜像/南京大学/官方源，失败时回退，所有来源使用同一官方摘要。三平台均支持 x64/ARM64，解压复用 `.venv` Python，不修改系统 Node.js。

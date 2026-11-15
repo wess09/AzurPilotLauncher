@@ -28,11 +28,11 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::Emitter;
+// 原生菜单仅在 macOS 使用：Windows 托盘右键由 tray_menu 自绘弹窗接管。
+#[cfg(target_os = "macos")]
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
 #[cfg(any(windows, target_os = "macos"))]
-use tauri::{
-    menu::{MenuBuilder, MenuItemBuilder},
-    tray::TrayIconBuilder,
-};
+use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use tracing::{debug, info, warn};
@@ -278,16 +278,33 @@ pub(crate) struct Launcher {
 }
 
 impl Launcher {
+    fn lock_model(&self) -> std::sync::MutexGuard<'_, Model> {
+        self.model.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn lock_backend(&self) -> std::sync::MutexGuard<'_, Option<(u64, ManagedBackend)>> {
+        self.backend.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn lock_session(&self) -> std::sync::MutexGuard<'_, Option<Session>> {
+        self.session.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     pub(crate) fn port(&self) -> u16 {
         self.port
     }
 
+    /// main 窗口重建标记：托盘“显示/隐藏”走恢复路径时需要。
+    pub(crate) fn recreate(&self) -> Arc<AtomicBool> {
+        self.recreate.clone()
+    }
+
     pub(crate) fn snapshot(&self) -> Snapshot {
-        self.model.lock().unwrap().snapshot()
+        self.lock_model().snapshot()
     }
 
     fn change(&self, change: impl FnOnce(&mut Model)) {
-        let mut model = self.model.lock().unwrap();
+        let mut model = self.lock_model();
         change(&mut model);
         self.changed.notify_all();
     }
@@ -301,9 +318,12 @@ impl Launcher {
         thread::spawn(move || {
             let mut sent = Instant::now() - progress::UPDATE_INTERVAL;
             loop {
-                let mut model = controller.model.lock().unwrap();
+                let mut model = controller.lock_model();
                 while !model.dirty && !controller.allow_exit.load(Ordering::SeqCst) {
-                    model = controller.changed.wait(model).unwrap();
+                    model = controller
+                        .changed
+                        .wait(model)
+                        .unwrap_or_else(|p| p.into_inner());
                 }
                 if controller.allow_exit.load(Ordering::SeqCst) {
                     return;
@@ -317,7 +337,10 @@ impl Launcher {
                         .is_some_and(|p| p.is_error || p.progress >= 100.0);
                 let delay = progress::UPDATE_INTERVAL.saturating_sub(sent.elapsed());
                 if !urgent && !delay.is_zero() {
-                    let _ = controller.changed.wait_timeout(model, delay).unwrap();
+                    let _ = controller
+                        .changed
+                        .wait_timeout(model, delay)
+                        .unwrap_or_else(|p| p.into_inner());
                     continue;
                 }
                 model.dirty = false;
@@ -337,7 +360,7 @@ impl Launcher {
     }
 
     fn begin(&self, operation: Operation) -> Result<(u64, Arc<AtomicBool>)> {
-        let result = self.model.lock().unwrap().begin(operation);
+        let result = self.lock_model().begin(operation);
         self.changed.notify_all();
         result
     }
@@ -350,7 +373,7 @@ impl Launcher {
             m.view.deployment_required = deployment_required;
             m.finish(task, result);
         });
-        if failed && !self.model.lock().unwrap().exiting {
+        if failed && !self.lock_model().exiting {
             let _ = show_launcher_home(&self.app);
         }
     }
@@ -602,7 +625,7 @@ impl Launcher {
             handler,
         );
         let streams = vec![worker];
-        *self.session.lock().unwrap() = Some(Session {
+        *self.lock_session() = Some(Session {
             task,
             streams,
             channel,
@@ -612,7 +635,7 @@ impl Launcher {
             while !stop.load(Ordering::SeqCst) {
                 thread::sleep(Duration::from_millis(250));
                 let exited = {
-                    let mut backend = controller.backend.lock().unwrap();
+                    let mut backend = controller.lock_backend();
                     backend
                         .as_mut()
                         .filter(|(id, _)| *id == task)
@@ -630,7 +653,7 @@ impl Launcher {
     fn unexpected_exit(&self, task: u64) {
         // Claim this session before joining its streams. A simultaneous stop wins safely.
         {
-            let mut model = self.model.lock().unwrap();
+            let mut model = self.lock_model();
             if model.active
                 || model.exiting
                 || !model.view.backend_running
@@ -656,14 +679,27 @@ impl Launcher {
             let _ = navigate_to_backend_error(&window, self.port, &t!("launcher.backend_exited"));
         }
         let _ = show_launcher_home(&self.app);
+
+        // 后端意外退出（如熔断退出码 76 等）时发送系统通知；点击通知唤起启动器主页
+        let click_app = self.app.clone();
+        let click: crate::notify::NotificationClickHandler = Arc::new(move || {
+            let _ = show_launcher_home(&click_app);
+        });
+        let data = serde_json::json!({
+            "title": t!("launcher.backend_exited").to_string(),
+            "content": t!("launcher.backend_exited_notify").to_string(),
+        });
+        if let Err(error) = crate::notify::display(&self.app, data, &click) {
+            warn!("Failed to show backend exit notification: {error:#}");
+        }
     }
 
     fn stop_backend(&self) -> Result<()> {
-        let session = self.session.lock().unwrap().take();
+        let session = self.lock_session().take();
         if let Some(session) = &session {
             session.channel.close();
         }
-        let result = if let Some((_, mut backend)) = self.backend.lock().unwrap().take() {
+        let result = if let Some((_, mut backend)) = self.lock_backend().take() {
             backend.terminate().map(|_| ())
         } else {
             Ok(())
@@ -746,7 +782,7 @@ impl Launcher {
                 .emit_to("launcher", "launcher://close-requested", ());
         } else if view.backend_running {
             hide_launcher_home(&self.app);
-        } else if !self.model.lock().unwrap().active {
+        } else if !self.lock_model().active {
             let _ = self.exit();
         }
     }
@@ -759,7 +795,7 @@ impl Launcher {
     /// 任务处于提交（committing）阶段时返回 `launcher.busy`；其余情况返回
     /// `Ok`，包括当前没有活动任务（幂等空操作）。
     pub(crate) fn cancel_task(self: &Arc<Self>) -> Result<()> {
-        let mut model = self.model.lock().unwrap();
+        let mut model = self.lock_model();
         if model.committing {
             bail!(t!("launcher.busy"));
         }
@@ -775,7 +811,7 @@ impl Launcher {
 
     pub(crate) fn exit(self: &Arc<Self>) -> Result<()> {
         {
-            let mut model = self.model.lock().unwrap();
+            let mut model = self.lock_model();
             if model.committing {
                 bail!(t!("launcher.busy"));
             }
@@ -790,9 +826,28 @@ impl Launcher {
         }
         let controller = self.clone();
         thread::spawn(move || {
-            let mut model = controller.model.lock().unwrap();
+            let wait_start = Instant::now();
+            let timeout = Duration::from_secs(5);
+            let mut model = controller.lock_model();
             while model.active {
-                model = controller.changed.wait(model).unwrap();
+                let elapsed = wait_start.elapsed();
+                if elapsed >= timeout {
+                    warn!(
+                        "Active task did not complete within {:?}, forcing shutdown",
+                        timeout
+                    );
+                    break;
+                }
+                let remaining = timeout - elapsed;
+                let (next_model, wait_res) = controller
+                    .changed
+                    .wait_timeout(model, remaining)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                model = next_model;
+                if wait_res.timed_out() {
+                    warn!("Wait for active task timed out, forcing shutdown");
+                    break;
+                }
             }
             drop(model);
             if let Err(error) = controller.stop_backend() {
@@ -860,12 +915,13 @@ pub(crate) fn authorize(window: &WebviewWindow, home_only: bool) -> Result<(), S
     // 来源由 permissions/launcher.toml 和 capabilities/*.json 交给 Tauri
     // 按本次 IPC 的调用来源校验；这里仅保留窗口标签的防御性检查。
     // 不再读取 WebView 当前 URL，避免 WKWebView 的 URL 查询差异误拒本地调用。
-    if window.label() != "launcher" && (home_only || window.label() != "main") {
-        warn!(
-            "Rejected IPC from window '{}': home_only={}",
-            window.label(),
-            home_only
-        );
+    // tray_menu 弹窗只做只读调用（读语言、设置）。
+    let label = window.label();
+    if label != "launcher"
+        && (home_only
+            || (label != "main" && label != crate::tray_menu::TRAY_MENU_LABEL))
+    {
+        warn!("Rejected IPC from window '{}': home_only={}", label, home_only);
         return Err(t!("launcher.forbidden").to_string());
     }
     Ok(())
@@ -1011,7 +1067,8 @@ pub(crate) fn run() -> Result<()> {
             crate::download_log_archive, crate::prompt_log_archive_path,
             crate::settings::settings_get, crate::settings::settings_set,
             crate::window_hide, crate::window_minimize, crate::window_toggle_maximize, crate::window_close, crate::window_exit_application,
-            crate::window_start_dragging, crate::window_is_maximized
+            crate::window_start_dragging, crate::window_is_maximized,
+            crate::tray_menu::tray_menu_action, crate::tray_menu::tray_menu_hide, crate::tray_menu::tray_scheduler_state
         ])
         .setup(move |app| {
             let controller = Arc::new(Launcher { app: app.handle().clone(), model: Mutex::new(Model::new()), changed: Condvar::new(),
@@ -1041,9 +1098,19 @@ pub(crate) fn run() -> Result<()> {
             // 每 10 分钟静默检查一次更新：发现新版本时首页主按钮变为
             // “更新”，并经原生通知提醒一次（同一版本只提醒一遍）。
             let poller = controller.clone();
-            thread::spawn(move || loop {
-                thread::sleep(std::time::Duration::from_secs(10 * 60));
-                poller.request_update_check();
+            thread::spawn(move || {
+                while !poller.allow_exit.load(Ordering::SeqCst) {
+                    for _ in 0..(10 * 60) {
+                        if poller.allow_exit.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        thread::sleep(std::time::Duration::from_secs(1));
+                    }
+                    if poller.allow_exit.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    poller.request_update_check();
+                }
             });
             if !minimized { show_launcher_home(app.handle())?; }
             if preview_crash {
@@ -1084,6 +1151,25 @@ pub(crate) fn run() -> Result<()> {
                     minimize_main_window_to_tray(app);
                 }
             }
+            tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } => {
+                if label == "connection" {
+                    // 独立连接弹窗被关闭：若 WebUI 尚未恢复（重试成功关闭时
+                    // main 已导航回 WebUI，快照为 Running），把 main 收进托盘，
+                    // 避免遗留一个只有背景的错误页窗口。
+                    let view = app.state::<Arc<Launcher>>().snapshot();
+                    if !view.backend_running || view.phase != Phase::Running {
+                        minimize_main_window_to_tray(app);
+                    }
+                }
+            }
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Focused(false),
+                ..
+            } if label == crate::tray_menu::TRAY_MENU_LABEL => {
+                // 托盘自绘菜单弹窗失焦即收起，对齐原生菜单交互。
+                crate::tray_menu::hide_tray_menu_window(app);
+            }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_),
@@ -1103,82 +1189,92 @@ pub(crate) fn run() -> Result<()> {
 
 #[cfg(any(windows, target_os = "macos"))]
 fn create_tray(app: &mut tauri::App) -> Result<()> {
-    let home = MenuItemBuilder::new(t!("launcher.home"))
-        .id("home")
-        .build(app)?;
-    let toggle = MenuItemBuilder::new(t!("tray.toggle_visibility"))
-        .id("toggle")
-        .build(app)?;
-    let scheduler = MenuItemBuilder::new(t!("tray.scheduler_unavailable"))
-        .id("scheduler")
-        .enabled(false)
-        .build(app)?;
-    let scheduler_toggle =
-        crate::tray_scheduler::TraySchedulerToggle::new(app.handle().clone(), scheduler.clone());
-    scheduler_toggle.spawn_poller();
-    let quit = MenuItemBuilder::new(t!("tray.quit"))
-        .id("quit")
-        .build(app)?;
-    let menu = MenuBuilder::new(app)
-        .item(&home)
-        .item(&toggle)
-        .item(&scheduler)
-        .separator()
-        .item(&quit)
-        .build()?;
-    TrayIconBuilder::with_id("main-tray")
+    // Windows 的原生托盘菜单是 Win32 HMENU，由系统绘制、无法自定义样式：
+    // 右键改由 tray_menu 自绘弹窗接管，不再挂原生菜单；macOS 保留系统菜单。
+    #[cfg(not(windows))]
+    let menu = {
+        let home = MenuItemBuilder::new(t!("launcher.home"))
+            .id("home")
+            .build(app)?;
+        let toggle = MenuItemBuilder::new(t!("tray.toggle_visibility"))
+            .id("toggle")
+            .build(app)?;
+        let scheduler = MenuItemBuilder::new(t!("tray.scheduler_unavailable"))
+            .id("scheduler")
+            .enabled(false)
+            .build(app)?;
+        let scheduler_toggle = crate::tray_scheduler::TraySchedulerToggle::new(
+            app.handle().clone(),
+            scheduler.clone(),
+        );
+        scheduler_toggle.spawn_poller();
+        app.manage(scheduler_toggle);
+        let quit = MenuItemBuilder::new(t!("tray.quit"))
+            .id("quit")
+            .build(app)?;
+        MenuBuilder::new(app)
+            .item(&home)
+            .item(&toggle)
+            .item(&scheduler)
+            .separator()
+            .item(&quit)
+            .build()?
+    };
+    #[cfg(windows)]
+    app.manage(crate::tray_menu::TrayMenuState::default());
+    let builder = TrayIconBuilder::with_id("main-tray")
         .icon(tray_icon_for_platform())
         .tooltip("AzurPilot")
-        .menu(&menu)
         .show_menu_on_left_click(cfg!(target_os = "macos"))
-        .on_menu_event(move |app, event| {
-            let controller = app.state::<Arc<Launcher>>();
-            match event.id().as_ref() {
-                "scheduler" => scheduler_toggle.toggle(),
-                "home" => {
-                    let _ = show_launcher_home(app);
+        .on_menu_event(|app, event| {
+            crate::tray_menu::handle_tray_menu_action(app, event.id().as_ref());
+        })
+        .on_tray_icon_event(|tray, event| {
+            #[cfg(windows)]
+            match event {
+                // 左键/双击：后端运行中直接开 WebUI，否则回首页。
+                tauri::tray::TrayIconEvent::Click {
+                    button: tauri::tray::MouseButton::Left,
+                    button_state: tauri::tray::MouseButtonState::Up,
+                    ..
                 }
-                "toggle" => {
+                | tauri::tray::TrayIconEvent::DoubleClick {
+                    button: tauri::tray::MouseButton::Left,
+                    ..
+                } => {
+                    let controller = tray.app_handle().state::<Arc<Launcher>>();
                     if controller.snapshot().backend_running {
-                        toggle_main_window_visibility(
-                            app,
-                            controller.port,
-                            controller.recreate.clone(),
-                        );
+                        controller.open_webui();
                     } else {
-                        let _ = show_launcher_home(app);
+                        let _ = show_launcher_home(tray.app_handle());
                     }
                 }
-                "quit" => {
-                    if controller.snapshot().can_cancel {
-                        let _ = show_launcher_home(app);
-                        let _ = app.emit_to("launcher", "launcher://close-requested", ());
-                    } else {
-                        let _ = controller.exit();
+                // 右键：弹出（或收起）自绘菜单弹窗。
+                tauri::tray::TrayIconEvent::Click {
+                    button: tauri::tray::MouseButton::Right,
+                    button_state: tauri::tray::MouseButtonState::Up,
+                    position,
+                    ..
+                } => {
+                    if let Err(error) =
+                        crate::tray_menu::show_tray_menu_popup(tray.app_handle(), position)
+                    {
+                        warn!("Failed to show tray menu popup: {error:#}");
                     }
                 }
                 _ => {}
             }
-        })
-        .on_tray_icon_event(|tray, event| {
-            #[cfg(windows)]
-            if let tauri::tray::TrayIconEvent::Click {
-                button: tauri::tray::MouseButton::Left,
-                button_state: tauri::tray::MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let controller = tray.app_handle().state::<Arc<Launcher>>();
-                if controller.snapshot().backend_running {
-                    controller.open_webui();
-                } else {
-                    let _ = show_launcher_home(tray.app_handle());
-                }
-            }
             #[cfg(not(windows))]
             let _ = (tray, event);
-        })
-        .build(app)?;
+        });
+    #[cfg(not(windows))]
+    let builder = builder.menu(&menu);
+    builder.build(app)?;
+    // 预建隐藏弹窗：首次右键免 WebView2 初始化延迟。
+    #[cfg(windows)]
+    if let Err(error) = crate::tray_menu::ensure_tray_menu_window(app.handle()) {
+        warn!("Failed to prebuild tray menu window: {error:#}");
+    }
     Ok(())
 }
 #[cfg(not(any(windows, target_os = "macos")))]

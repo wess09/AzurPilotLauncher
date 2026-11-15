@@ -394,6 +394,230 @@ body {
   line-height: 1.7;
   color: var(--text-3);
 }
+
+/* WinUI 3 风格标准 MessageBox / ContentDialog 规范 */
+.messageBoxSurface {
+  padding: 0 !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+  border: 1px solid var(--colorNeutralStroke1) !important;
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.28), 0 0 2px rgba(0, 0, 0, 0.12) !important;
+  background-color: var(--colorNeutralBackground1) !important;
+  max-width: min(448px, calc(100vw - 32px));
+  width: 100%;
+  /* WinUI 3 原生 MessageBox 是瞬时弹出：禁用 Fluent 淡入过渡，
+     避免休眠标签页/被节流的渲染时钟把过渡冻结在 opacity 0（弹窗隐形）。 */
+  transition: none !important;
+}
+.confirmMessageBoxSurface {
+  max-width: min(448px, calc(100vw - 32px));
+}
+.errorMessageBoxSurface {
+  max-width: min(580px, calc(100vw - 32px));
+}
+.messageBoxBody {
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+.messageBoxContent {
+  padding: 24px 24px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.messageBoxHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.messageBoxTitleGroup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.messageBoxTitle {
+  font-size: 20px !important;
+  font-weight: 600 !important;
+  line-height: 28px !important;
+  color: var(--colorNeutralForeground1) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.messageBoxErrorIcon {
+  color: #c42b1c;
+  font-size: 24px;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.messageBoxCloseBtn {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  padding: 0 !important;
+  border-radius: 4px !important;
+  margin-right: -4px;
+  margin-top: -4px;
+}
+.messageBoxBodyText {
+  font-size: 14px !important;
+  line-height: 20px !important;
+  color: var(--colorNeutralForeground1) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  user-select: text;
+}
+.messageBoxInnerContent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+.messageBoxLogCard {
+  background-color: var(--colorNeutralBackground2);
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--colorNeutralForeground2);
+  max-height: 160px;
+  overflow-y: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+.messageBoxHintGroup {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 2px;
+}
+.messageBoxHintIcon {
+  font-size: 16px;
+  color: var(--colorNeutralForeground3);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.messageBoxHint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--colorNeutralForeground3);
+  margin: 0;
+}
+.messageBoxFooter {
+  background-color: var(--colorNeutralBackground3, #f0f2f5) !important;
+  border-top: 1px solid var(--colorNeutralStroke2) !important;
+  padding: 16px 24px !important;
+  display: flex !important;
+  gap: 8px !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+}
+.messageBoxFooterEqual {
+  justify-content: stretch !important;
+}
+.messageBoxFooterEqual > * {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+}
+.messageBoxFooterEnd {
+  justify-content: flex-end !important;
+}
+/* 独立连接弹窗窗口：整个窗口即弹窗（native_dialog.rs 打开的 connection 窗口）。
+   无边框 + Win10+ 亚克力材质：底色高透明让背后内容模糊透出（WinUI 3 浮层）。 */
+.connectionWindow {
+  position: relative;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: color-mix(in srgb, var(--colorNeutralBackground1) 78%, transparent);
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--colorNeutralStroke1);
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.28), 0 0 2px rgba(0, 0, 0, 0.12);
+}
+.connectionWindow .messageBoxContent {
+  flex: 1;
+  min-height: 0;
+}
+/* 云母窗口内底部操作栏同样半透明，让材质连续透出。 */
+.connectionWindow .messageBoxFooter {
+  background-color: color-mix(in srgb, var(--colorNeutralBackground3, #f0f2f5) 82%, transparent) !important;
+}
+
+/* 无边框弹窗的拖动区：覆盖顶部标题整行，加大可触发范围。 */
+.connectionDragRegion {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  z-index: 1;
+  cursor: move;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+/* 弹窗文字全部不可选中（含原因卡片）。 */
+.connectionWindow {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.connectionWindow .messageBoxLogCard {
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* 关闭键独立浮在窗口右上角（对齐 WinUI 3 系统弹窗：X 与标题不同行）。 */
+.connectionWindow .messageBoxCloseBtn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+.connectionHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--colorPaletteRedForeground1, #b10e1c);
+}
+.messageBoxBtn {
+  height: 32px !important;
+  min-height: 32px !important;
+  border-radius: 4px !important;
+  font-size: 14px !important;
+  white-space: nowrap !important;
+}
+.messageBoxPrimaryBtn {
+  height: 32px !important;
+  min-height: 32px !important;
+  border-radius: 4px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  white-space: nowrap !important;
+}
+
+/* Windows 11 / WinUI 3 Smoke 烟雾磨砂遮罩（同样瞬时显示，不依赖过渡时钟） */
+:global(.fui-DialogSurface__backdrop) {
+  background-color: rgba(0, 0, 0, 0.35) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  transition: none !important;
+}
+:global(html.reduced-motion) :global(.fui-DialogSurface__backdrop) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
 .packProgress {
   display: grid;
   gap: 8px;
@@ -404,9 +628,6 @@ body {
 .settingsRows {
   display: grid;
   gap: 14px;
-}
-.connection {
-  padding-top: 104px;
 }
 @media (max-width: 920px) {
   .main {
@@ -443,9 +664,6 @@ body {
   .description {
     font-size: 13px;
   }
-  .connection {
-    padding-top: 88px;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .background {
@@ -453,7 +671,43 @@ body {
   }
 }
 
-.settingsContent { max-height: min(560px, calc(100dvh - 160px)); overflow-y: auto; }
+.settingsContent {
+  max-height: min(560px, calc(100dvh - 160px));
+  overflow-y: auto;
+  padding-bottom: 20px;
+  padding-right: 4px;
+}
 .sourceSettings { display: grid; gap: 16px; padding: 16px 0; border-top: 1px solid var(--divider); border-bottom: 1px solid var(--divider); }
 .sourceSettings :global(.fui-Dropdown) { width: 100%; }
 .sourceHint { margin: 0; color: var(--text-3); font-size: 12px; line-height: 1.5; }
+
+/* Windows 11 / WinUI 3 动态极简胶囊滚动条（移除原生丑陋粗滚动条与三角箭头） */
+:global(*)::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+:global(*)::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+:global(*)::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+:global(*)::-webkit-scrollbar-thumb {
+  background-color: rgba(128, 128, 128, 0.32);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 160ms ease;
+}
+:global(*)::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(128, 128, 128, 0.55);
+}
+:global(*)::-webkit-scrollbar-thumb:active {
+  background-color: rgba(128, 128, 128, 0.75);
+}
+:global(*) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.35) transparent;
+}

@@ -1,0 +1,101 @@
+/* NS2 式彩虹焦点环：把 Fluent 组件默认的深色 ::after 焦点框换成
+   彩虹循环描边，与托盘/右键菜单里自绘菜单项的焦点环同款。
+   Fluent（react-tabster）在键盘聚焦时给元素挂 data-fui-focus-visible
+   属性、用 ::after 画外扩 2px 深色框；griffel 是运行时注入样式，与本
+   文件的加载顺序无关，因此覆盖一律 !important（Confirm/ErrorDialog
+   悬停覆盖同款先例）。 */
+
+@property --ns2-ring-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* 焦点离开所有元素落在 body/html 时，keyborg 也会把属性挂上去——
+   这种"焦点在文档根"的状态不该画出环，否则等于给整窗描边。 */
+body[data-fui-focus-visible]::after,
+html[data-fui-focus-visible]::after {
+  content: none !important;
+}
+
+/* keyborg 对任何聚焦元素都标属性：普通元素可能带原生 outline，
+   统一压掉，焦点指示只走彩虹环。Fluent 的焦点指示也不只 ::after：
+   主按钮走 box-shadow（shadow2 黑影 + 内嵌黑/白双环），副按钮会把
+   border-color 染成 colorStrokeFocus2——全部按掉，否则彩虹环外面
+   还会叠一层黑框。 */
+[data-fui-focus-visible] {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+button[data-fui-focus-visible],
+a[data-fui-focus-visible] {
+  border-color: transparent !important;
+}
+
+/* Fluent 组件普遍 position: static + overflow: hidden，而 ::after 是
+   absolute：不设定位锚就会逃逸到视口画成整窗环。被标记的控件就地转为
+   containing block；环画在控件外侧，还要放开 overflow 让出界部分不被
+   裁掉（按钮内容不越界，放开无副作用）。 */
+button[data-fui-focus-visible],
+a[data-fui-focus-visible],
+input[data-fui-focus-visible] {
+  position: relative;
+}
+
+button[data-fui-focus-visible],
+a[data-fui-focus-visible] {
+  overflow: visible;
+}
+
+[data-fui-focus-visible]::after {
+  content: "" !important;
+  position: absolute !important;
+  pointer-events: none !important;
+  z-index: 1 !important;
+  border: none !important;
+  /* 环画在控件外侧 1px 间隙处（NS2 的环抱感），圆角随外扩同心放大。 */
+  inset: -3px !important;
+  border-radius: 7px !important;
+  padding: 2px !important;
+  background: conic-gradient(
+      from var(--ns2-ring-angle, 0deg),
+      #ff5c7a,
+      #ff9f43,
+      #ffe14d,
+      #4be07a,
+      #4dc3ff,
+      #9d5cff,
+      #ff5c7a
+    )
+    !important;
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0) !important;
+  -webkit-mask-composite: xor !important;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0) !important;
+  mask-composite: exclude !important;
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.35)) !important;
+  animation: ns2-ring-spin 3s linear infinite !important;
+}
+
+/* 让 conic-gradient 的起始角可动画（Chromium/WebView2 支持；不支持时
+   降级为静态彩虹环）。 */
+@keyframes ns2-ring-spin {
+  to {
+    --ns2-ring-angle: 360deg;
+  }
+}
+
+/* 减弱动态效果：App 在 html 上切换 reduced-motion 类，环保留不转。 */
+.reduced-motion [data-fui-focus-visible]::after {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-fui-focus-visible]::after {
+    animation: none !important;
+  }
+}

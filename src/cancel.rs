@@ -30,8 +30,11 @@ pub(crate) fn request(
     }
 }
 
+const BUFFER_CAPACITY: usize = 128 * 1024;
+
 pub(crate) struct Body {
     chunks: mpsc::Receiver<io::Result<Vec<u8>>>,
+    pool_sender: mpsc::SyncSender<Vec<u8>>,
     current: io::Cursor<Vec<u8>>,
     cancel: Arc<AtomicBool>,
     eof: bool,
@@ -39,10 +42,19 @@ pub(crate) struct Body {
 
 pub(crate) fn body(mut response: reqwest::blocking::Response, cancel: Arc<AtomicBool>) -> Body {
     let (sender, chunks) = mpsc::sync_channel(2);
+    let (pool_sender, pool_receiver) = mpsc::sync_channel::<Vec<u8>>(4);
+    for _ in 0..2 {
+        let _ = pool_sender.send(vec![0; BUFFER_CAPACITY]);
+    }
     let stop = cancel.clone();
     thread::spawn(move || {
         while !stop.load(Ordering::SeqCst) {
-            let mut buffer = vec![0; 128 * 1024];
+            let mut buffer = pool_receiver
+                .try_recv()
+                .unwrap_or_else(|_| vec![0; BUFFER_CAPACITY]);
+            if buffer.len() < BUFFER_CAPACITY {
+                buffer.resize(BUFFER_CAPACITY, 0);
+            }
             let result = response.read(&mut buffer).map(|size| {
                 buffer.truncate(size);
                 buffer
@@ -55,6 +67,7 @@ pub(crate) fn body(mut response: reqwest::blocking::Response, cancel: Arc<Atomic
     });
     Body {
         chunks,
+        pool_sender,
         current: io::Cursor::new(Vec::new()),
         cancel,
         eof: false,
@@ -81,7 +94,11 @@ impl Read for Body {
                 Ok(result) => {
                     let chunk = result?;
                     self.eof = chunk.is_empty();
-                    self.current = io::Cursor::new(chunk);
+                    let old_buf =
+                        std::mem::replace(&mut self.current, io::Cursor::new(chunk)).into_inner();
+                    if old_buf.capacity() >= BUFFER_CAPACITY {
+                        let _ = self.pool_sender.try_send(old_buf);
+                    }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(_) => {

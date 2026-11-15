@@ -156,16 +156,14 @@ fn resume_child(pid: u32) -> io::Result<()> {
     while found != 0 {
         if entry.th32OwnerProcessID == pid {
             let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
-            if thread.is_null() {
-                return Err(io::Error::last_os_error());
+            if !thread.is_null() {
+                let thread = unsafe { OwnedHandle::from_raw_handle(thread as _) };
+                let previous_count = unsafe { ResumeThread(thread.as_raw_handle() as _) };
+                if previous_count != u32::MAX {
+                    // 快照可能包含瞬态注入线程；继续遍历，确保挂起的初始线程确实恢复。
+                    resumed |= previous_count > 0;
+                }
             }
-            let thread = unsafe { OwnedHandle::from_raw_handle(thread as _) };
-            let previous_count = unsafe { ResumeThread(thread.as_raw_handle() as _) };
-            if previous_count == u32::MAX {
-                return Err(io::Error::last_os_error());
-            }
-            // 快照可能包含注入线程；继续遍历，确保挂起的初始线程确实恢复。
-            resumed |= previous_count > 0;
         }
         found = unsafe { Thread32Next(snapshot.as_raw_handle() as _, &mut entry) };
     }

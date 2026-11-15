@@ -224,7 +224,7 @@ fn download(
             let mut file = fs::File::create(archive)?;
             let mut digest = Sha256::new();
             let mut received = 0;
-            let mut buffer = [0; 128 * 1024];
+            let mut buffer = [0u8; 32 * 1024];
             let mut last_update = Instant::now();
             loop {
                 ensure_not_cancelled(&cancel)?;

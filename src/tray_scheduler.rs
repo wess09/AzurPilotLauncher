@@ -71,6 +71,7 @@ fn apply<R: Runtime>(item: &MenuItem<R>, state: SchedulerState) {
     let _ = item.set_enabled(state != SchedulerState::Unavailable);
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 /// 菜单项控制器：轮询状态并处理点击；执行期间暂停轮询，避免文字来回跳。
 pub(crate) struct TraySchedulerToggle<R: Runtime> {
     app: AppHandle<R>,
@@ -152,6 +153,49 @@ impl<R: Runtime> TraySchedulerToggle<R> {
             this.busy.store(false, Ordering::SeqCst);
         });
     }
+}
+
+/// Windows 自绘托盘菜单用：无状态的查询与切换（没有原生 MenuItem 可更新）。
+static DETACHED_BUSY: AtomicBool = AtomicBool::new(false);
+
+/// 返回 `running` / `stopped` / `unavailable` / `busy`，供前端菜单决定文字与可用性。
+pub(crate) fn detached_state<R: Runtime>(app: &AppHandle<R>) -> &'static str {
+    if DETACHED_BUSY.load(Ordering::SeqCst) {
+        return "busy";
+    }
+    match query(app) {
+        SchedulerState::Running => "running",
+        SchedulerState::Stopped => "stopped",
+        SchedulerState::Unavailable => "unavailable",
+    }
+}
+
+pub(crate) fn detached_toggle<R: Runtime>(app: &AppHandle<R>) {
+    if DETACHED_BUSY.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    thread::spawn(move || {
+        let method = match query(&app) {
+            SchedulerState::Running => Some("scheduler.pause"),
+            SchedulerState::Stopped => Some("scheduler.resume"),
+            SchedulerState::Unavailable => None,
+        };
+        if let Some(method) = method {
+            match call(&app, method, ACTION_TIMEOUT) {
+                Ok(result) => {
+                    let errors = result.get("errors").and_then(Value::as_array);
+                    if errors.is_some_and(|errors| !errors.is_empty()) {
+                        warn!(method, ?errors, "Tray scheduler action partly failed");
+                    } else {
+                        info!(method, "Tray scheduler action succeeded");
+                    }
+                }
+                Err(err) => warn!(method, "Tray scheduler action failed: {err:#}"),
+            }
+        }
+        DETACHED_BUSY.store(false, Ordering::SeqCst);
+    });
 }
 
 #[cfg(test)]

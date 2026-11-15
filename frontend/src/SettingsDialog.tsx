@@ -15,6 +15,7 @@ import {
 import { command } from "./bridge";
 import type { LauncherSettings } from "./types";
 import styles from "./launcher.module.css";
+import { useInstantDialog } from "./useInstantDialog";
 
 // UI 语言选项；label 用各语言母语名（惯例不翻译），value 为 locale 码。
 export const languageOptions = [
@@ -84,6 +85,7 @@ export function SettingsDialog({
   const [settings, setSettings] = useState<LauncherSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  useInstantDialog();
   useEffect(() => {
     let disposed = false;
     const fallback: LauncherSettings = {

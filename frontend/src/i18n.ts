@@ -22,6 +22,10 @@ const keys = [
   "source_huawei",
 
   "home",
+  "tray_pause_scheduler",
+  "tray_resume_scheduler",
+  "tray_scheduler_unavailable",
+  "tray_scheduler_busy",
   "version",
   "status",
   "idle",
@@ -98,6 +102,8 @@ const keys = [
   "connection_title",
   "connection_body",
   "retry_connection",
+  "quit",
+  "connection_retry_failed",
   "connection_wait",
   "action_failed",
   "log_saved",
@@ -112,9 +118,15 @@ const keys = [
   "busy",
   "forbidden",
   "backend_exited",
+  "backend_exited_notify",
   "progress",
   "dependencies",
   "service",
+  "toggle_home",
+  "ctx_refresh",
+  "ctx_copy",
+  "ctx_paste",
+  "ctx_select_all",
 ] as const;
 export type Key = (typeof keys)[number];
 export function translator(locale: string) {

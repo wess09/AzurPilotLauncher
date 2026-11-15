@@ -38,9 +38,14 @@ pub(crate) fn local_page_url(app: &tauri::AppHandle, hash: &str) -> Result<Url> 
 pub(crate) fn show_launcher_home(app: &tauri::AppHandle) -> Result<()> {
     #[cfg(target_os = "macos")]
     set_macos_activation_policy(app, true);
-    if let Some(window) = app.get_webview_window("launcher") {
-        reveal_window(&window)?;
-    }
+    let app_handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = app_handle.get_webview_window("launcher") {
+            if let Err(e) = reveal_window(&window) {
+                tracing::warn!("Failed to reveal launcher window: {e:?}");
+            }
+        }
+    });
     Ok(())
 }
 
@@ -65,7 +70,10 @@ fn set_webview_visible(window: &WebviewWindow, visible: bool) {
         window.with_webview(move |webview| {
             // SAFETY: with_webview 将闭包调度到 WebView2 所属的 UI 线程。
             if let Err(error) = unsafe { webview.controller().SetIsVisible(visible) } {
-                warn!(label, visible, "Failed to set WebView2 visibility: {error:?}");
+                warn!(
+                    label,
+                    visible, "Failed to set WebView2 visibility: {error:?}"
+                );
             }
         })
     };
@@ -203,6 +211,8 @@ pub(crate) fn navigate_backend_or_error(
                 return Ok(false);
             }
             window.navigate(Url::parse(&url)?)?;
+            // 后端已恢复：连接错误独立弹窗完成使命，随之关闭。
+            crate::native_dialog::close_connection_dialog(window.app_handle());
             Ok(true)
         }
         Err(e) => {
@@ -225,6 +235,8 @@ pub(crate) fn navigate_to_backend_error(
     let controller = window.state::<Arc<launcher::Launcher>>();
     controller.connection_error(error_detail.to_owned());
     window.navigate(local_page_url(window.app_handle(), "#/connection-error")?)?;
+    // 打开独立连接错误弹窗窗口（真 OS 顶层窗口，非页面内浮层）。
+    crate::native_dialog::show_connection_error_dialog(window.app_handle());
     Ok(())
 }
 
@@ -301,6 +313,34 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle, port: u16) -> Result<We
     Ok(main_window)
 }
 
+#[cfg(windows)]
+fn bring_window_to_foreground(window: &WebviewWindow) {
+    if let Ok(hwnd) = window.hwnd() {
+        use winapi::shared::windef::HWND;
+        use winapi::um::winuser::*;
+        let raw_hwnd = hwnd.0 as HWND;
+        unsafe {
+            if IsIconic(raw_hwnd) != 0 {
+                ShowWindow(raw_hwnd, SW_RESTORE);
+            } else {
+                ShowWindow(raw_hwnd, SW_SHOW);
+            }
+            let foreground = GetForegroundWindow();
+            let foreground_thread = GetWindowThreadProcessId(foreground, std::ptr::null_mut());
+            let current_thread = winapi::um::processthreadsapi::GetCurrentThreadId();
+            if foreground_thread != 0 && foreground_thread != current_thread {
+                AttachThreadInput(current_thread, foreground_thread, 1);
+                BringWindowToTop(raw_hwnd);
+                SetForegroundWindow(raw_hwnd);
+                AttachThreadInput(current_thread, foreground_thread, 0);
+            } else {
+                BringWindowToTop(raw_hwnd);
+                SetForegroundWindow(raw_hwnd);
+            }
+        }
+    }
+}
+
 /// 显示窗口并聚焦；若窗口处于最小化状态先还原。
 ///
 /// # Errors
@@ -311,6 +351,8 @@ pub(crate) fn reveal_window(window: &WebviewWindow) -> tauri::Result<()> {
     }
     window.show()?;
     set_webview_visible(window, true);
+    #[cfg(windows)]
+    bring_window_to_foreground(window);
     window.set_focus()?;
     Ok(())
 }
@@ -333,9 +375,7 @@ pub(crate) fn minimize_main_window_to_tray(app: &tauri::AppHandle) {
                 tracing::info!("Hiding main window while trayed (keep WebView enabled)");
                 let _ = hide_window(&window);
             } else {
-                tracing::info!(
-                    "Destroying main window to release WebView resources while trayed"
-                );
+                tracing::info!("Destroying main window to release WebView resources while trayed");
                 if let Err(e) = window.destroy() {
                     warn!("Failed to destroy main window for tray mode: {:?}", e);
                 }
@@ -543,7 +583,10 @@ pub(crate) fn main_window_titlebar_injection_script() -> String {
             titlebar.id = 'azurpilot-launcher-titlebar';
             titlebar.innerHTML = '<div class="azurpilot-titlebar-drag-zone" aria-hidden="true"></div><div class="header-icon"><button type="button" class="icon icon-hide" data-action="hide" aria-label="'+i18n.hideLabel+'" title="'+i18n.hideLabel+'"><svg viewBox="0 0 6 6"><rect x="1" y="1" width="4" height="4" rx="1"/><path d="M2 3h2"/></svg></button><button type="button" class="icon icon-minimize" data-action="minimize" aria-label="'+i18n.minimizeLabel+'" title="'+i18n.minimizeTitle+'"><svg viewBox="0 0 6 6"><line x1="1" y1="3" x2="5" y2="3"/></svg></button><button type="button" class="icon icon-maximize" data-action="maximize" aria-label="'+i18n.maximizeLabel+'" title="'+i18n.maximizeTitle+'"><svg viewBox="0 0 6 6" class="svg-restore" style="display:none"><polyline points="1,3 1,1 3,1"/><polyline points="3,5 5,5 5,3"/></svg><svg viewBox="0 0 6 6" class="svg-maximize"><polyline points="1,2.5 1,1 2.5,1"/><polyline points="3.5,5 5,5 5,3.5"/></svg></button><button type="button" class="icon icon-close" data-action="close" aria-label="'+i18n.closeLabel+'" title="'+i18n.closeTitle+'"><svg viewBox="0 0 6 6"><line x1="1" y1="1" x2="5" y2="5"/><line x1="5" y1="1" x2="1" y2="5"/></svg></button></div>';
             document.body.dataset.azurpilotCustomTitlebar = 'true';
-            document.body.prepend(titlebar);
+            // 挂载到 documentElement（html 直子级）：部分 WebUI 页面（如首次
+            // 运行向导）会给 body 子树加 transform/filter，body 内的 fixed
+            // 会退化为相对该容器定位导致控件乱窜；html 直子级永远相对视口。
+            document.documentElement.appendChild(titlebar);
             const maximizeButton = titlebar.querySelector('[data-action="maximize"]');
             let closeMenu = document.getElementById('azurpilot-close-menu');
             if (!closeMenu) {
@@ -556,34 +599,33 @@ pub(crate) fn main_window_titlebar_injection_script() -> String {
                 closeMenu.querySelector('[data-close-action="minimize"]').textContent = i18n.minimizeToTrayAction;
                 closeMenu.querySelector('[data-close-action="exit"]').textContent = i18n.exitAction;
                 closeMenu.addEventListener('pointerdown', event => event.stopPropagation());
-                document.body.appendChild(closeMenu);
+                document.documentElement.appendChild(closeMenu);
             }
             const syncTitlebarLayout = () => {
                 try {
                     const topbar = document.querySelector('.topbar, header, #topbar, [class*="topbar"], [class*="Header"]');
                     let h = 0;
-                    let topOffset = 0;
                     if (topbar) {
                         const rect = topbar.getBoundingClientRect();
-                        if (rect.height > 20) {
+                        // 只认可"贴视口顶且高度合理"的顶栏：过高的容器（如
+                        // 首次运行向导里类名含 Header 的大块容器）或不在窗口
+                        // 顶部的一律视为误判，控件条保持固定在窗口右上角。
+                        if (rect.height > 20 && rect.height <= 120 && rect.top <= 4) {
                             h = rect.height;
-                            topOffset = rect.top;
                         }
                     }
                     if (!h) {
                         const computed = getComputedStyle(document.documentElement).getPropertyValue('--topbar-height').trim();
                         if (computed) {
                             const parsed = parseFloat(computed);
-                            if (!isNaN(parsed) && parsed > 20) {
+                            if (!isNaN(parsed) && parsed > 20 && parsed <= 120) {
                                 h = parsed;
                             }
                         }
                     }
                     if (h > 0) {
                         titlebar.style.height = h + 'px';
-                        if (topOffset >= 0) {
-                            titlebar.style.top = topOffset + 'px';
-                        }
+                        titlebar.style.top = '0px';
                     }
                 } catch (_) {}
             };
@@ -755,5 +797,64 @@ pub(crate) fn main_window_titlebar_injection_script() -> String {
         }
         "#);
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TAURI_CONFIG_SOURCE: &str = include_str!("../tauri.conf.json");
+
+    /// 标题栏应使用 WebView 可拖拽区域（pointerdown + app-region）支持触摸拖动。
+    #[test]
+    fn test_titlebars_use_webview_draggable_regions_for_touch_dragging() {
+        #[cfg(not(target_os = "macos"))]
+        let titlebar_script = main_window_titlebar_injection_script();
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert!(titlebar_script.contains("touch-action:none"));
+            assert!(titlebar_script.contains("addEventListener('pointerdown'"));
+            assert!(titlebar_script.contains("window_start_dragging"));
+            assert!(titlebar_script.contains("-webkit-app-region:no-drag"));
+            assert!(titlebar_script.contains(
+                ".azurpilot-titlebar-drag-zone{position:absolute;inset:0 148px 0 0;height:100%;pointer-events:none"
+            ));
+            assert!(titlebar_script.contains("getComputedStyle(element).cursor === 'pointer'"));
+            assert!(titlebar_script.contains("min-height:28px"));
+            assert!(titlebar_script.contains("background:rgba(250,250,247,.78)"));
+            assert!(titlebar_script.contains(".icon-close{color:#e64f58}"));
+            assert!(titlebar_script.contains("--azurpilot-titlebar-height:56px"));
+            assert!(titlebar_script.contains("transform:translateY(-6px) scale(.96)"));
+            assert!(!titlebar_script.contains("scale(.72)"));
+            assert!(titlebar_script.contains("azurpilot-close-menu"));
+            assert!(!titlebar_script.contains("azurpilot-close-optics"));
+            assert!(!titlebar_script.contains("azurpilot-island-open"));
+            assert!(titlebar_script.contains("__AZURPILOT_OPEN_CLOSE_PROMPT"));
+            assert!(titlebar_script.contains("window_exit_application"));
+            assert!(!titlebar_script.contains("addEventListener('scroll'"));
+            assert!(!titlebar_script.contains("MutationObserver"));
+            assert!(titlebar_script.contains("data-theme*="));
+            assert!(titlebar_script.contains("#azurpilot-launcher-titlebar.is-dark"));
+        }
+    }
+
+    /// tauri.conf.json 中 Windows 窗口应启用 WebView2 拖拽区域等浏览器参数。
+    #[test]
+    fn test_windows_enable_webview_draggable_regions() {
+        let config: serde_json::Value =
+            serde_json::from_str(TAURI_CONFIG_SOURCE).expect("valid config");
+        let windows = config["app"]["windows"].as_array().expect("window configs");
+
+        for window in windows {
+            let args = window["additionalBrowserArgs"]
+                .as_str()
+                .expect("draggable regions arguments");
+            assert!(args.contains("msWebView2EnableDraggableRegions"));
+            assert!(args.contains("ElasticOverscroll"));
+            assert!(args.contains("msWebOOUI,msPdfOOUI,msSmartScreenProtection"));
+            assert!(args.contains("--no-proxy-server"));
+        }
     }
 }
