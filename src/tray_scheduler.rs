@@ -4,6 +4,8 @@
 //! 暂停会停止所有运行中的实例并由后端记住，继续时重新启动它们。后台线程每隔几秒
 //! 刷新菜单文字；后端未运行或不支持这些方法时菜单项置灰。
 
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
