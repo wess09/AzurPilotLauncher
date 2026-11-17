@@ -48,14 +48,15 @@ pub(crate) fn show_connection_error_dialog(app: &tauri::AppHandle) {
         // macos-private-api feature 才有 transparent）；其余平台使用
         // 不透明弹窗（CSS 已提供 8px 圆角与阴影）。
         #[cfg(windows)]
-        let builder = builder
-            .transparent(true)
-            .effects(tauri::utils::config::WindowEffectsConfig {
-                effects: vec![tauri::utils::WindowEffect::Acrylic],
-                state: None,
-                radius: None,
-                color: None,
-            });
+        let builder =
+            builder
+                .transparent(true)
+                .effects(tauri::utils::config::WindowEffectsConfig {
+                    effects: vec![tauri::utils::WindowEffect::Acrylic],
+                    state: None,
+                    radius: None,
+                    color: None,
+                });
         builder.build()
     };
     if let Err(error) = result {

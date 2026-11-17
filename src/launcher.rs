@@ -902,10 +902,12 @@ pub(crate) fn authorize(window: &WebviewWindow, home_only: bool) -> Result<(), S
     // tray_menu 弹窗只做只读调用（读语言、设置）。
     let label = window.label();
     if label != "launcher"
-        && (home_only
-            || (label != "main" && label != crate::tray_menu::TRAY_MENU_LABEL))
+        && (home_only || (label != "main" && label != crate::tray_menu::TRAY_MENU_LABEL))
     {
-        warn!("Rejected IPC from window '{}': home_only={}", label, home_only);
+        warn!(
+            "Rejected IPC from window '{}': home_only={}",
+            label, home_only
+        );
         return Err(t!("launcher.forbidden").to_string());
     }
     Ok(())
