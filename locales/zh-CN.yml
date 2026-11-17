@@ -373,6 +373,13 @@ launcher:
   dependencies: "依赖安装"
   service: "后台服务"
 
+network:
+  https_required: "互联网请求必须使用 HTTPS，且地址中不能包含用户名或密码。"
+  deadline: "网络请求超时。"
+  https_downgrade: "已拒绝将安全连接重定向到明文 HTTP。"
+  redirect_limit: "网络请求的重定向次数过多。"
+  response_limit: "服务器返回的数据超过允许大小。"
+
 components:
   checking: "检查部署组件"
   checking_detail: "检查 git、ADB 组件与 deploy 部署脚本。"

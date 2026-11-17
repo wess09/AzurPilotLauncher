@@ -373,6 +373,13 @@ launcher:
   dependencies: "依存関係"
   service: "バックグラウンドサービス"
 
+network:
+  https_required: "インターネットへのリクエストには HTTPS が必要です。URL にユーザー名やパスワードを含めることはできません。"
+  deadline: "ネットワークリクエストがタイムアウトしました。"
+  https_downgrade: "暗号化接続から平文 HTTP へのリダイレクトを拒否しました。"
+  redirect_limit: "ネットワークリクエストのリダイレクト回数が多すぎます。"
+  response_limit: "サーバーからのデータが許容サイズを超えています。"
+
 components:
   checking: "コンポーネントを確認"
   checking_detail: "git、ADB コンポーネントと deploy スクリプトを確認しています。"

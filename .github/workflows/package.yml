@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/package.yml'
+      - '.cargo/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'build.rs'

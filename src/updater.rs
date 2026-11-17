@@ -1,9 +1,8 @@
 //! 启动器自更新：清单检查与显式更新分离，保留平台替换和下载校验。
-use crate::{progress, setup::SplashUpdate};
+use crate::{http_client::Client, progress, setup::SplashUpdate};
 use anyhow::{anyhow, bail, Context, Result};
 use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
 use reqwest::{
-    blocking::Client,
     header::{
         HeaderMap, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, CONTENT_RANGE, RANGE, RETRY_AFTER,
         USER_AGENT,
@@ -31,9 +30,6 @@ use tempfile::Builder as TempDirBuilder;
 
 /// 启动器更新清单主 URL：编译期由构建脚本经环境变量注入。
 pub(crate) const LAUNCHER_UPDATE_URL: &str = env!("LAUNCHER_UPDATE_URL");
-/// 主 URL 不可用时的更新清单回退 URL。
-pub(crate) const LAUNCHER_UPDATE_FALLBACK_URL: &str =
-    "https://ap.launcher-update.nanoda.work/updata/stable.json";
 /// 存在该环境变量时跳过启动器更新检查（自更新重启后的新一轮启动会带上）。
 const LAUNCHER_UPDATE_SKIP_ENV: &str = "AZURPILOT_SKIP_LAUNCHER_UPDATE";
 /// 迷你版启动器的版本号：迷你版即使已是"最新"也必须升级到正式版。
@@ -266,7 +262,7 @@ fn launcher_update_download_request(
     url: &str,
     range: Option<&str>,
     cancel: &AtomicBool,
-) -> Result<reqwest::blocking::Response> {
+) -> Result<crate::http_client::Response> {
     let mut request = client.get(url);
     if let Some(range) = range {
         request = request.header(RANGE, range);
@@ -305,7 +301,7 @@ fn launcher_update_download_request_with_retry(
     url: &str,
     range: Option<&str>,
     cancel: &AtomicBool,
-) -> Result<reqwest::blocking::Response> {
+) -> Result<crate::http_client::Response> {
     let mut retry = LauncherUpdateRetryState::new();
     loop {
         match launcher_update_download_request(client, url, range, cancel) {
@@ -362,7 +358,7 @@ fn launcher_update_http_client(
         .default_headers(launcher_update_browser_headers());
     // 仅请求更新载荷时携带 mTLS 身份；清单是公开数据，无需证书。
     if with_mtls_identity && !LAUNCHER_UPDATE_MTLS_IDENTITY.is_empty() {
-        builder = builder.identity(reqwest::Identity::from_pem(LAUNCHER_UPDATE_MTLS_IDENTITY)?);
+        builder = builder.identity_pem(LAUNCHER_UPDATE_MTLS_IDENTITY)?;
     }
     // 载荷总时限 15 分钟；任务取消会立即停止文件写入，不等待 socket 超时。
     builder = match timeout {
@@ -372,58 +368,15 @@ fn launcher_update_http_client(
     Ok(builder.build()?)
 }
 
-/// 拉取启动器更新清单：先试主 URL，失败后回退备用 URL。
+/// 从内置官方入口获取清单；传输层在读取清单前即提供 QUIC 与重置恢复。
 ///
 /// # Errors
-/// 所有 URL 均失败时返回 Err。
+/// 官方入口请求或清单解析失败时返回 Err，不访问备用域名。
 fn fetch_launcher_update_manifest(
     client: &Client,
     cancel: &Arc<AtomicBool>,
 ) -> Result<LauncherUpdateManifest> {
-    fetch_launcher_update_manifest_from_urls(
-        client,
-        &[LAUNCHER_UPDATE_URL, LAUNCHER_UPDATE_FALLBACK_URL],
-        cancel,
-    )
-}
-
-/// 依次尝试给定的清单 URL 列表，取第一个成功的结果。
-///
-/// # Errors
-/// 全部 URL 都失败时返回 Err，错误信息累积了各 URL 的失败详情，便于
-/// 同时排查主/备两个源的问题。
-fn fetch_launcher_update_manifest_from_urls(
-    client: &Client,
-    urls: &[&str],
-    cancel: &Arc<AtomicBool>,
-) -> Result<LauncherUpdateManifest> {
-    let mut failures = Vec::new();
-
-    for (index, url) in urls.iter().enumerate() {
-        // 跳过重复 URL（主备地址可能配置成同一个）。
-        if urls[..index].iter().any(|previous| previous == url) {
-            continue;
-        }
-
-        crate::launcher::ensure_not_cancelled(cancel)?;
-        match fetch_launcher_update_manifest_from_url(client, url, cancel) {
-            Ok(manifest) => {
-                if index > 0 {
-                    tracing::info!("Using fallback launcher update manifest: {url}");
-                }
-                return Ok(manifest);
-            }
-            Err(error) => {
-                tracing::warn!("Unable to fetch launcher update manifest from {url}: {error:#}");
-                failures.push(format!("{url}: {error:#}"));
-            }
-        }
-    }
-
-    bail!(
-        "Unable to fetch launcher update manifest from all configured URLs: {}",
-        failures.join("; ")
-    )
+    fetch_launcher_update_manifest_from_url(client, LAUNCHER_UPDATE_URL, cancel)
 }
 
 /// 从单个 URL 拉取并解析启动器更新清单 JSON。
@@ -435,14 +388,8 @@ fn fetch_launcher_update_manifest_from_url(
     url: &str,
     cancel: &Arc<AtomicBool>,
 ) -> Result<LauncherUpdateManifest> {
-    let response = crate::cancel::request(client.get(url), cancel)?
-        .error_for_status()
-        .with_context(|| format!("validate launcher update manifest response from {url}"))?;
-    let mut manifest_text = String::new();
-    crate::cancel::body(response, cancel.clone())
-        .take(1024 * 1024)
-        .read_to_string(&mut manifest_text)?;
-    serde_json::from_str(&manifest_text)
+    let bytes = crate::http_client::read_limited(client.get(url), 1024 * 1024, cancel.clone())?;
+    serde_json::from_slice(&bytes)
         .with_context(|| format!("parse launcher update manifest from {url}"))
 }
 
@@ -2347,25 +2294,17 @@ mod tests {
         );
     }
 
-    /// 主清单 URL 失败（503）时应回退到备用 URL 并成功解析。
+    /// 清单只有一个引导入口；服务器错误应返回，不访问任何备用地址。
     #[test]
-    fn test_launcher_update_manifest_uses_fallback_url() {
+    fn test_launcher_update_manifest_has_no_fallback() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server");
         let address = listener.local_addr().expect("test server address");
         let server = std::thread::spawn(move || {
-            let fallback_body = r#"{"version":"2.1.8","platforms":{}}"#;
             let responses = [
                 (
                     "/primary",
                     "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                         .to_owned(),
-                ),
-                (
-                    "/fallback",
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{fallback_body}",
-                        fallback_body.len()
-                    ),
                 ),
             ];
 
@@ -2394,15 +2333,13 @@ mod tests {
 
         let client = Client::builder().no_proxy().build().expect("build client");
         let primary = format!("http://{address}/primary");
-        let fallback = format!("http://{address}/fallback");
-        let manifest = fetch_launcher_update_manifest_from_urls(
+        let result = fetch_launcher_update_manifest_from_url(
             &client,
-            &[&primary, &fallback],
+            &primary,
             &Arc::new(AtomicBool::new(false)),
-        )
-        .expect("fetch manifest from fallback");
+        );
 
-        assert_eq!(manifest.version, "2.1.8");
+        assert!(result.is_err());
         server.join().expect("manifest server completed");
     }
 

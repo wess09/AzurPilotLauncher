@@ -1,0 +1,3 @@
+[build]
+# reqwest 的 HTTP/3 API 仍需显式启用；所有平台和 CI 共用此配置。
+rustflags = ["--cfg", "reqwest_unstable"]

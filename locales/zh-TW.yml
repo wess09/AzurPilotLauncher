@@ -373,6 +373,13 @@ launcher:
   dependencies: "依賴安裝"
   service: "背景服務"
 
+network:
+  https_required: "網際網路請求必須使用 HTTPS，且網址中不能包含使用者名稱或密碼。"
+  deadline: "網路請求逾時。"
+  https_downgrade: "已拒絕將安全連線重新導向至明文 HTTP。"
+  redirect_limit: "網路請求的重新導向次數過多。"
+  response_limit: "伺服器回傳的資料超過允許大小。"
+
 components:
   checking: "檢查部署元件"
   checking_detail: "檢查 git、ADB 元件與 deploy 部署腳本。"

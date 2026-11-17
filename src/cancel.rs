@@ -1,6 +1,6 @@
 //! 可取消的阻塞 HTTP 适配。网络线程只持有 socket 与有限缓冲区，不写文件；
 //! 取消后任务线程立即返回，旧请求即使稍后完成也不能修改环境或发布状态。
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::{
     io::{self, Read},
     sync::{
@@ -12,22 +12,10 @@ use std::{
 };
 
 pub(crate) fn request(
-    request: reqwest::blocking::RequestBuilder,
+    request: crate::http_client::RequestBuilder,
     cancel: &AtomicBool,
-) -> Result<reqwest::blocking::Response> {
-    crate::launcher::ensure_not_cancelled(cancel)?;
-    let (sender, receiver) = mpsc::sync_channel(1);
-    thread::spawn(move || {
-        let _ = sender.send(request.send());
-    });
-    loop {
-        crate::launcher::ensure_not_cancelled(cancel)?;
-        match receiver.recv_timeout(Duration::from_millis(100)) {
-            Ok(result) => return Ok(result?),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(error) => return Err(anyhow!(error)),
-        }
-    }
+) -> Result<crate::http_client::Response> {
+    request.send_with_cancel(cancel)
 }
 
 const BUFFER_CAPACITY: usize = 128 * 1024;
@@ -40,7 +28,7 @@ pub(crate) struct Body {
     eof: bool,
 }
 
-pub(crate) fn body(mut response: reqwest::blocking::Response, cancel: Arc<AtomicBool>) -> Body {
+pub(crate) fn body(mut response: crate::http_client::Response, cancel: Arc<AtomicBool>) -> Body {
     let (sender, chunks) = mpsc::sync_channel(2);
     let (pool_sender, pool_receiver) = mpsc::sync_channel::<Vec<u8>>(4);
     for _ in 0..2 {
@@ -131,7 +119,7 @@ mod tests {
             thread::sleep(Duration::from_millis(500));
         });
         let cancel = Arc::new(AtomicBool::new(false));
-        let client = reqwest::blocking::Client::builder()
+        let client = crate::http_client::Client::builder()
             .no_proxy()
             .timeout(Duration::from_secs(2))
             .build()

@@ -1,8 +1,8 @@
 //! 后端前端构建所需的 Node.js：复用达标环境，否则自动下载经过摘要校验的
 //! 便携发行包。只为子进程设置 PATH，不修改系统安装或全局环境变量。
 
+use crate::http_client::Client;
 use anyhow::{bail, Context, Result};
-use reqwest::blocking::Client;
 use rust_i18n::t;
 use sha2::{Digest, Sha256};
 use std::{

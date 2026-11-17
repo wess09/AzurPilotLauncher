@@ -373,6 +373,13 @@ launcher:
   dependencies: "Dependencies"
   service: "Background service"
 
+network:
+  https_required: "Internet requests require HTTPS without a username or password in the URL."
+  deadline: "The network request timed out."
+  https_downgrade: "Refused to redirect a secure connection to plain HTTP."
+  redirect_limit: "Too many network request redirects."
+  response_limit: "The server response exceeds the allowed size."
+
 components:
   checking: "Checking components"
   checking_detail: "Checking git, ADB components and deploy scripts."

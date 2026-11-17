@@ -8,13 +8,13 @@
 //!
 //! Python、依赖、源码与前端均不在部署范围：它们由启动阶段经内嵌 uv 与
 //! deploy 脚本（`deploy.git` / `deploy.app` / uv sync）自行安装拉取。
+use crate::http_client::Client;
 use crate::{
     launcher::ensure_not_cancelled,
     progress::SplashUpdate,
     sources::{DownloadSource, Preferences},
 };
 use anyhow::{bail, Context, Result};
-use reqwest::blocking::Client;
 use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -33,10 +33,7 @@ const RECEIPT: &str = ".azurpilot/installed.json";
 const CACHED_MANIFEST: &str = ".azurpilot/runtime.json";
 const TRANSACTION: &str = ".azurpilot/transaction";
 pub(crate) const TOOLS_DIR: &str = ".azurpilot/tools";
-const MANIFEST_URLS: [&str; 2] = [
-    crate::updater::LAUNCHER_UPDATE_URL,
-    crate::updater::LAUNCHER_UPDATE_FALLBACK_URL,
-];
+const MANIFEST_URLS: [&str; 1] = [crate::updater::LAUNCHER_UPDATE_URL];
 /// 引导清单必须包含的入口文件；是否齐备仍按完整文件清单判定。
 const BOOTSTRAP_MARKER: &str = "deploy/installer.py";
 
@@ -359,13 +356,7 @@ fn client() -> Result<Client> {
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(30 * 60))
         .user_agent(concat!("AzurPilotLauncher/", env!("CARGO_PKG_VERSION")))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() > 10 || validate_url(attempt.url().as_str()).is_err() {
-                attempt.error("Unsafe component redirect")
-            } else {
-                attempt.follow()
-            }
-        }))
+        .redirect_limit(10)
         .build()?)
 }
 
@@ -383,18 +374,13 @@ fn fetch_manifest(client: &Client, cancel: Arc<AtomicBool>) -> Result<Manifest> 
     let mut errors = Vec::new();
     for url in urls {
         ensure_not_cancelled(&cancel)?;
-        let result = (|| {
+        let result: Result<Manifest> = (|| {
             validate_url(&url)?;
-            let response =
-                crate::cancel::request(client.get(&url).timeout(Duration::from_secs(30)), &cancel)?
-                    .error_for_status()?;
-            let mut bytes = Vec::new();
-            crate::cancel::body(response, cancel.clone())
-                .take(2 * 1024 * 1024 + 1)
-                .read_to_end(&mut bytes)?;
-            if bytes.len() > 2 * 1024 * 1024 {
-                bail!("Component manifest too large");
-            }
+            let bytes = crate::http_client::read_limited(
+                client.get(&url).timeout(Duration::from_secs(30)),
+                2 * 1024 * 1024,
+                cancel.clone(),
+            )?;
             let envelope: StableRuntimeEnvelope = serde_json::from_slice(&bytes)
                 .context("stable.json is missing valid runtime components")?;
             let manifest = envelope.runtime;

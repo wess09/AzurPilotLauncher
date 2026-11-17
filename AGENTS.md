@@ -33,6 +33,7 @@ cargo check            # 仅检查编译
 - `frontend/`：React 首页、进度、错误页、确认弹窗；构建时读取四份语言 YAML。
 - `src/launcher.rs`：唯一状态控制器、任务互斥、启动/停止/修复/退出、WS 会话和托盘。
 - `src/updater.rs`：检查更新、用户显式更新、mTLS/摘要校验、平台替换与参数恢复。
+- `src/http_client.rs`：Rust 联网统一传输；HTTP/3 优先，回退 TCP 时使用 TLS 记录分片规避 SNI 识别，不兼容则回退普通 TLS；清单也可回退 TCP，见 `docs/network-transport.md`。禁止恢复旧清单域名回退。
 - `src/windows.rs`：窗口恢复、React 连接错误路由、保留的 WebUI 标题栏注入。
 - `src/main.rs`：模块入口、日志、信任登录、时间炸弹及通用窗口/文件命令。
 - `src/tray_menu.rs`：Windows 托盘右键自绘弹窗菜单（原生 Win32 HMENU 无法定制样式）：预建无边框透明窗口加载 `?view=tray`、DPI 定位、失焦/短时再点收起；菜单动作与 macOS 原生菜单共用 `handle_tray_menu_action`；ACL 见 `capabilities/tray-menu.json`。

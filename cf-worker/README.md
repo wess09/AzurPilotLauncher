@@ -28,7 +28,7 @@ cf-worker/
 https://launcher-api.azurpilot.com/updata/stable.json
 ```
 
-旧地址 `https://ap-launcher-update.nanoda.work/updata/stable.json` 由旧域名侧配置 **302** 跳转到新地址；Worker 只绑定新域名，只接管 `/updata/*`，同一域名下的其他路径仍然回源。配置位于 `wrangler.jsonc`：
+Worker 只绑定当前域名，只接管 `/updata/*`，同一域名下的其他路径仍然回源。清单请求由启动器优先使用 HTTP/3，不再访问已停服的旧域名。配置位于 `wrangler.jsonc`：
 
 ```jsonc
 "routes": [
@@ -118,6 +118,5 @@ npx --yes wrangler@4.151.1 dev
 
 - 整个域名交给 Worker：把 route 改成 `launcher-api.azurpilot.com/*`，或使用 `custom_domain: true`（Wrangler 会管理 DNS，需要先移除冲突记录）。
 - 使用 `*.workers.dev`：把 `workers_dev` 改为 `true`，并同步修改 `package.yml` 的 `NEW_UPDATE_URL`、构建步骤的 `LAUNCHER_UPDATE_URL` 以及 `build.rs` 的默认地址；需要时同步 `src/main.rs` 的回退地址。
-- 旧地址 `ap-launcher-update.nanoda.work` 的 302 在旧域名侧维护，Worker 不处理旧域名；确认没有旧客户端后可以关闭该 302。
-- `src/main.rs` 的备用清单地址 `ap.launcher-update.nanoda.work` 也依赖旧域名侧的跳转；如果旧域名不再保留，请把它同步改成新地址。
+- 旧域名已停服，启动器更新与组件部署均只从当前官方清单入口引导，不依赖旧域名回退。
 - 回滚：删除 Worker Route（或恢复 SSH 清单上传）。OpenResty `updata/` 中最后一次上传的清单仍然保留，可作为回退。

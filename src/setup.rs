@@ -13,11 +13,10 @@
 //! 阶段进度通过 [`SplashUpdate`] 回调上报启动画面；所有长时间操作均支持
 //! 经 `cancel_requested` 原子标志请求取消。
 
+use crate::http_client::Client;
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Local;
-use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
-use reqwest::redirect::Policy;
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
 use std::env::set_current_dir;
@@ -1884,7 +1883,7 @@ fn pypi_probe_http_client() -> Option<Client> {
     Client::builder()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(5))
-        .redirect(Policy::limited(5))
+        .redirect_limit(5)
         .no_proxy()
         .default_headers(headers)
         .build()

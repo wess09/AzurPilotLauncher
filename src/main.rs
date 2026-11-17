@@ -17,6 +17,8 @@ mod backend_process;
 mod cancel;
 mod format_util;
 mod fs_util;
+/// Rust 自身的 HTTP/3 优先联网与安全回退。
+mod http_client;
 /// 多语言（i18n）初始化与本地化支持。
 mod i18n;
 mod launcher;
@@ -223,7 +225,7 @@ fn time_bomb_config() -> Result<Option<TimeBombConfig>> {
         .map_err(|err| anyhow!(t!("errors.time_bomb_format_error", error = err.to_string())))?;
     // network-time-url 与 message 均有内置默认值，缺省也能工作。
     let network_time_url = cargo_toml_value(section, "network-time-url")
-        .unwrap_or_else(|| "http://www.gstatic.com/generate_204".to_owned());
+        .unwrap_or_else(|| "https://www.gstatic.com/generate_204".to_owned());
     let message = cargo_toml_value(section, "message")
         .unwrap_or_else(|| t!("errors.time_bomb_expired").to_string());
 
@@ -303,11 +305,11 @@ fn time_bomb_expiration_message() -> Result<Option<String>> {
 fn fetch_network_time(url: &str) -> Result<DateTime<Utc>> {
     // 5 秒超时并禁用系统代理：取的是响应头时间，必须直连目标服务器，
     // 避免代理故障拖慢启动或干扰结果。
-    let client = reqwest::blocking::Client::builder()
+    let client = http_client::Client::builder()
         .timeout(Duration::from_secs(5))
         .no_proxy()
         .build()?;
-    let response = client.get(url).send()?;
+    let response = client.get(url).send()?.error_for_status()?;
     let date_header = response
         .headers()
         .get(DATE)
