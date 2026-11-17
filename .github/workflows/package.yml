@@ -419,6 +419,12 @@ jobs:
           # Keep native dependency artifacts separate for each runner image/CPU.
           shared-key: release-${{ matrix.os }}-${{ runner.arch }}
           cache-bin: false
+      - name: Prepare signed RST filter (Windows x64)
+        if: runner.os == 'Windows' && runner.arch == 'X64'
+        shell: bash
+        run: |
+          set -o pipefail
+          python tools/prepare_windivert.py 2>&1 | bash tools/ci/redact-urls.sh
       - name: Build
         env:
           # Prefer the new Secret name while keeping existing release credentials usable.

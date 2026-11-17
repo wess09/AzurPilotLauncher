@@ -296,6 +296,7 @@ dependencies = [
  "httpdate",
  "hyper",
  "iana-time-zone",
+ "libloading",
  "nix 0.30.1",
  "notify-rust",
  "openssl-probe",

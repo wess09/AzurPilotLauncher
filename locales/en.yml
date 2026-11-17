@@ -374,6 +374,7 @@ launcher:
   service: "Background service"
 
 network:
+  rst_filter_failed: "Cannot enable TCP RST interception. Run the launcher as administrator: %{error}"
   https_required: "Internet requests require HTTPS without a username or password in the URL."
   deadline: "The network request timed out."
   https_downgrade: "Refused to redirect a secure connection to plain HTTP."

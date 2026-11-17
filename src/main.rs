@@ -35,6 +35,8 @@ mod notify;
 mod power;
 /// 统一的启动进度状态、快照与推送节奏。
 mod progress;
+/// 仅拦截启动器自身互联网连接的入站 TCP RST。
+mod rst_filter;
 /// 启动器行为设置：SQLite 存储、Tauri 命令与开机自启副作用。
 mod settings;
 mod sources;
@@ -343,7 +345,9 @@ fn start_minimized_arg_present() -> bool {
 }
 
 fn main() -> Result<()> {
-    launcher::run()
+    let result = launcher::run();
+    rst_filter::shutdown();
+    result
 }
 
 fn initialize_logging() -> Result<WorkerGuard> {

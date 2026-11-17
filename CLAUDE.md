@@ -24,6 +24,8 @@ Node.js 24 是开发构建依赖；发布后首页无需 Node.js 或 Vite。直�
 
 构建脚本（`build.rs`）需要 `AZURPILOT_BOOTSTRAP_UV` 环境变量指向要内嵌的 `uv` 二进制文件。本地开发不设置时使用空占位符，启动器会在运行时从 PATH 中查找 `uv` 或通过环境变量 `UV` 指定。
 
+Windows x64 release 还需先执行 `python tools/prepare_windivert.py`，将 `AZURPILOT_WINDIVERT_DIR` 指向输出目录。构建脚本校验并内嵌官方签名的 WinDivert；Rust 首次联网前启用本进程 RST 丢弃。CI 自动准备，普通开发/测试允许缺省空占位，管理员集成测试见 `docs/network-transport.md`。其他平台不加载该驱动。
+
 ## 启动参数
 
 启动器支持以下命令行参数（Windows 使用 `/` 前缀同样有效）：

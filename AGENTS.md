@@ -6,7 +6,7 @@
 
 ## 项目概述
 
-AzurPilot Launcher：[AzurLaneAutoScript](https://github.com/LmeSzinc/AzurLaneAutoScript) 的跨平台（Windows/macOS/Linux）桌面启动器，**Tauri 2 + Rust**，`frontend/` 使用 React + TypeScript + Vite，生产静态资源由 Tauri 内嵌。启动器 exe 仅内嵌 uv；**部署**只下载 CI 打包的 git/adb 二进制组件与后端 master 上的 deploy 脚本/模板（raw 直连 CNB/GitHub，见 `docs/runtime-components.md`）；**启动**由内嵌 uv 安装最新稳定 Python 3.14.x、运行 `deploy.git` 拉取仓库源码与资源、uv sync 同步依赖，自动补齐 Node.js 后由 `deploy.app` 构建前端，再启动 `gui.py`。源码、资源、Python、依赖与前端一律不经 CI 构建。
+AzurPilot Launcher：[AzurLaneAutoScript](https://github.com/LmeSzinc/AzurLaneAutoScript) 的跨平台（Windows/macOS/Linux）桌面启动器，**Tauri 2 + Rust**，`frontend/` 使用 React + TypeScript + Vite，生产静态资源由 Tauri 内嵌。启动器 exe 内嵌 uv，Windows x64 另内嵌签名 RST 拦截组件；**部署**只下载 CI 打包的 git/adb 二进制组件与后端 master 上的 deploy 脚本/模板（raw 直连 CNB/GitHub，见 `docs/runtime-components.md`）；**启动**由内嵌 uv 安装最新稳定 Python 3.14.x、运行 `deploy.git` 拉取仓库源码与资源、uv sync 同步依赖，自动补齐 Node.js 后由 `deploy.app` 构建前端，再启动 `gui.py`。源码、资源、Python、依赖与前端一律不经 CI 构建。
 
 ## 常用命令
 
@@ -23,6 +23,8 @@ cargo check            # 仅检查编译
 
 ### 构建脚本环境变量（build.rs）
 
+- `AZURPILOT_WINDIVERT_DIR`：Windows x64 release 必填；先执行 `python tools/prepare_windivert.py` 准备经 SHA-256 校验的官方签名驱动。CI 自动设置，开发构建允许缺省。
+
 - `AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64`：launcher 自更新的 mTLS 客户端证书（base64 PEM）。未设置时回退读取仓库根目录的 `证书.txt`（不入库）。
 - `LAUNCHER_UPDATE_URL`：覆盖自更新源，默认 `https://launcher-api.azurpilot.com/updata/stable.json`。
 
@@ -34,6 +36,7 @@ cargo check            # 仅检查编译
 - `src/launcher.rs`：唯一状态控制器、任务互斥、启动/停止/修复/退出、WS 会话和托盘。
 - `src/updater.rs`：检查更新、用户显式更新、mTLS/摘要校验、平台替换与参数恢复。
 - `src/http_client.rs`：Rust 联网统一传输；HTTP/3 优先，回退 TCP 时使用 TLS 记录分片规避 SNI 识别，不兼容则回退普通 TLS；清单也可回退 TCP，见 `docs/network-transport.md`。禁止恢复旧清单域名回退。
+- `src/rst_filter.rs`：Windows x64 首次 Rust 联网前启用内嵌签名 WinDivert，丢弃属于启动器进程的全部非环回入站 RST，其他进程原样放行；退出关闭过滤句柄。ARM64/macOS/Linux 不加载此驱动。
 - `src/windows.rs`：窗口恢复、React 连接错误路由、保留的 WebUI 标题栏注入。
 - `src/main.rs`：模块入口、日志、信任登录、时间炸弹及通用窗口/文件命令。
 - `src/tray_menu.rs`：Windows 托盘右键自绘弹窗菜单（原生 Win32 HMENU 无法定制样式）：预建无边框透明窗口加载 `?view=tray`、DPI 定位、失焦/短时再点收起；菜单动作与 macOS 原生菜单共用 `handle_tray_menu_action`；ACL 见 `capabilities/tray-menu.json`。

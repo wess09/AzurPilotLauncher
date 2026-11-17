@@ -374,6 +374,7 @@ launcher:
   service: "后台服务"
 
 network:
+  rst_filter_failed: "无法启用 TCP RST 拦截，请使用管理员权限启动：%{error}"
   https_required: "互联网请求必须使用 HTTPS，且地址中不能包含用户名或密码。"
   deadline: "网络请求超时。"
   https_downgrade: "已拒绝将安全连接重定向到明文 HTTP。"

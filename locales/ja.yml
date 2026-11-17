@@ -374,6 +374,7 @@ launcher:
   service: "バックグラウンドサービス"
 
 network:
+  rst_filter_failed: "TCP RST フィルターを有効にできません。管理者権限で起動してください：%{error}"
   https_required: "インターネットへのリクエストには HTTPS が必要です。URL にユーザー名やパスワードを含めることはできません。"
   deadline: "ネットワークリクエストがタイムアウトしました。"
   https_downgrade: "暗号化接続から平文 HTTP へのリダイレクトを拒否しました。"
