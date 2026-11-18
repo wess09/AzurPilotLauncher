@@ -34,12 +34,19 @@ pub(crate) enum SchedulerState {
     Unavailable,
 }
 
-/// 从 `scheduler.*` 的结果推断状态：`running` 非空即视为运行中。
+/// 有暂停记录时优先继续，避免再次暂停覆盖上一次的记录。
 pub(crate) fn parse_state(result: &Value) -> SchedulerState {
-    match result.get("running").and_then(Value::as_array) {
-        Some(running) if !running.is_empty() => SchedulerState::Running,
-        Some(_) => SchedulerState::Stopped,
-        None => SchedulerState::Unavailable,
+    let Some(running) = result.get("running").and_then(Value::as_array) else {
+        return SchedulerState::Unavailable;
+    };
+    let has_paused = result
+        .get("paused")
+        .and_then(Value::as_array)
+        .is_some_and(|paused| !paused.is_empty());
+    if running.is_empty() || has_paused {
+        SchedulerState::Stopped
+    } else {
+        SchedulerState::Running
     }
 }
 
@@ -79,6 +86,7 @@ pub(crate) struct TraySchedulerToggle<R: Runtime> {
     app: AppHandle<R>,
     item: MenuItem<R>,
     busy: Arc<AtomicBool>,
+    poll_cache_dirty: Arc<AtomicBool>,
 }
 
 // 手写 Clone：derive 会额外要求 `R: Clone`，而 Runtime 并不实现 Clone。
@@ -88,6 +96,7 @@ impl<R: Runtime> Clone for TraySchedulerToggle<R> {
             app: self.app.clone(),
             item: self.item.clone(),
             busy: self.busy.clone(),
+            poll_cache_dirty: self.poll_cache_dirty.clone(),
         }
     }
 }
@@ -98,6 +107,7 @@ impl<R: Runtime> TraySchedulerToggle<R> {
             app,
             item,
             busy: Arc::new(AtomicBool::new(false)),
+            poll_cache_dirty: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -106,11 +116,15 @@ impl<R: Runtime> TraySchedulerToggle<R> {
         thread::spawn(move || {
             let mut last = None;
             loop {
-                if this.busy.load(Ordering::SeqCst) {
-                    last = None;
-                } else {
+                if !this.busy.load(Ordering::SeqCst) {
+                    if this.poll_cache_dirty.swap(false, Ordering::SeqCst) {
+                        last = None;
+                    }
                     let state = query(&this.app);
-                    if last != Some(state) {
+                    if !this.busy.load(Ordering::SeqCst)
+                        && !this.poll_cache_dirty.load(Ordering::SeqCst)
+                        && last != Some(state)
+                    {
                         apply(&this.item, state);
                         last = Some(state);
                     }
@@ -124,6 +138,7 @@ impl<R: Runtime> TraySchedulerToggle<R> {
         if self.busy.swap(true, Ordering::SeqCst) {
             return;
         }
+        self.poll_cache_dirty.store(true, Ordering::SeqCst);
         let this = self.clone();
         thread::spawn(move || {
             let (method, pending) = match query(&this.app) {
@@ -216,5 +231,13 @@ mod tests {
             SchedulerState::Stopped
         );
         assert_eq!(parse_state(&json!({})), SchedulerState::Unavailable);
+    }
+
+    #[test]
+    fn partially_paused_scheduler_offers_resume() {
+        assert_eq!(
+            parse_state(&json!({"running":["a"],"paused":["b"],"errors":["a failed to stop"]})),
+            SchedulerState::Stopped
+        );
     }
 }
