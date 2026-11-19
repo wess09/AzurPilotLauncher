@@ -211,7 +211,7 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/モジュール-国際化-172b4d?style=flat-square" alt="Tag"><br>
       <h3>4 言語対応の国際化 UI</h3>
-      <p>簡体字中国語・繁体字中国語・日本語・English の 4 言語を内蔵。システムのロケールから自動選択され、<code>--lang</code> 起動オプションでの強制指定にも対応します。WebUI と Web 通知は選択された言語で表示されます。</p>
+      <p>簡体字中国語・繁体字中国語・日本語・English の 4 言語を内蔵。システムのロケールから自動選択され、設定でも指定できます。WebUI と Web 通知は選択された言語で表示されます。</p>
       <div>
         <img src="https://img.shields.io/badge/言語-简体中文-red?style=flat-square" alt="zh-CN">
         <img src="https://img.shields.io/badge/語言-繁體中文-blue?style=flat-square" alt="zh-TW">
@@ -384,7 +384,7 @@ graph TD
 </table>
 
 > [!TIP]
-> ランチャーはコマンドラインオプションに対応しています：`--lang` で UI 言語を強制指定（`zh-CN` / `zh-TW` / `ja` / `en`）、`--skip-update` でリポジトリ更新をスキップ、`--preview-crash` でエラーページをプレビューなど。
+> ランチャーは `--start-minimized` オプションで、トレイに最小化して起動できます。
 
 > [!WARNING]
 > **macOS ユーザーへ**：本アプリは開発者署名されていません。初回起動時にエラーが出る場合は、ターミナルで `xattr -dr com.apple.quarantine AzurPilot.app` を実行してから起動してください。

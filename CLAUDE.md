@@ -24,34 +24,19 @@ Node.js 24 是开发构建依赖；发布后首页无需 Node.js 或 Vite。直�
 
 构建脚本（`build.rs`）需要 `AZURPILOT_BOOTSTRAP_UV` 环境变量指向要内嵌的 `uv` 二进制文件。本地开发不设置时使用空占位符，启动器会在运行时从 PATH 中查找 `uv` 或通过环境变量 `UV` 指定。
 
-Windows x64 release 还需先执行 `python tools/prepare_windivert.py`，将 `AZURPILOT_WINDIVERT_DIR` 指向输出目录。构建脚本校验并内嵌官方签名的 WinDivert；Rust 首次联网前启用本进程 RST 丢弃。CI 自动准备，普通开发/测试允许缺省空占位，管理员集成测试见 `docs/network-transport.md`。其他平台不加载该驱动。
-
 ## 启动参数
 
-启动器支持以下命令行参数（Windows 使用 `/` 前缀同样有效）：
+启动器仅支持少量命令行参数（Windows 使用 `/` 前缀同样有效）：
 
-| 参数 | 别名 | 说明 |
-|---|---|---|
-| `--lang <locale>` | `--locale <locale>` | 覆盖系统语言，强制使用指定语言显示界面。支持的值：`zh-CN`（简体中文）、`zh-TW`（繁体中文）、`ja`（日语）、`en`（英语）。也支持 `--lang=zh-CN` 形式。 |
-| `--preview-no-update` | `--skip-update`、`--no-update`、`--disable-update` | 跳过仓库更新，直接使用本地文件启动。用于开发调试。 |
-| `--preview-crash` | `--preview-error`、`--crash-preview`、`--error-preview` | 模拟启动失败，停留在错误页面以检查 UI 样式。隐含 `--preview-no-update`。 |
+| 参数 | 说明 |
+|---|---|
+| `--start-minimized` | 启动后最小化到托盘；Windows 开机自启项默认携带该参数。 |
 
-示例：
-
-```bash
-# 以日语界面启动
-AzurPilot --lang ja
-
-# 以英语界面启动，跳过更新
-AzurPilot --lang en --skip-update
-
-# 预览错误页面
-AzurPilot --preview-crash
-```
+内部/调试参数：`--preview-deploy` 仅在 debug 构建生效，用于预览"需要部署"界面；Windows 自更新助手通过 `--apply-launcher-update <目标 exe> <更新载荷>` 完成替换与重启，普通用户无需手动使用。
 
 ## 国际化（i18n）
 
-启动器支持 4 种界面语言，根据系统 locale 自动选择，也可通过 `--lang` 启动参数手动覆盖：
+启动器支持 4 种界面语言，根据系统 locale 自动选择，也可在设置中手动指定：
 
 - `zh-CN` — 简体中文（基准语言）
 - `zh-TW` — 繁体中文
@@ -81,10 +66,7 @@ locales/
 
 ### 语言检测逻辑
 
-`src/i18n.rs` 中的 `detect_locale()` 按以下优先级选择语言：
-1. 命令行参数 `--lang` / `--locale`（最高优先级）
-2. 系统 locale（通过 `sys-locale` crate 获取）
-3. 回退到 `en`
+`src/i18n.rs` 中的 `detect_locale()` 按系统 locale（通过 `sys-locale` crate 获取）选择语言，未命中时回退到 `en`；用户在设置中保存的语言偏好由 `apply_override()` 覆盖。
 
 支持的 locale 映射：`zh*` → `zh-CN`，`zh-TW`/`zh-HK`/`zh-Hant` → `zh-TW`，`ja*` → `ja`，其他 → `en`。
 

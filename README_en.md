@@ -211,7 +211,7 @@ This project works closely with the following core projects in its ecosystem:
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/Module-Internationalization-172b4d?style=flat-square" alt="Tag"><br>
       <h3>Four-Language Interface</h3>
-      <p>Built-in UI localization for 简体中文, 繁體中文, 日本語 and English, chosen automatically from the system locale or forced via the <code>--lang</code> command-line flag. WebUI and web notifications follow the selected language.</p>
+      <p>Built-in UI localization for 简体中文, 繁體中文, 日本語 and English, chosen automatically from the system locale or set in preferences. WebUI and web notifications follow the selected language.</p>
       <div>
         <img src="https://img.shields.io/badge/语言-简体中文-red?style=flat-square" alt="zh-CN">
         <img src="https://img.shields.io/badge/語言-繁體中文-blue?style=flat-square" alt="zh-TW">
@@ -384,7 +384,7 @@ graph TD
 </table>
 
 > [!TIP]
-> The launcher supports command-line flags: `--lang` to force a UI language (`zh-CN` / `zh-TW` / `ja` / `en`), `--skip-update` to skip the repository update, and `--preview-crash` to preview the error page.
+> The launcher supports the `--start-minimized` flag to start minimized to the tray.
 
 > [!WARNING]
 > **macOS users**: the app is not signed by a developer certificate. If it fails to open, run `xattr -dr com.apple.quarantine AzurPilot.app` in a terminal first.

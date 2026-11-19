@@ -15,8 +15,6 @@ splash:
   webui_init: "本機 Web 介面正在初始化，準備就緒後將自動開啟視窗。"
   webui_init_slow: "本機 Web 介面正在初始化，這通常需要幾秒鐘時間。準備就緒後將自動開啟視窗。"
   brand: "AzurPilot"
-  preview_crash_detail: "預覽當機模式已啟用。這是用於檢查錯誤介面的模擬故障，不會執行更新或啟動後端服務。"
-  preview_crash_mode: "錯誤介面預覽中..."
   starting_backend: "啟動後端服務中..."
   startup_complete: "啟動完成！"
 
@@ -374,7 +372,6 @@ launcher:
   service: "背景服務"
 
 network:
-  rst_filter_failed: "無法啟用 TCP RST 攔截，請以系統管理員權限啟動：%{error}"
   https_required: "網際網路請求必須使用 HTTPS，且網址中不能包含使用者名稱或密碼。"
   deadline: "網路請求逾時。"
   https_downgrade: "已拒絕將安全連線重新導向至明文 HTTP。"

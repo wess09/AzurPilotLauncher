@@ -8,21 +8,9 @@
 
 不强制 HTTP/3，也不因 UDP 不通而禁止 TCP。旧清单域名已停服，更新与组件部署只使用编译时内置的官方清单入口，不再访问旧域名或依赖旧域名回退。
 
-## 直接丢弃入站 RST（Windows x64）
-
-Windows x64 在第一次构建 HTTP 客户端时先启用 `src/rst_filter.rs`，在 TCP 栈处理报文之前截获入站 RST。只要连接属于当前启动器进程且不是环回连接，就直接丢弃全部 RST，不根据来源、TTL、IP ID 或序列号判断真假。其他进程的 RST 原样放行，FIN、HTTP 状态码、TLS 告警和普通数据包不拦截；连接超时和取消仍有效。
-
-WinDivert 的 NETWORK 层不提供 PID，因此每个 RST 都用连接四元组查询 Windows TCP 所有者表；同时支持 IPv4、IPv6 与 IPv4-mapped IPv6。无法确认所有者时放行，不扩大到全系统丢弃。工作线程停止或注回报文失败时关闭过滤句柄；退出启动器时停止捕获、排空队列并关闭本进程句柄。
-
-官方签名的 WinDivert 2.2.2-A DLL、驱动和许可证经固定 SHA-256 校验后内嵌 exe，首次使用时释放到启动器目录的 `.azurpilot/tools/windivert-2.2.2-A/`，无需先访问清单或下载服务器。构建和释放均校验内容，拒绝经 symlink/junction 写出目标目录，动态加载不搜索 PATH。启动器原有管理员 manifest 满足驱动加载要求；驱动无法加载时明确报错。
-
-本地 Windows x64 构建前执行 `python tools/prepare_windivert.py`，并将 `AZURPILOT_WINDIVERT_DIR` 设置为生成目录。Windows x64 release 缺少该目录会构建失败；CI 自动准备。普通测试不加载驱动，管理员环境可以运行 `cargo test --locked rst_filter_live -- --ignored --nocapture`：先验证未保护连接确实被注入的 RST 关闭，再验证保护后同一连接仍可完成 TLS/HTTP，并验证另一个进程仍然接收到 RST。
-
-WinDivert 官方发行包没有 ARM64、macOS 或 Linux 驱动；这些平台保留 HTTP/3、TLS 分片和恢复逻辑，不声明已经启用报文级 RST 拦截。
-
 ## TLS 分片针对的干扰
 
-部分 DPI 设备根据明文 ClientHello 中的 SNI 匹配域名，再注入 TCP RST。将一个 ClientHello 放进多个 TLS 记录，会改变识别设备看到的记录布局，而支持标准握手重组的服务器仍能正常建立连接。此实现通过 rustls 的 max_fragment_size 将 ClientHello 的单条明文 TLS 记录限制为 64 字节（包括 5 字节 TLS 记录头）。这部分不修改 SNI、握手消息内容、证书验证或 mTLS 身份，可独立于 RST 拦截驱动工作。
+部分 DPI 设备根据明文 ClientHello 中的 SNI 匹配域名，再注入 TCP RST。将一个 ClientHello 放进多个 TLS 记录，会改变识别设备看到的记录布局，而支持标准握手重组的服务器仍能正常建立连接。此实现通过 rustls 的 max_fragment_size 将 ClientHello 的单条明文 TLS 记录限制为 64 字节（包括 5 字节 TLS 记录头）。这部分不修改 SNI、握手消息内容、证书验证或 mTLS 身份，不依赖报文级拦截。
 
 这是一种针对识别过程的规避方法。它无法保证绕过已支持 TLS 记录重组的 DPI，也不能消除无条件 TCP 重置、IP 封锁或直接丢包。各网络设备的效果需要实测。分片限制也适用于后续出站 TLS 记录；启动器仅发送 GET/HEAD，主要额外开销在握手和请求头，下载数据的入站记录大小不受影响。
 

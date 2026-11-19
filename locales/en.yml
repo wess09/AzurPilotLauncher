@@ -15,8 +15,6 @@ splash:
   webui_init: "The local web interface is initializing. The window will open automatically when ready."
   webui_init_slow: "The local web interface is initializing. This usually takes a few seconds. The window will open automatically when ready."
   brand: "AzurPilot"
-  preview_crash_detail: "Preview crash mode is enabled. This is a simulated failure for inspecting the error page. No updates will be performed and the backend service will not start."
-  preview_crash_mode: "Previewing error page..."
   starting_backend: "Starting backend service..."
   startup_complete: "Startup complete!"
 
@@ -374,7 +372,6 @@ launcher:
   service: "Background service"
 
 network:
-  rst_filter_failed: "Cannot enable TCP RST interception. Run the launcher as administrator: %{error}"
   https_required: "Internet requests require HTTPS without a username or password in the URL."
   deadline: "The network request timed out."
   https_downgrade: "Refused to redirect a secure connection to plain HTTP."

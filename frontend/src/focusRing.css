@@ -38,8 +38,7 @@ a[data-fui-focus-visible] {
    containing block；环画在控件外侧，还要放开 overflow 让出界部分不被
    裁掉（按钮内容不越界，放开无副作用）。 */
 button[data-fui-focus-visible],
-a[data-fui-focus-visible],
-input[data-fui-focus-visible] {
+a[data-fui-focus-visible] {
   position: relative;
 }
 

@@ -99,13 +99,6 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Tests use build.rs placeholders for uv and mTLS; no release secrets needed.
-      - name: Prepare signed RST filter (Windows x64)
-        if: runner.os == 'Windows' && runner.arch == 'X64'
-        shell: bash
-        run: |
-          set -o pipefail
-          python tools/prepare_windivert.py 2>&1 | bash tools/ci/redact-urls.sh
-
       - name: Check all targets
         run: cargo check --locked --all-targets
 
@@ -116,10 +109,6 @@ jobs:
       # the launcher manifest and protected Node.js installer directory tests.
       - name: Run tests
         run: cargo test --locked --all-targets
-
-      - name: Test RST filter driver (Windows x64 administrator)
-        if: runner.os == 'Windows' && runner.arch == 'X64'
-        run: cargo test --locked rst_filter_live -- --ignored --nocapture
 
   worker:
     name: Validate Cloudflare Worker (static assets)

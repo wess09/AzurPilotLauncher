@@ -6,7 +6,6 @@ use crate::{
     initialize_logging,
     launcher_control::{start_launcher_channel, ChannelHandler, LauncherChannel},
     notify::NotificationClickHandler,
-    preview_crash_arg_present, preview_no_update_arg_present,
     progress::{self, SplashUpdate},
     setup::{self, get_deploy_config, setup_azurpilot_repo, setup_environment},
     start_minimized_arg_present, time_bomb_expiration_message, updater,
@@ -1020,7 +1019,6 @@ pub(crate) fn run() -> Result<()> {
     let allow_for_setup = allow_exit.clone();
     let allow_for_run = allow_exit.clone();
     let port = WebuiLaunchConfig::from_deploy_config(get_deploy_config().as_ref()).port;
-    let preview_crash = preview_crash_arg_present();
     let preview_deploy =
         cfg!(debug_assertions) && std::env::args().any(|arg| arg == "--preview-deploy");
     let minimized = start_minimized_arg_present();
@@ -1059,7 +1057,7 @@ pub(crate) fn run() -> Result<()> {
         .setup(move |app| {
             let controller = Arc::new(Launcher { app: app.handle().clone(), model: Mutex::new(Model::new()), changed: Condvar::new(),
                 backend: Mutex::new(None), session: Mutex::new(None), allow_exit: allow_for_setup.clone(),
-                recreate: Arc::new(AtomicBool::new(false)), notified_update: Mutex::new(None), port, skip_update: preview_crash || preview_deploy || preview_no_update_arg_present(), minimized });
+                recreate: Arc::new(AtomicBool::new(false)), notified_update: Mutex::new(None), port, skip_update: preview_deploy, minimized });
             app.manage(controller.clone());
             app.manage(settings_store.clone());
             let auto_start = auto_start || settings_store.auto_start_service();
@@ -1099,14 +1097,7 @@ pub(crate) fn run() -> Result<()> {
                 }
             });
             if !minimized { show_launcher_home(app.handle())?; }
-            if preview_crash {
-                controller.change(|m| {
-                    m.view.update_checked = true; m.view.phase = Phase::Error;
-                    m.view.operation = Some(Operation::Start);
-                    m.view.error = Some(t!("splash.preview_crash_detail").to_string()); m.touch();
-                });
-                show_launcher_home(app.handle())?;
-            } else if preview_deploy {
+            if preview_deploy {
                 controller.change(|model| { model.view.update_checked = true; model.view.deployment_required = true; model.touch(); });
                 if let Some(window) = app.get_webview_window("launcher") { window.set_title("AzurPilot Debug")?; }
                 show_launcher_home(app.handle())?;

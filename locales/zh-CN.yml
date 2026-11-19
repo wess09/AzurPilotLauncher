@@ -15,8 +15,6 @@ splash:
   webui_init: "本地 Web 界面正在初始化，准备就绪后将自动打开窗口。"
   webui_init_slow: "本地 Web 界面正在初始化，这通常需要几秒钟时间。准备就绪后将自动打开窗口。"
   brand: "AzurPilot"
-  preview_crash_detail: "预览崩溃模式已启用。这是用于检查错误界面的模拟故障，不会执行更新或启动后端服务。"
-  preview_crash_mode: "错误界面预览中..."
   starting_backend: "启动后端服务中..."
   startup_complete: "启动完成！"
 
@@ -374,7 +372,6 @@ launcher:
   service: "后台服务"
 
 network:
-  rst_filter_failed: "无法启用 TCP RST 拦截，请使用管理员权限启动：%{error}"
   https_required: "互联网请求必须使用 HTTPS，且地址中不能包含用户名或密码。"
   deadline: "网络请求超时。"
   https_downgrade: "已拒绝将安全连接重定向到明文 HTTP。"

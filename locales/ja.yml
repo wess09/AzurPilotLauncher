@@ -15,8 +15,6 @@ splash:
   webui_init: "ローカルWebUIを初期化中です。準備完了後にウィンドウが自動で開きます。"
   webui_init_slow: "ローカルWebUIを初期化中です。通常数秒かかります。準備完了後にウィンドウが自動で開きます。"
   brand: "AzurPilot"
-  preview_crash_detail: "クラッシュプレビューモードが有効です。エラー画面を確認するためのシミュレーションで、アップデートやバックエンドの起動は行われません。"
-  preview_crash_mode: "エラー画面をプレビュー中..."
   starting_backend: "バックエンドサービスを起動中..."
   startup_complete: "起動完了！"
 
@@ -374,7 +372,6 @@ launcher:
   service: "バックグラウンドサービス"
 
 network:
-  rst_filter_failed: "TCP RST フィルターを有効にできません。管理者権限で起動してください：%{error}"
   https_required: "インターネットへのリクエストには HTTPS が必要です。URL にユーザー名やパスワードを含めることはできません。"
   deadline: "ネットワークリクエストがタイムアウトしました。"
   https_downgrade: "暗号化接続から平文 HTTP へのリダイレクトを拒否しました。"

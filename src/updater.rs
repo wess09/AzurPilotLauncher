@@ -2145,13 +2145,11 @@ mod tests {
     }
 
     #[test]
-    fn update_helper_preserves_locale_and_minimized_arguments() {
+    fn update_helper_preserves_minimized_argument() {
         let args = [
             "--apply-launcher-update",
             "target.exe",
             "update.exe",
-            "--lang",
-            "ja",
             "--start-minimized",
         ]
         .into_iter()
@@ -2159,7 +2157,7 @@ mod tests {
         .collect();
         assert_eq!(
             restart_arguments_from(args),
-            ["--lang", "ja", "--start-minimized"].map(std::ffi::OsString::from)
+            ["--start-minimized"].map(std::ffi::OsString::from)
         );
     }
 

@@ -35,8 +35,6 @@ mod notify;
 mod power;
 /// 统一的启动进度状态、快照与推送节奏。
 mod progress;
-/// 仅拦截启动器自身互联网连接的入站 TCP RST。
-mod rst_filter;
 /// 启动器行为设置：SQLite 存储、Tauri 命令与开机自启副作用。
 mod settings;
 mod sources;
@@ -91,26 +89,6 @@ const WINDOWS_TRAY_ICON: &[u8] = include_bytes!("../icons/icon.png");
 const BACKEND_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 const BACKEND_NAVIGATION_TIMEOUT: Duration = Duration::from_secs(10);
 const TIME_BOMB_CONFIG_SOURCE: &str = include_str!("../Cargo.toml");
-/// 预览"跳过更新检查"模式的命令行参数：横线与斜杠两种风格都接受，
-/// 便于测试时模拟"无更新可用"的启动路径。
-const PREVIEW_NO_UPDATE_ARGS: &[&str] = &[
-    "--preview-no-update",
-    "--skip-update",
-    "--no-update",
-    "--disable-update",
-    "/preview-no-update",
-    "/skip-update",
-    "/no-update",
-];
-/// 预览"启动即报错"模式的命令行参数，用于测试 splash 错误态的展示效果。
-const PREVIEW_CRASH_ARGS: &[&str] = &[
-    "--preview-crash",
-    "--preview-error",
-    "--crash-preview",
-    "--error-preview",
-    "/preview-crash",
-    "/preview-error",
-];
 /// 请求"启动后最小化到托盘"的命令行参数。
 const START_MINIMIZED_ARGS: &[&str] = &["--start-minimized", "/start-minimized"];
 
@@ -329,25 +307,13 @@ fn launcher_arg_present(flags: &[&str]) -> bool {
     })
 }
 
-/// 是否以"跳过更新检查"预览模式启动（用于测试无更新时的启动路径）。
-fn preview_no_update_arg_present() -> bool {
-    launcher_arg_present(PREVIEW_NO_UPDATE_ARGS)
-}
-
-/// 是否以"启动即报错"预览模式启动（用于测试 splash 错误态展示）。
-fn preview_crash_arg_present() -> bool {
-    launcher_arg_present(PREVIEW_CRASH_ARGS)
-}
-
 /// 是否以"启动后最小化到托盘"模式启动。
 fn start_minimized_arg_present() -> bool {
     launcher_arg_present(START_MINIMIZED_ARGS)
 }
 
 fn main() -> Result<()> {
-    let result = launcher::run();
-    rst_filter::shutdown();
-    result
+    launcher::run()
 }
 
 fn initialize_logging() -> Result<WorkerGuard> {

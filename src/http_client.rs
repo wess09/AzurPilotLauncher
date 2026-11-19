@@ -495,7 +495,6 @@ impl ClientBuilder {
     }
 
     pub(crate) fn build(self) -> Result<Client> {
-        crate::rst_filter::ensure_started()?;
         let _guard = runtime().enter();
         let mut roots =
             rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());

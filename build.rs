@@ -78,7 +78,6 @@ fn main() {
     // uv 引导二进制与 mTLS 证书统一写入 OUT_DIR，供运行时按路径内嵌。
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR is set by Cargo");
     let out_dir = PathBuf::from(out_dir);
-    embed_windivert(&out_dir);
 
     // 内嵌 uv 引导二进制：CI 构建经 AZURPILOT_BOOTSTRAP_UV 指定 uv 路径。
     // 本地构建通常没有现成 uv：写空占位符，运行时回退到 UV 环境变量或
@@ -141,44 +140,5 @@ fn main() {
         None => {
             fs::write(&mtls_identity_target, []).expect("write empty launcher mTLS placeholder")
         }
-    }
-}
-
-/// WinDivert 在构建前校验并内嵌，第一次获取清单前即可拦截 RST。
-fn embed_windivert(out_dir: &std::path::Path) {
-    use sha2::{Digest, Sha256};
-    println!("cargo:rerun-if-env-changed=AZURPILOT_WINDIVERT_DIR");
-    println!("cargo:rerun-if-env-changed=AZURPILOT_REQUIRE_WINDIVERT");
-    println!("cargo:rerun-if-changed=tools/windivert.json");
-    let supported = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
-        && env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64");
-    let source = supported
-        .then(|| env::var_os("AZURPILOT_WINDIVERT_DIR"))
-        .flatten()
-        .map(PathBuf::from);
-    let manifest: serde_json::Value =
-        serde_json::from_str(include_str!("tools/windivert.json")).expect("WinDivert manifest");
-    if supported
-        && source.is_none()
-        && (env::var_os("AZURPILOT_REQUIRE_WINDIVERT").is_some()
-            || env::var("PROFILE").as_deref() == Ok("release"))
-    {
-        panic!("Windows x64 release requires AZURPILOT_WINDIVERT_DIR");
-    }
-    for name in ["WinDivert.dll", "WinDivert64.sys", "LICENSE"] {
-        let bytes = if let Some(source) = &source {
-            let path = source.join(name);
-            println!("cargo:rerun-if-changed={}", path.display());
-            let bytes = fs::read(path).expect("read prepared WinDivert file");
-            assert_eq!(
-                format!("{:x}", Sha256::digest(&bytes)),
-                manifest["files"][name]["sha256"].as_str().unwrap(),
-                "WinDivert file digest mismatch"
-            );
-            bytes
-        } else {
-            Vec::new()
-        };
-        fs::write(out_dir.join(format!("rst-{name}")), bytes).expect("embed WinDivert file");
     }
 }

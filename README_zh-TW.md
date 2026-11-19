@@ -211,7 +211,7 @@
     <td width="50%" valign="top">
       <img src="https://img.shields.io/badge/模組-國際化-172b4d?style=flat-square" alt="Tag"><br>
       <h3>四語言國際化介面</h3>
-      <p>內建簡體中文、繁體中文、日本語、English 四種介面語言，依系統 locale 自動選擇，亦可透過 <code>--lang</code> 啟動參數強制指定。WebUI 與 Web 通知依所選語言在地化呈現。</p>
+      <p>內建簡體中文、繁體中文、日本語、English 四種介面語言，依系統 locale 自動選擇，亦可在設定中指定。WebUI 與 Web 通知依所選語言在地化呈現。</p>
       <div>
         <img src="https://img.shields.io/badge/語言-簡體中文-red?style=flat-square" alt="zh-CN">
         <img src="https://img.shields.io/badge/語言-繁體中文-blue?style=flat-square" alt="zh-TW">
@@ -384,7 +384,7 @@ graph TD
 </table>
 
 > [!TIP]
-> 啟動器支援 `--lang` 參數強制指定介面語言（`zh-CN` / `zh-TW` / `ja` / `en`），以及 `--skip-update` 跳過儲存庫更新、`--preview-crash` 預覽錯誤頁面等除錯參數。
+> 啟動器支援 `--start-minimized` 參數，可在啟動後最小化到托盤。
 
 > [!WARNING]
 > **macOS 使用者**：程式未經開發者簽署，首次開啟若報錯，請先在終端機執行 `xattr -dr com.apple.quarantine AzurPilot.app` 再啟動。
