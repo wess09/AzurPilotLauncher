@@ -1,5 +1,10 @@
 # 更新日志
 
+## 3.0.10 - 未发布
+
+- 更新下载源改为 CNB 与 GitCode 随机选一个优先、Cloudflare 与 EdgeOne 随机选一个兜底、GitHub 最终兜底；设置界面移除"国内源"表述。
+- 更新清单（stable.json）新增 `cnb_url` / `gitcode_url` 真实直链，改为单行发布并将 `sha256` 置于各平台末尾。
+
 ## 3.0.9 - 2026-11-19
 
 - 移除 Windows x64 内嵌的 WinDivert 报文级 TCP RST 拦截及其依赖、内嵌驱动、工具脚本与多语言文案；HTTP/3 优先、TLS 记录分片回退与断连恢复逻辑保持不变。
