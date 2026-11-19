@@ -814,136 +814,153 @@ jobs:
               --cache-control "public, max-age=31536000, immutable" \
               --only-show-errors
           done
-      - name: Upload launcher payloads to CNB release
+      # CNB 与 GitCode 两个源并行上传；每个源内部多个平台产物也并行。
+      # 任一上传失败都会被 wait 收集，最终让本 step 失败，不会静默发布半套产物。
+      - name: Upload launcher payloads to CNB and GitCode releases
         env:
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${CNB_TOKEN:-}" ]]; then
-            echo "::error::缺少 CNB_TOKEN，无法上传构建产物到 CNB" >&2
-            exit 1
-          fi
-
-          files=(launcher-updater-r2/azurpilot-*)
-          if [[ ! -e "${files[0]}" ]]; then
-            echo "::error::launcher-updater-r2 中没有构建产物" >&2
-            exit 1
-          fi
-
-          cli="${RUNNER_TEMP}/git-cnb"
-          curl -fsSL \
-            "https://cnb.cool/looc/git-cnb/-/releases/download/${CNB_CLI_VERSION}/git-cnb_linux_amd64" \
-            -o "${cli}"
-          chmod +x "${cli}"
-
-          auth=(-H "Authorization: token ${CNB_TOKEN}" -H "Accept: application/vnd.cnb.api+json")
-          release_json="$(curl -fsS "${auth[@]}" "${CNB_API}/${CNB_REPO}/-/releases/tags/${CNB_RELEASE_TAG}")"
-          release_id="$(jq -r '.id // empty' <<<"${release_json}")"
-          if [[ -z "${release_id}" ]]; then
-            echo "::error::CNB Release ${CNB_RELEASE_TAG} 不存在或无法读取" >&2
-            exit 1
-          fi
-
-          for file in "${files[@]}"; do
-            [[ -f "${file}" ]] || continue
-            name="$(basename "${file}")"
-            asset_id="$(jq -r --arg name "${name}" '.assets[]? | select(.name == $name) | .id' <<<"${release_json}" | head -n1)"
-            if [[ -n "${asset_id}" && "${asset_id}" != "null" ]]; then
-              echo "Deleting existing CNB asset: ${name} (${asset_id})"
-              curl -fsS -X DELETE "${auth[@]}" \
-                "${CNB_API}/${CNB_REPO}/-/releases/${release_id}/assets/${asset_id}" >/dev/null
-            fi
-            echo "Uploading to CNB: ${name}"
-            "${cli}" --repo="${CNB_REPO}" release asset-upload \
-              -t "${CNB_RELEASE_TAG}" -f "${file}"
-          done
-          if [[ "${GITHUB_REF_TYPE:-}" != "tag" ]]; then
-            # 金丝雀发布：官方源 302 到 CNB 同名资产，必须随每次构建更新。
-            # 上传后滚动清理旧金丝雀资产（保留本次与正式版命名的资产），
-            # 避免 CNB Release 上无限堆积历史构建。
-            declare -A keep=()
-            for file in "${files[@]}"; do
-              [[ -f "${file}" ]] && keep["$(basename "${file}")"]=1
-            done
-            jq -r '.assets[]?.name' <<<"${release_json}" | while IFS= read -r asset_name; do
-              [[ "${asset_name}" == *-canary.* ]] || continue
-              [[ -n "${keep[${asset_name}]:-}" ]] && continue
-              asset_id="$(jq -r --arg name "${asset_name}" '.assets[]? | select(.name == $name) | .id' <<<"${release_json}" | head -n1)"
-              if [[ -n "${asset_id}" && "${asset_id}" != "null" ]]; then
-                echo "Deleting superseded canary CNB asset: ${asset_name} (${asset_id})"
-                curl -fsS -X DELETE "${auth[@]}" \
-                  "${CNB_API}/${CNB_REPO}/-/releases/${release_id}/assets/${asset_id}" >/dev/null
-              fi
-            done
-          fi
-      - name: Upload launcher payloads to GitCode release
-        env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${GITCODE_TOKEN:-}" ]]; then
-            echo "::error::缺少 GITCODE_TOKEN，无法上传构建产物到 GitCode" >&2
-            exit 1
-          fi
-
           files=(launcher-updater-r2/azurpilot-*)
           if [[ ! -e "${files[0]}" ]]; then
             echo "::error::launcher-updater-r2 中没有构建产物" >&2
             exit 1
           fi
 
-          tag="${GITCODE_RELEASE_TAG}"
-          # 读取现有 Release；不存在则创建（与 CNB 固定 tag 不同，GitCode 需显式建）。
-          # 鉴权失败必须与“不存在”区分：无效 token 时 GitCode 返回 401，错误体没有
-          # tag_name，旧判断会误判为不存在，随后创建请求再次 401 并以 exit 22 失败。
-          release_resp="$(curl -sS --max-time 30 -w $'\n%{http_code}' \
-            "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}?access_token=${GITCODE_TOKEN}")"
-          release_code="$(tail -n1 <<<"${release_resp}")"
-          release_json="$(sed '$d' <<<"${release_resp}")"
-          if [[ "${release_code}" == "401" || "${release_code}" == "403" ]]; then
-            echo "::error::GitCode token 鉴权失败 (HTTP ${release_code})，请检查 GITCODE_TOKEN" >&2
-            exit 1
-          fi
-          if [[ "${release_code}" == "404" || -z "$(jq -r '.tag_name // empty' <<<"${release_json}")" ]]; then
-            echo "GitCode release ${tag} not found, creating it"
-            curl -fsS --max-time 30 -X POST \
-              "${GITCODE_API}/repos/${GITCODE_REPO}/releases?access_token=${GITCODE_TOKEN}" \
-              -H 'Content-Type: application/json' \
-              --data-raw "{\"tag_name\":\"${tag}\",\"name\":\"${tag}\",\"body\":\"Launcher payloads (rolling)\",\"target_commitish\":\"main\",\"release_status\":\"latest\"}" \
-              >/dev/null
-            release_json="$(curl -fsS --max-time 30 \
+          upload_cnb() {
+            if [[ -z "${CNB_TOKEN:-}" ]]; then
+              echo "::error::缺少 CNB_TOKEN，无法上传构建产物到 CNB" >&2
+              return 1
+            fi
+            local cli="${RUNNER_TEMP}/git-cnb"
+            curl -fsSL \
+              "https://cnb.cool/looc/git-cnb/-/releases/download/${CNB_CLI_VERSION}/git-cnb_linux_amd64" \
+              -o "${cli}"
+            chmod +x "${cli}"
+
+            local auth=(-H "Authorization: token ${CNB_TOKEN}" -H "Accept: application/vnd.cnb.api+json")
+            local release_json release_id
+            release_json="$(curl -fsS "${auth[@]}" "${CNB_API}/${CNB_REPO}/-/releases/tags/${CNB_RELEASE_TAG}")"
+            release_id="$(jq -r '.id // empty' <<<"${release_json}")"
+            if [[ -z "${release_id}" ]]; then
+              echo "::error::CNB Release ${CNB_RELEASE_TAG} 不存在或无法读取" >&2
+              return 1
+            fi
+
+            local pids=() file name asset_id
+            for file in "${files[@]}"; do
+              [[ -f "${file}" ]] || continue
+              name="$(basename "${file}")"
+              asset_id="$(jq -r --arg name "${name}" '.assets[]? | select(.name == $name) | .id' <<<"${release_json}" | head -n1)"
+              if [[ -n "${asset_id}" && "${asset_id}" != "null" ]]; then
+                echo "Deleting existing CNB asset: ${name} (${asset_id})"
+                curl -fsS -X DELETE "${auth[@]}" \
+                  "${CNB_API}/${CNB_REPO}/-/releases/${release_id}/assets/${asset_id}" >/dev/null
+              fi
+              (
+                echo "Uploading to CNB: ${name}"
+                "${cli}" --repo="${CNB_REPO}" release asset-upload \
+                  -t "${CNB_RELEASE_TAG}" -f "${file}"
+              ) &
+              pids+=($!)
+            done
+            for pid in "${pids[@]}"; do
+              wait "${pid}"
+            done
+
+            if [[ "${GITHUB_REF_TYPE:-}" != "tag" ]]; then
+              # 金丝雀发布：官方源 302 到 CNB 同名资产，必须随每次构建更新。
+              # 上传后滚动清理旧金丝雀资产（保留本次与正式版命名的资产），
+              # 避免 CNB Release 上无限堆积历史构建。
+              declare -A keep=()
+              for file in "${files[@]}"; do
+                [[ -f "${file}" ]] && keep["$(basename "${file}")"]=1
+              done
+              jq -r '.assets[]?.name' <<<"${release_json}" | while IFS= read -r asset_name; do
+                [[ "${asset_name}" == *-canary.* ]] || continue
+                [[ -n "${keep[${asset_name}]:-}" ]] && continue
+                asset_id="$(jq -r --arg name "${asset_name}" '.assets[]? | select(.name == $name) | .id' <<<"${release_json}" | head -n1)"
+                if [[ -n "${asset_id}" && "${asset_id}" != "null" ]]; then
+                  echo "Deleting superseded canary CNB asset: ${asset_name} (${asset_id})"
+                  curl -fsS -X DELETE "${auth[@]}" \
+                    "${CNB_API}/${CNB_REPO}/-/releases/${release_id}/assets/${asset_id}" >/dev/null
+                fi
+              done
+            fi
+          }
+
+          upload_gitcode() {
+            if [[ -z "${GITCODE_TOKEN:-}" ]]; then
+              echo "::error::缺少 GITCODE_TOKEN，无法上传构建产物到 GitCode" >&2
+              return 1
+            fi
+            local tag="${GITCODE_RELEASE_TAG}"
+            local release_resp release_code release_json
+            release_resp="$(curl -sS --max-time 30 -w $'\n%{http_code}' \
               "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}?access_token=${GITCODE_TOKEN}")"
-          fi
-
-          for file in "${files[@]}"; do
-            [[ -f "${file}" ]] || continue
-            name="$(basename "${file}")"
-            asset_id="$(jq -r --arg name "${name}" '.assets[]? | select(.name == $name and .type == "attach") | .id' <<<"${release_json}" | head -n1)"
-            if [[ -n "${asset_id}" && "${asset_id}" != "null" ]]; then
-              echo "Deleting existing GitCode asset: ${name} (${asset_id})"
-              curl -fsS --max-time 30 -X DELETE \
-                "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/attach_files/${asset_id}?access_token=${GITCODE_TOKEN}" \
-                >/dev/null || echo "WARN: could not delete old asset ${name}, continuing"
+            release_code="$(tail -n1 <<<"${release_resp}")"
+            release_json="$(sed '$d' <<<"${release_resp}")"
+            if [[ "${release_code}" == "401" || "${release_code}" == "403" ]]; then
+              echo "::error::GitCode token 鉴权失败 (HTTP ${release_code})，请检查 GITCODE_TOKEN" >&2
+              return 1
+            fi
+            if [[ "${release_code}" == "404" || -z "$(jq -r '.tag_name // empty' <<<"${release_json}")" ]]; then
+              echo "GitCode release ${tag} not found, creating it"
+              curl -fsS --max-time 30 -X POST \
+                "${GITCODE_API}/repos/${GITCODE_REPO}/releases?access_token=${GITCODE_TOKEN}" \
+                -H 'Content-Type: application/json' \
+                --data-raw "{\"tag_name\":\"${tag}\",\"name\":\"${tag}\",\"body\":\"Launcher payloads (rolling)\",\"target_commitish\":\"main\",\"release_status\":\"latest\"}" \
+                >/dev/null
+              release_json="$(curl -fsS --max-time 30 \
+                "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}?access_token=${GITCODE_TOKEN}")"
             fi
 
-            echo "Uploading to GitCode: ${name}"
-            # 第一步：取预签名上传地址与请求头。
-            upload_json="$(curl -fsS --max-time 30 \
-              "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/upload_url?access_token=${GITCODE_TOKEN}&file_name=${name}")"
-            put_url="$(jq -r '.url' <<<"${upload_json}")"
-            if [[ -z "${put_url}" || "${put_url}" == "null" ]]; then
-              echo "::error::GitCode 未返回上传地址: ${upload_json}" >&2
-              exit 1
-            fi
-            # 第二步：用返回的 headers 原样 PUT 文件二进制。
-            curl -fsS --max-time 300 -X PUT "${put_url}" \
-              -H "x-obs-meta-project-id: $(jq -r '.headers["x-obs-meta-project-id"]' <<<"${upload_json}")" \
-              -H "x-obs-acl: $(jq -r '.headers["x-obs-acl"]' <<<"${upload_json}")" \
-              -H "x-obs-callback: $(jq -r '.headers["x-obs-callback"]' <<<"${upload_json}")" \
-              -H "Content-Type: $(jq -r '.headers["Content-Type"]' <<<"${upload_json}")" \
-              --data-binary "@${file}" >/dev/null
-          done
+            local pids=() file name asset_id
+            for file in "${files[@]}"; do
+              [[ -f "${file}" ]] || continue
+              name="$(basename "${file}")"
+              asset_id="$(jq -r --arg name "${name}" '.assets[]? | select(.name == $name and .type == "attach") | .id' <<<"${release_json}" | head -n1)"
+              (
+                if [[ -n "${asset_id}" && "${asset_id}" != "null" ]]; then
+                  echo "Deleting existing GitCode asset: ${name} (${asset_id})"
+                  curl -fsS --max-time 30 -X DELETE \
+                    "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/attach_files/${asset_id}?access_token=${GITCODE_TOKEN}" \
+                    >/dev/null || echo "WARN: could not delete old asset ${name}, continuing"
+                fi
+                echo "Uploading to GitCode: ${name}"
+                # 第一步：取预签名上传地址与请求头。
+                upload_json="$(curl -fsS --max-time 30 \
+                  "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/upload_url?access_token=${GITCODE_TOKEN}&file_name=${name}")"
+                put_url="$(jq -r '.url' <<<"${upload_json}")"
+                if [[ -z "${put_url}" || "${put_url}" == "null" ]]; then
+                  echo "::error::GitCode 未返回上传地址: ${upload_json}" >&2
+                  exit 1
+                fi
+                # 第二步：用返回的 headers 原样 PUT 文件二进制。
+                curl -fsS --max-time 300 -X PUT "${put_url}" \
+                  -H "x-obs-meta-project-id: $(jq -r '.headers["x-obs-meta-project-id"]' <<<"${upload_json}")" \
+                  -H "x-obs-acl: $(jq -r '.headers["x-obs-acl"]' <<<"${upload_json}")" \
+                  -H "x-obs-callback: $(jq -r '.headers["x-obs-callback"]' <<<"${upload_json}")" \
+                  -H "Content-Type: $(jq -r '.headers["Content-Type"]' <<<"${upload_json}")" \
+                  --data-binary "@${file}" >/dev/null
+              ) &
+              pids+=($!)
+            done
+            for pid in "${pids[@]}"; do
+              wait "${pid}"
+            done
+          }
+
+          upload_cnb &
+          cnb_pid=$!
+          upload_gitcode &
+          gitcode_pid=$!
+          rc=0
+          wait "${cnb_pid}" || rc=1
+          wait "${gitcode_pid}" || rc=1
+          exit "${rc}"
       # stable.json 以静态资源整体发布到 Worker（cf-worker/ 中没有 main 脚本），
       # 命中资源的请求不执行 Worker，不消耗 Workers 请求配额。
       - name: Publish stable.json to Cloudflare Worker
