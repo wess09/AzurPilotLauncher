@@ -887,9 +887,19 @@ jobs:
           fi
 
           tag="${GITCODE_RELEASE_TAG}"
-          # 读取现有 Release，拿到同名附件 id 以便覆盖。
-          release_json="$(curl -fsS --max-time 30 \
+          # 读取现有 Release；不存在则创建（与 CNB 固定 tag 不同，GitCode 需显式建）。
+          release_json="$(curl -sS --max-time 30 \
             "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}?access_token=${GITCODE_TOKEN}")"
+          if [[ "$(jq -r '.error_code // empty' <<<"${release_json}")" == "404" || -z "$(jq -r '.tag_name // empty' <<<"${release_json}")" ]]; then
+            echo "GitCode release ${tag} not found, creating it"
+            curl -fsS --max-time 30 -X POST \
+              "${GITCODE_API}/repos/${GITCODE_REPO}/releases?access_token=${GITCODE_TOKEN}" \
+              -H 'Content-Type: application/json' \
+              --data-raw "{\"tag_name\":\"${tag}\",\"name\":\"${tag}\",\"body\":\"Launcher payloads (rolling)\",\"target_commitish\":\"main\",\"release_status\":\"latest\"}" \
+              >/dev/null
+            release_json="$(curl -fsS --max-time 30 \
+              "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}?access_token=${GITCODE_TOKEN}")"
+          fi
 
           for file in "${files[@]}"; do
             [[ -f "${file}" ]] || continue
