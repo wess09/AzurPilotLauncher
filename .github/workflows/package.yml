@@ -896,6 +896,8 @@ jobs:
               echo "::error::缺少 GITCODE_TOKEN，无法上传构建产物到 GitCode" >&2
               return 1
             fi
+            # GITCODE_TOKEN 必须是纯 token 值：配置时用 gh secret set --body，
+            # 不要用 PowerShell 管道写入，否则尾部换行会让 GitCode 返回 401。
             local tag="${GITCODE_RELEASE_TAG}"
             local release_resp release_code release_json
             release_resp="$(curl -sS --max-time 30 -w $'\n%{http_code}' \
