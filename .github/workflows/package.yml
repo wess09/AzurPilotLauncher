@@ -895,9 +895,17 @@ jobs:
 
           tag="${GITCODE_RELEASE_TAG}"
           # 读取现有 Release；不存在则创建（与 CNB 固定 tag 不同，GitCode 需显式建）。
-          release_json="$(curl -sS --max-time 30 \
+          # 鉴权失败必须与“不存在”区分：无效 token 时 GitCode 返回 401，错误体没有
+          # tag_name，旧判断会误判为不存在，随后创建请求再次 401 并以 exit 22 失败。
+          release_resp="$(curl -sS --max-time 30 -w $'\n%{http_code}' \
             "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}?access_token=${GITCODE_TOKEN}")"
-          if [[ "$(jq -r '.error_code // empty' <<<"${release_json}")" == "404" || -z "$(jq -r '.tag_name // empty' <<<"${release_json}")" ]]; then
+          release_code="$(tail -n1 <<<"${release_resp}")"
+          release_json="$(sed '$d' <<<"${release_resp}")"
+          if [[ "${release_code}" == "401" || "${release_code}" == "403" ]]; then
+            echo "::error::GitCode token 鉴权失败 (HTTP ${release_code})，请检查 GITCODE_TOKEN" >&2
+            exit 1
+          fi
+          if [[ "${release_code}" == "404" || -z "$(jq -r '.tag_name // empty' <<<"${release_json}")" ]]; then
             echo "GitCode release ${tag} not found, creating it"
             curl -fsS --max-time 30 -X POST \
               "${GITCODE_API}/repos/${GITCODE_REPO}/releases?access_token=${GITCODE_TOKEN}" \
