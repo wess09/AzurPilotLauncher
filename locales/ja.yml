@@ -308,7 +308,7 @@ launcher:
   channel_stable: "正式版"
   channel_canary: "カナリア版（毎回のビルド）"
   settings_update_source: "アップデートのダウンロード元"
-  update_source_auto: "自動（CNB / GitCode 優先、Cloudflare / EdgeOne フォールバック）"
+  update_source_auto: "自動（Cloudflare → CNB → GitCode → EdgeOne → GitHub、失敗時に自動切替）"
   update_source_official: "EdgeOne"
   update_source_github: "GitHub"
   update_source_cloudflare: "Cloudflare CDN"

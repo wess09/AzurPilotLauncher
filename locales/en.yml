@@ -308,7 +308,7 @@ launcher:
   channel_stable: "Stable"
   channel_canary: "Canary (every build)"
   settings_update_source: "Update download source"
-  update_source_auto: "Auto (CNB / GitCode first, Cloudflare / EdgeOne fallback)"
+  update_source_auto: "Auto (Cloudflare → CNB → GitCode → EdgeOne → GitHub, auto-fallback on failure)"
   update_source_official: "EdgeOne"
   update_source_github: "GitHub"
   update_source_cloudflare: "Cloudflare CDN"

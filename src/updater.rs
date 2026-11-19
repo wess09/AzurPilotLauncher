@@ -45,8 +45,9 @@ const LAUNCHER_UPDATE_BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x
 const LAUNCHER_UPDATE_MAX_CONNECTIONS: usize = 8;
 /// 并行分片的最小字节数：载荷不足单片时退回单连接顺序下载。
 const LAUNCHER_UPDATE_MIN_CHUNK_BYTES: u64 = 1024 * 1024;
-/// 非限流的临时错误先重试，再交给下载源回退；429 始终等待用户取消或恢复。
-const LAUNCHER_UPDATE_MAX_TRANSIENT_RETRIES: usize = 8;
+/// 非限流的临时错误（timeout / 连接重置 / 5xx / 4xx）在同一源内只重试一次，
+/// 随后立即交给下载源回退到下一个地址；429 限流仍按 Retry-After 等待。
+const LAUNCHER_UPDATE_MAX_TRANSIENT_RETRIES: usize = 1;
 const LAUNCHER_UPDATE_MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
 /// 更新下载占用 splash 进度条的起始百分比（8 之前留给更新前的检查）。
 const LAUNCHER_UPDATE_DOWNLOAD_PROGRESS_START: u8 = 8;
@@ -172,36 +173,16 @@ impl UpdateSource {
                 push(github);
             }
             UpdateSource::Auto => {
-                // CNB / GitCode 随机选一个作为主源，另一个兜底。
-                if Self::coin_flip() {
-                    push(cnb);
-                    push(gitcode);
-                } else {
-                    push(gitcode);
-                    push(cnb);
-                }
-                // Cloudflare / EdgeOne 随机选一个兜底，不可用则用另一个。
-                if Self::coin_flip() {
-                    push(cloudflare);
-                    push(Some(url));
-                } else {
-                    push(Some(url));
-                    push(cloudflare);
-                }
-                // GitHub 始终作为最终兜底。
+                // 固定优先级：Cloudflare → CNB → GitCode → EdgeOne → GitHub。
+                // 4xx/5xx、timeout、连接重置等错误在单源内快速失败后即回退下一源。
+                push(cloudflare);
+                push(cnb);
+                push(gitcode);
+                push(Some(url));
                 push(github);
             }
         }
         ordered
-    }
-
-    /// 无依赖的轻量二选一：用当前时间纳秒低位，避免引入随机数 crate。
-    fn coin_flip() -> bool {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0);
-        nanos & 1 == 1
     }
 }
 
@@ -652,32 +633,21 @@ mod source_tests {
         assert_eq!(order(UpdateSource::Gitcode)[0], gitcode);
     }
 
-    /// 自动模式：CNB/GitCode 是前两位（顺序随机），Cloudflare/EdgeOne 是
-    /// 第三四位（顺序随机），GitHub 最终兜底；全部地址恰好出现一次。
+    /// 自动模式固定优先级：Cloudflare → CNB → GitCode → EdgeOne → GitHub。
     #[test]
-    fn auto_order_uses_both_domestic_sources_then_cdn_then_github() {
+    fn auto_order_is_cloudflare_cnb_gitcode_edgeone_github() {
         let url = "https://launcher-download.azurpilot.com/a.exe";
         let github = "https://github.com/wess09/AzurPilotLauncher/releases/download/v3/a.exe";
         let cloudflare = "https://launcher-cloudflare-cdn-download.azurpilot.com/a.exe";
         let cnb = "https://cnb.cool/AzurPilot/AzurPilotLauncher/-/releases/download/1.0.0/a.exe";
         let gitcode = "https://gitcode.com/ddl2/assets/releases/download/1.0.0/a.exe";
-        for _ in 0..16 {
-            let ordered =
-                UpdateSource::Auto.order_payload_urls(url, Some(github), Some(cloudflare), Some(cnb), Some(gitcode));
-            assert_eq!(ordered.len(), 5, "all five sources must be present: {ordered:?}");
-            assert_eq!(ordered.iter().copied().collect::<std::collections::HashSet<_>>().len(), 5);
-            assert!(
-                (ordered[0] == cnb && ordered[1] == gitcode)
-                    || (ordered[0] == gitcode && ordered[1] == cnb),
-                "first two must be CNB/GitCode: {ordered:?}"
-            );
-            assert!(
-                (ordered[2] == cloudflare && ordered[3] == url)
-                    || (ordered[2] == url && ordered[3] == cloudflare),
-                "next two must be Cloudflare/EdgeOne: {ordered:?}"
-            );
-            assert_eq!(ordered[4], github, "GitHub must be the final fallback");
-        }
+        let ordered =
+            UpdateSource::Auto.order_payload_urls(url, Some(github), Some(cloudflare), Some(cnb), Some(gitcode));
+        assert_eq!(
+            ordered,
+            vec![cloudflare, cnb, gitcode, url, github],
+            "fixed auto priority: Cloudflare, CNB, GitCode, EdgeOne(url), GitHub"
+        );
     }
 }
 

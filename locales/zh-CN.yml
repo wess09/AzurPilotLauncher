@@ -308,7 +308,7 @@ launcher:
   channel_stable: "正式版"
   channel_canary: "金丝雀版（每次构建）"
   settings_update_source: "更新下载源"
-  update_source_auto: "自动（CNB / GitCode 优先，Cloudflare / EdgeOne 兜底）"
+  update_source_auto: "自动（Cloudflare → CNB → GitCode → EdgeOne → GitHub，失败自动切换）"
   update_source_official: "EdgeOne"
   update_source_github: "GitHub"
   update_source_cloudflare: "Cloudflare CDN"
