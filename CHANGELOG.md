@@ -1,9 +1,10 @@
 # 更新日志
 
-## 3.0.10 - 未发布
+## 3.1.0 - 2026-11-20
 
-- 更新下载源自动模式按 Cloudflare → CNB → GitCode → EdgeOne → GitHub 固定顺序尝试，4xx/5xx、超时、连接重置等失败时自动切换下一源；设置界面移除"国内源"表述，新增 CNB / GitCode 显式选项。
+- 更新下载源自动模式按 Cloudflare → CNB → GitCode → EdgeOne → GitHub 固定顺序尝试，4xx/5xx、超时、连接重置等失败时自动切换下一源；设置界面移除"国内源"表述，新增 CNB / GitCode 显式选项，自动文案简化为"自动"。
 - 更新清单（stable.json）新增 `cnb_url` / `gitcode_url` 真实直链，改为单行发布并将 `sha256` 置于各平台末尾。
+- 发布流程将 CNB 与 GitCode 产物上传并行化，并区分 GitCode token 鉴权失败与 Release 不存在，避免误判导致发布中断。
 
 ## 3.0.9 - 2026-11-19
 
