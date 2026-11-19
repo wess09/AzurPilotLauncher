@@ -51,4 +51,5 @@ if __name__ == '__main__':
                    canary=json.loads(args.canary.read_text(encoding='utf-8')) if args.canary else None,
                    runtime=runtime)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+    # 单行 minified 发布：减少清单传输体积；启动器按 JSON 解析，不依赖缩进。
+    args.output.write_text(json.dumps(result, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')

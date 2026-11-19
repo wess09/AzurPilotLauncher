@@ -616,6 +616,10 @@ jobs:
                   if payload.get("gitcode_url") != gitcode:
                       payload["gitcode_url"] = gitcode
                       changed += 1
+                  # sha256 统一放到最后：摘出再插回，保证与其他 URL 字段顺序一致。
+                  digest = payload.pop("sha256", None)
+                  if digest is not None:
+                      payload["sha256"] = digest
                   print(f"  {key}: cnb_url={cnb} gitcode_url={gitcode}")
               return changed
 
@@ -623,8 +627,8 @@ jobs:
           canary = manifest.get("canary")
           if canary:
               total += fix(canary.get("platforms"), canary.get("version"))
-          path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-          print(f"Added {total} launcher direct url field(s)")
+          path.write_text(json.dumps(manifest, ensure_ascii=False, separators=(',', ':')), encoding="utf-8")
+          print(f"Added {total} launcher direct url field(s); wrote minified JSON")
           PY
       - name: Publish stable.json to Cloudflare Worker
         env:
@@ -782,7 +786,7 @@ jobs:
               "platforms": platforms,
           }
           (target_root / "stable.json").write_text(
-              json.dumps(manifest, ensure_ascii=False, indent=2),
+              json.dumps(manifest, ensure_ascii=False, separators=(',', ':')),
               encoding="utf-8",
           )
           print(f"Publishing launcher manifest {version} ({len(platforms)} platforms)")
