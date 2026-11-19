@@ -92,21 +92,25 @@ pub(crate) enum UpdateChannel {
     Canary,
 }
 
-/// 更新下载源：决定载荷下载地址（url / github_url / cloudflare_url）
-/// 的尝试顺序；清单始终从官方域名拉取，一份 json 包含全部源地址。
+/// 更新下载源：决定载荷下载地址的尝试顺序；清单始终从官方域名拉取，
+/// 一份 json 包含全部源地址（EdgeOne / CNB / GitCode / Cloudflare / GitHub）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum UpdateSource {
-    /// 自动（默认）：国内（简体中文+北京时间）官方源优先；海外
-    /// GitHub 优先，不可达时回退 Cloudflare CDN，再回退官方源。
+    /// 自动（默认）：CNB 与 GitCode 随机选一个优先，另一个兜底；
+    /// 再随机选 Cloudflare 或 EdgeOne 兜底，不可用则用另一个；最后 GitHub。
     #[default]
     Auto,
-    /// 官方源：launcher-download.azurpilot.com（国内 CNB 加速）。
+    /// EdgeOne：launcher-download.azurpilot.com。
     Official,
     /// GitHub Release（海外）。
     Github,
     /// Cloudflare CDN 国际源。
     Cloudflare,
+    /// CNB Release 真实直链。
+    Cnb,
+    /// GitCode Release 真实直链。
+    Gitcode,
 }
 
 impl UpdateSource {
@@ -116,60 +120,88 @@ impl UpdateSource {
         url: &'a str,
         github_url: Option<&'a str>,
         cloudflare_url: Option<&'a str>,
+        cnb_url: Option<&'a str>,
+        gitcode_url: Option<&'a str>,
     ) -> Vec<&'a str> {
-        let mut official = vec![url];
         let github = github_url.filter(|candidate| *candidate != url);
         let cloudflare = cloudflare_url.filter(|candidate| *candidate != url);
+        let cnb = cnb_url.filter(|candidate| *candidate != url);
+        let gitcode = gitcode_url.filter(|candidate| *candidate != url);
+        let mut ordered: Vec<&'a str> = Vec::new();
+        let mut push = |candidate: Option<&'a str>| {
+            if let Some(value) = candidate {
+                if !ordered.contains(&value) {
+                    ordered.push(value);
+                }
+            }
+        };
         match self {
-            UpdateSource::Official => UpdateSource::push_all(official, [github, cloudflare]),
+            UpdateSource::Official => {
+                push(Some(url));
+                push(github);
+                push(cloudflare);
+                push(cnb);
+                push(gitcode);
+            }
             UpdateSource::Github => {
-                let mut ordered = Vec::new();
-                if let Some(candidate) = github {
-                    ordered.push(candidate);
-                }
-                ordered.push(url);
-                if let Some(candidate) = cloudflare {
-                    ordered.push(candidate);
-                }
-                ordered
+                push(github);
+                push(Some(url));
+                push(cloudflare);
+                push(cnb);
+                push(gitcode);
             }
             UpdateSource::Cloudflare => {
-                let mut ordered = Vec::new();
-                if let Some(candidate) = cloudflare {
-                    ordered.push(candidate);
-                }
-                ordered.push(url);
-                if let Some(candidate) = github {
-                    ordered.push(candidate);
-                }
-                ordered
+                push(cloudflare);
+                push(Some(url));
+                push(github);
+                push(cnb);
+                push(gitcode);
+            }
+            UpdateSource::Cnb => {
+                push(cnb);
+                push(gitcode);
+                push(Some(url));
+                push(cloudflare);
+                push(github);
+            }
+            UpdateSource::Gitcode => {
+                push(gitcode);
+                push(cnb);
+                push(Some(url));
+                push(cloudflare);
+                push(github);
             }
             UpdateSource::Auto => {
-                // 与组件下载源同一判定：简体中文且北京时间视为国内环境。
-                if crate::sources::DownloadSource::Auto.prefer_cnb() {
-                    UpdateSource::push_all(official, [github, cloudflare])
+                // CNB / GitCode 随机选一个作为主源，另一个兜底。
+                if Self::coin_flip() {
+                    push(cnb);
+                    push(gitcode);
                 } else {
-                    official.clear();
-                    if let Some(candidate) = github {
-                        official.push(candidate);
-                    }
-                    if let Some(candidate) = cloudflare {
-                        official.push(candidate);
-                    }
-                    official.push(url);
-                    official
+                    push(gitcode);
+                    push(cnb);
                 }
+                // Cloudflare / EdgeOne 随机选一个兜底，不可用则用另一个。
+                if Self::coin_flip() {
+                    push(cloudflare);
+                    push(Some(url));
+                } else {
+                    push(Some(url));
+                    push(cloudflare);
+                }
+                // GitHub 始终作为最终兜底。
+                push(github);
             }
         }
+        ordered
     }
 
-    fn push_all<'a>(mut urls: Vec<&'a str>, extra: [Option<&'a str>; 2]) -> Vec<&'a str> {
-        for candidate in extra.into_iter().flatten() {
-            if !urls.contains(&candidate) {
-                urls.push(candidate);
-            }
-        }
-        urls
+    /// 无依赖的轻量二选一：用当前时间纳秒低位，避免引入随机数 crate。
+    fn coin_flip() -> bool {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        nanos & 1 == 1
     }
 }
 
@@ -184,6 +216,12 @@ struct LauncherUpdatePlatform {
     /// Cloudflare CDN 的同一份载荷；兼容没有此字段的旧清单。
     #[serde(default)]
     cloudflare_url: Option<String>,
+    /// CNB Release 真实直链；兼容没有此字段的旧清单。
+    #[serde(default)]
+    cnb_url: Option<String>,
+    /// GitCode Release 真实直链；兼容没有此字段的旧清单。
+    #[serde(default)]
+    gitcode_url: Option<String>,
     /// 载荷的 SHA-256 十六进制摘要，下载后用于完整性校验。
     sha256: String,
 }
@@ -511,9 +549,14 @@ fn select_launcher_update(
     };
 
     validate_launcher_update_payload(&platform.url, &platform.sha256)?;
-    for url in [&platform.github_url, &platform.cloudflare_url]
-        .into_iter()
-        .flatten()
+    for url in [
+        &platform.github_url,
+        &platform.cloudflare_url,
+        &platform.cnb_url,
+        &platform.gitcode_url,
+    ]
+    .into_iter()
+    .flatten()
     {
         validate_launcher_update_payload(url, &platform.sha256)?;
     }
@@ -538,6 +581,8 @@ mod source_tests {
             "url": "https://launcher-download.azurpilot.com/a.exe",
             "github_url": "https://github.com/wess09/AzurPilotLauncher/releases/download/v3/a.exe",
             "cloudflare_url": "https://launcher-cloudflare-cdn-download.azurpilot.com/a.exe",
+            "cnb_url": "https://cnb.cool/AzurPilot/AzurPilotLauncher/-/releases/download/1.0.0/a.exe",
+            "gitcode_url": "https://gitcode.com/ddl2/assets/releases/download/1.0.0/a.exe",
             "sha256": "0".repeat(64)
         }))
         .unwrap();
@@ -563,6 +608,8 @@ mod source_tests {
         .unwrap();
         assert!(old.github_url.is_none());
         assert!(old.cloudflare_url.is_none());
+        assert!(old.cnb_url.is_none());
+        assert!(old.gitcode_url.is_none());
     }
     #[test]
     fn cancelling_primary_does_not_start_github_request() {
@@ -570,6 +617,8 @@ mod source_tests {
             url: "https://example.com/a".into(),
             github_url: Some("https://github.com/a".into()),
             cloudflare_url: None,
+            cnb_url: None,
+            gitcode_url: None,
             sha256: "0".repeat(64),
         };
         let cancel = AtomicBool::new(false);
@@ -585,27 +634,50 @@ mod source_tests {
         assert_eq!(calls, 1);
     }
 
-    /// 下载源排序：GitHub / Cloudflare / 海外自动按各自优先级排列载荷地址。
+    /// 下载源排序：各显式源按各自优先级排列载荷地址。
     #[test]
     fn payload_url_order_follows_update_source() {
         let url = "https://launcher-download.azurpilot.com/a.exe";
         let github = "https://github.com/wess09/AzurPilotLauncher/releases/download/v3/a.exe";
         let cloudflare = "https://launcher-cloudflare-cdn-download.azurpilot.com/a.exe";
-        let order =
-            |source: UpdateSource| source.order_payload_urls(url, Some(github), Some(cloudflare));
-        assert_eq!(order(UpdateSource::Official), vec![url, github, cloudflare]);
-        assert_eq!(order(UpdateSource::Github), vec![github, url, cloudflare]);
-        assert_eq!(
-            order(UpdateSource::Cloudflare),
-            vec![cloudflare, url, github]
-        );
-        // 自动模式按地区分流（本机与 CI 的地区不同），只断言全部地址
-        // 都在候选里且无重复。
-        let auto = order(UpdateSource::Auto);
-        assert_eq!(auto.len(), 3);
-        assert!(auto.contains(&url));
-        assert!(auto.contains(&github));
-        assert!(auto.contains(&cloudflare));
+        let cnb = "https://cnb.cool/AzurPilot/AzurPilotLauncher/-/releases/download/1.0.0/a.exe";
+        let gitcode = "https://gitcode.com/ddl2/assets/releases/download/1.0.0/a.exe";
+        let order = |source: UpdateSource| {
+            source.order_payload_urls(url, Some(github), Some(cloudflare), Some(cnb), Some(gitcode))
+        };
+        assert_eq!(order(UpdateSource::Official)[0], url);
+        assert_eq!(order(UpdateSource::Github)[0], github);
+        assert_eq!(order(UpdateSource::Cloudflare)[0], cloudflare);
+        assert_eq!(order(UpdateSource::Cnb)[0], cnb);
+        assert_eq!(order(UpdateSource::Gitcode)[0], gitcode);
+    }
+
+    /// 自动模式：CNB/GitCode 是前两位（顺序随机），Cloudflare/EdgeOne 是
+    /// 第三四位（顺序随机），GitHub 最终兜底；全部地址恰好出现一次。
+    #[test]
+    fn auto_order_uses_both_domestic_sources_then_cdn_then_github() {
+        let url = "https://launcher-download.azurpilot.com/a.exe";
+        let github = "https://github.com/wess09/AzurPilotLauncher/releases/download/v3/a.exe";
+        let cloudflare = "https://launcher-cloudflare-cdn-download.azurpilot.com/a.exe";
+        let cnb = "https://cnb.cool/AzurPilot/AzurPilotLauncher/-/releases/download/1.0.0/a.exe";
+        let gitcode = "https://gitcode.com/ddl2/assets/releases/download/1.0.0/a.exe";
+        for _ in 0..16 {
+            let ordered =
+                UpdateSource::Auto.order_payload_urls(url, Some(github), Some(cloudflare), Some(cnb), Some(gitcode));
+            assert_eq!(ordered.len(), 5, "all five sources must be present: {ordered:?}");
+            assert_eq!(ordered.iter().copied().collect::<std::collections::HashSet<_>>().len(), 5);
+            assert!(
+                (ordered[0] == cnb && ordered[1] == gitcode)
+                    || (ordered[0] == gitcode && ordered[1] == cnb),
+                "first two must be CNB/GitCode: {ordered:?}"
+            );
+            assert!(
+                (ordered[2] == cloudflare && ordered[3] == url)
+                    || (ordered[2] == url && ordered[3] == cloudflare),
+                "next two must be Cloudflare/EdgeOne: {ordered:?}"
+            );
+            assert_eq!(ordered[4], github, "GitHub must be the final fallback");
+        }
     }
 }
 
@@ -650,6 +722,8 @@ fn download_from_sources(
         &payload.url,
         payload.github_url.as_deref(),
         payload.cloudflare_url.as_deref(),
+        payload.cnb_url.as_deref(),
+        payload.gitcode_url.as_deref(),
     );
     for url in sources {
         crate::launcher::ensure_not_cancelled(cancel)?;

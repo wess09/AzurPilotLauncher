@@ -676,6 +676,11 @@ jobs:
       CNB_REPO: AzurPilot/AzurPilotLauncher
       CNB_RELEASE_TAG: "1.0.0"
       CNB_CLI_VERSION: "1.2.3"
+      # GitCode Release 固定使用 1.0.0；与 CNB 一样按同名资产滚动覆盖。
+      # cnb_url / gitcode_url 写真实直链（不经 launcher-download 302）。
+      GITCODE_API: https://api.gitcode.com/api/v5
+      GITCODE_REPO: ddl2/assets
+      GITCODE_RELEASE_TAG: "1.0.0"
       # 固定 Wrangler 版本，避免 CI 行为随 latest 漂移。
       WRANGLER_VERSION: "4.151.1"
     steps:
@@ -706,6 +711,8 @@ jobs:
           RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'canary' }}
           # CDN 域绑定 R2 桶根，载荷键为 updata/{version}/{name}（R2_PREFIX）。
           CLOUDFLARE_CDN_BASE_URL: https://launcher-cloudflare-cdn-download.azurpilot.com
+          CNB_BASE_URL: https://cnb.cool/AzurPilot/AzurPilotLauncher/-/releases/download/1.0.0
+          GITCODE_BASE_URL: https://gitcode.com/ddl2/assets/releases/download/1.0.0
         run: |
           python - <<'PY'
           import hashlib
@@ -759,6 +766,9 @@ jobs:
                   "url": f"{base_url}/{os.environ['R2_PREFIX'].strip('/')}/{version}/{dest_name}",
                   "github_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{release_tag}/{dest_name}",
                   "cloudflare_url": f"{os.environ['CLOUDFLARE_CDN_BASE_URL'].rstrip('/')}/{os.environ['R2_PREFIX'].strip('/')}/{version}/{dest_name}",
+                  # CNB / GitCode 真实直链（不走 launcher-download 302）。
+                  "cnb_url": f"{os.environ['CNB_BASE_URL'].rstrip('/')}/{dest_name}",
+                  "gitcode_url": f"{os.environ['GITCODE_BASE_URL'].rstrip('/')}/{dest_name}",
                   "sha256": digest,
               }
 
@@ -859,6 +869,56 @@ jobs:
               fi
             done
           fi
+      - name: Upload launcher payloads to GitCode release
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GITCODE_TOKEN:-}" ]]; then
+            echo "::error::缺少 GITCODE_TOKEN，无法上传构建产物到 GitCode" >&2
+            exit 1
+          fi
+
+          files=(launcher-updater-r2/azurpilot-*)
+          if [[ ! -e "${files[0]}" ]]; then
+            echo "::error::launcher-updater-r2 中没有构建产物" >&2
+            exit 1
+          fi
+
+          tag="${GITCODE_RELEASE_TAG}"
+          # 读取现有 Release，拿到同名附件 id 以便覆盖。
+          release_json="$(curl -fsS --max-time 30 \
+            "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}?access_token=${GITCODE_TOKEN}")"
+
+          for file in "${files[@]}"; do
+            [[ -f "${file}" ]] || continue
+            name="$(basename "${file}")"
+            asset_id="$(jq -r --arg name "${name}" '.assets[]? | select(.name == $name and .type == "attach") | .id' <<<"${release_json}" | head -n1)"
+            if [[ -n "${asset_id}" && "${asset_id}" != "null" ]]; then
+              echo "Deleting existing GitCode asset: ${name} (${asset_id})"
+              curl -fsS --max-time 30 -X DELETE \
+                "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/attach_files/${asset_id}?access_token=${GITCODE_TOKEN}" \
+                >/dev/null || echo "WARN: could not delete old asset ${name}, continuing"
+            fi
+
+            echo "Uploading to GitCode: ${name}"
+            # 第一步：取预签名上传地址与请求头。
+            upload_json="$(curl -fsS --max-time 30 \
+              "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/upload_url?access_token=${GITCODE_TOKEN}&file_name=${name}")"
+            put_url="$(jq -r '.url' <<<"${upload_json}")"
+            if [[ -z "${put_url}" || "${put_url}" == "null" ]]; then
+              echo "::error::GitCode 未返回上传地址: ${upload_json}" >&2
+              exit 1
+            fi
+            # 第二步：用返回的 headers 原样 PUT 文件二进制。
+            curl -fsS --max-time 300 -X PUT "${put_url}" \
+              -H "x-obs-meta-project-id: $(jq -r '.headers["x-obs-meta-project-id"]' <<<"${upload_json}")" \
+              -H "x-obs-acl: $(jq -r '.headers["x-obs-acl"]' <<<"${upload_json}")" \
+              -H "x-obs-callback: $(jq -r '.headers["x-obs-callback"]' <<<"${upload_json}")" \
+              -H "Content-Type: $(jq -r '.headers["Content-Type"]' <<<"${upload_json}")" \
+              --data-binary "@${file}" >/dev/null
+          done
       # stable.json 以静态资源整体发布到 Worker（cf-worker/ 中没有 main 脚本），
       # 命中资源的请求不执行 Worker，不消耗 Workers 请求配额。
       - name: Publish stable.json to Cloudflare Worker

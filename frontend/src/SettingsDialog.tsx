@@ -67,7 +67,10 @@ export function SettingsDialog({
   channelStableLabel: string;
   channelCanaryLabel: string;
   updateSourceLabel: string;
-  updateSourceLabels: Record<"auto" | "official" | "github" | "cloudflare", string>;
+  updateSourceLabels: Record<
+    "auto" | "official" | "github" | "cloudflare" | "cnb" | "gitcode",
+    string
+  >;
   launchOnStartupLabel: string;
   autoStartServiceLabel: string;
   keepWebviewOnTrayLabel: string;
@@ -211,19 +214,28 @@ export function SettingsDialog({
                       void update({
                         updateSource: (data.optionValue === "official" ||
                           data.optionValue === "github" ||
-                          data.optionValue === "cloudflare"
+                          data.optionValue === "cloudflare" ||
+                          data.optionValue === "cnb" ||
+                          data.optionValue === "gitcode"
                           ? data.optionValue
                           : "auto") as LauncherSettings["updateSource"],
                       })
                     }
                   >
-                    {(["auto", "official", "github", "cloudflare"] as const).map(
-                      (value) => (
-                        <Option key={value} value={value}>
-                          {updateSourceLabels[value]}
-                        </Option>
-                      ),
-                    )}
+                    {(
+                      [
+                        "auto",
+                        "cnb",
+                        "gitcode",
+                        "official",
+                        "cloudflare",
+                        "github",
+                      ] as const
+                    ).map((value) => (
+                      <Option key={value} value={value}>
+                        {updateSourceLabels[value]}
+                      </Option>
+                    ))}
                   </Dropdown>
                 </Field>
                 <div className={styles.sourceSettings}>

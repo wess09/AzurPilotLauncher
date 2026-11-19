@@ -56,7 +56,7 @@ export interface LauncherSettings {
   preventSleep: boolean;
   audioEnabled: boolean;
   updateChannel: "stable" | "canary";
-  updateSource: "auto" | "official" | "github" | "cloudflare";
+  updateSource: "auto" | "official" | "github" | "cloudflare" | "cnb" | "gitcode";
   language: string | null;
   downloadSource: "auto" | "cnb" | "github";
   pythonSource: "auto" | "nju" | "ustc" | "npmmirror" | "aliyun" | "cnb" | "astral";

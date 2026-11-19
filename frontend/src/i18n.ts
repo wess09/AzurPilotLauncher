@@ -65,6 +65,8 @@ const keys = [
   "update_source_official",
   "update_source_github",
   "update_source_cloudflare",
+  "update_source_cnb",
+  "update_source_gitcode",
   "packing_log",
   "start",
   "deploy",

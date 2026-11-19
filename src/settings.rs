@@ -126,9 +126,11 @@ impl Store {
             },
             update_source: match raw("updateSource") {
                 Some(rusqlite::types::Value::Text(ref text)) => match text.as_str() {
-                    "official" => crate::updater::UpdateSource::Official,
+                    "official" | "edgeone" => crate::updater::UpdateSource::Official,
                     "github" => crate::updater::UpdateSource::Github,
                     "cloudflare" => crate::updater::UpdateSource::Cloudflare,
+                    "cnb" => crate::updater::UpdateSource::Cnb,
+                    "gitcode" => crate::updater::UpdateSource::Gitcode,
                     _ => crate::updater::UpdateSource::Auto,
                 },
                 _ => crate::updater::UpdateSource::Auto,
@@ -206,6 +208,8 @@ impl Store {
                 crate::updater::UpdateSource::Official => "official",
                 crate::updater::UpdateSource::Github => "github",
                 crate::updater::UpdateSource::Cloudflare => "cloudflare",
+                crate::updater::UpdateSource::Cnb => "cnb",
+                crate::updater::UpdateSource::Gitcode => "gitcode",
             },
         )?;
         match settings.language.as_deref() {

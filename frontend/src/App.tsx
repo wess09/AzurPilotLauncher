@@ -601,6 +601,8 @@ export function App() {
             official: t("update_source_official"),
             github: t("update_source_github"),
             cloudflare: t("update_source_cloudflare"),
+            cnb: t("update_source_cnb"),
+            gitcode: t("update_source_gitcode"),
           }}
           launchOnStartupLabel={t("settings_launch_on_startup")}
           autoStartServiceLabel={t("settings_auto_start_service")}
