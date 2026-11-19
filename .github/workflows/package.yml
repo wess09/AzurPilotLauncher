@@ -36,7 +36,7 @@ on:
         required: false
         type: string
       repair_urls:
-        description: Rewrite launcher payload url host in the online stable.json to launcher-download.azurpilot.com, then republish. No builds or payload uploads.
+        description: Add missing cnb_url/gitcode_url direct links to the online stable.json platforms, then republish. No builds or payload uploads.
         required: false
         default: false
         type: boolean
@@ -562,8 +562,8 @@ jobs:
           [ "${#files[@]}" -gt 0 ] || { echo "::error::no canary payloads found" >&2; exit 1; }
           gh release upload canary "${files[@]}" --clobber
 
-  # 一次性修复：把线上 stable.json 里启动器 url 的域名换成 launcher-download，
-  # 路径（/updata/{version}/{name}）原样保留。不改 payload/tag/Release，github_url 不动。
+  # 一次性修复：给线上 stable.json 各平台补齐 cnb_url/gitcode_url 真实直链。
+  # 不改 payload/tag/Release，其余字段原样保留。
   repair-launcher-urls:
     if: github.event_name == 'workflow_dispatch' && inputs.repair_urls
     runs-on: ubuntu-latest
@@ -584,7 +584,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Rewrite launcher url hosts
+      - name: Add CNB and GitCode direct urls
         shell: bash
         run: |
           set -euo pipefail
@@ -594,34 +594,37 @@ jobs:
           python3 - <<'PY'
           import json
           from pathlib import Path
-          from urllib.parse import urlsplit, urlunsplit
+          from urllib.parse import urlsplit
 
-          OLD_HOST = "launcher-cloudflare-cdn-download.azurpilot.com"
-          NEW_HOST = "launcher-download.azurpilot.com"
+          CNB_BASE = "https://cnb.cool/AzurPilot/AzurPilotLauncher/-/releases/download/1.0.0"
+          GITCODE_BASE = "https://gitcode.com/ddl2/assets/releases/download/1.0.0"
           path = Path("cf-worker/public/updata/stable.json")
           manifest = json.loads(path.read_text(encoding="utf-8"))
 
-          def fix(payloads):
+          def fix(payloads, version):
               changed = 0
               for key, payload in (payloads or {}).items():
-                  url = payload.get("url")
-                  if not url:
+                  # 从清单现有 url 的末段推出带版本号的载荷文件名。
+                  name = urlsplit(payload.get("url", "")).path.rsplit("/", 1)[-1]
+                  if not name:
                       continue
-                  parts = urlsplit(url)
-                  if parts.netloc != OLD_HOST:
-                      print(f"  {key}: host is {parts.netloc}, skipped")
-                      continue
-                  payload["url"] = urlunsplit((parts.scheme, NEW_HOST, parts.path, parts.query, parts.fragment))
-                  changed += 1
-                  print(f"  {key}: {payload['url']}")
+                  cnb = f"{CNB_BASE}/{name}"
+                  gitcode = f"{GITCODE_BASE}/{name}"
+                  if payload.get("cnb_url") != cnb:
+                      payload["cnb_url"] = cnb
+                      changed += 1
+                  if payload.get("gitcode_url") != gitcode:
+                      payload["gitcode_url"] = gitcode
+                      changed += 1
+                  print(f"  {key}: cnb_url={cnb} gitcode_url={gitcode}")
               return changed
 
-          total = fix(manifest.get("platforms"))
+          total = fix(manifest.get("platforms"), manifest.get("version"))
           canary = manifest.get("canary")
           if canary:
-              total += fix(canary.get("platforms"))
+              total += fix(canary.get("platforms"), canary.get("version"))
           path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-          print(f"Rewrote {total} launcher url(s)")
+          print(f"Added {total} launcher direct url field(s)")
           PY
       - name: Publish stable.json to Cloudflare Worker
         env:
@@ -634,21 +637,21 @@ jobs:
             exit 1
           fi
           bash cf-worker/deploy.sh --message "repair launcher url host"
-      - name: Verify Worker serves launcher-download urls
+      - name: Verify Worker serves CNB and GitCode direct urls
         shell: bash
         run: |
           set -euo pipefail
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AZURPILOT_LAUNCHER_UPDATE"
           for attempt in $(seq 1 10); do
             if curl -fsSL -A "$UA" --max-time 15 "$MANIFEST_URL" -o /tmp/stable.json \
-              && python3 -c 'import json,sys; d=json.load(open("/tmp/stable.json", encoding="utf-8")); bad=[k for k,v in (d.get("platforms") or {}).items() if "launcher-download.azurpilot.com/updata/" not in (v.get("url") or "")]; sys.exit(1 if bad else 0)'; then
-              echo "Worker is serving launcher-download urls"
+              && python3 -c 'import json,sys; d=json.load(open("/tmp/stable.json", encoding="utf-8")); bad=[k for k,v in (d.get("platforms") or {}).items() if "cnb.cool/" not in (v.get("cnb_url") or "") or "gitcode.com/" not in (v.get("gitcode_url") or "")]; sys.exit(1 if bad else 0)'; then
+              echo "Worker is serving CNB/GitCode direct urls"
               exit 0
             fi
             echo "not updated yet (attempt ${attempt}/10), retrying..."
             sleep 3
           done
-          echo "::error::Worker still serves old launcher urls" >&2
+          echo "::error::Worker still lacks CNB/GitCode direct urls" >&2
           exit 1
 
   deploy-launcher-update:
