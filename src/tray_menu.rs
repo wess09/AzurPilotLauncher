@@ -263,6 +263,7 @@ pub(crate) fn ensure_tray_menu_window(app: &tauri::AppHandle) -> tauri::Result<W
         WebviewUrl::App("index.html?view=tray".into()),
     )
     .title("AzurPilot")
+    .user_agent(crate::WEBVIEW_USER_AGENT)
     .inner_size(width, height)
     .resizable(false)
     .maximizable(false)

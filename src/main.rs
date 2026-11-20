@@ -92,6 +92,9 @@ const MENUBAR_ICON_1X: &[u8] = include_bytes!("../icons/menubar.png");
 const WINDOWS_TRAY_ICON: &[u8] = include_bytes!("../icons/icon.png");
 const BACKEND_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 const BACKEND_NAVIGATION_TIMEOUT: Duration = Duration::from_secs(10);
+/// 所有 WebView 窗口统一使用的 User-Agent（伪装为 Electron 40）。
+/// 由 build.rs 从 tauri.conf.json 的 UA 模板注入版本后写入，单一来源。
+const WEBVIEW_USER_AGENT: &str = env!("AZURPILOT_WEBVIEW_UA");
 const TIME_BOMB_CONFIG_SOURCE: &str = include_str!("../Cargo.toml");
 /// 请求"启动后最小化到托盘"的命令行参数。
 const START_MINIMIZED_ARGS: &[&str] = &["--start-minimized", "/start-minimized"];

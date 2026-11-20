@@ -25,6 +25,53 @@ const DEFAULT_LAUNCHER_UPDATE_URL: &str = "https://launcher-api.azurpilot.com/up
 /// 国内优化的更新检查入口：默认优先使用，失败回退官方入口。
 const DEFAULT_LAUNCHER_UPDATE_CN_URL: &str =
     "https://launcher-api.cn.azurpilot.com/updata/stable.json";
+/// tauri.conf.json 中窗口 UA 的版本占位符，构建时替换为启动器版本。
+const UA_VERSION_PLACEHOLDER: &str = "__AZURPILOT_VERSION__";
+
+/// 把 tauri.conf.json 中窗口 UA 的版本占位符替换为当前启动器版本。
+///
+/// UA 字符串只在 tauri.conf.json 定义一次，版本取自 CARGO_PKG_VERSION：
+/// - 修改后的 windows 配置作为 TAURI_CONFIG 补丁写入当前进程（供
+///   `tauri_build::try_build`）与 rustc 环境（供 `generate_context!` 宏），
+///   确保构建期与运行期配置里的 UA 都是注入后的版本；
+/// - 完整 UA 通过 `cargo:rustc-env` 暴露给 Rust 代码的 `env!` 常量。
+///
+/// # Panics
+///
+/// 当清单目录/文件缺失、JSON 解析失败、CARGO_PKG_VERSION 缺失，或配置里
+/// 找不到含占位符的窗口 UA 时直接 panic，避免发布出未注入版本的构建。
+fn inject_webview_user_agent() {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let config_path = manifest_dir.join("tauri.conf.json");
+    println!("cargo:rerun-if-changed={}", config_path.display());
+    let raw = fs::read_to_string(&config_path).expect("read tauri.conf.json");
+    let mut config: serde_json::Value = serde_json::from_str(&raw).expect("parse tauri.conf.json");
+    let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
+
+    let mut resolved_ua: Option<String> = None;
+    if let Some(windows) = config["app"]["windows"].as_array_mut() {
+        for window in windows.iter_mut() {
+            if let Some(ua) = window["userAgent"].as_str() {
+                let replaced = ua.replace(UA_VERSION_PLACEHOLDER, &version);
+                if resolved_ua.is_none() {
+                    resolved_ua = Some(replaced.clone());
+                }
+                window["userAgent"] = serde_json::Value::String(replaced);
+            }
+        }
+    }
+    let ua = resolved_ua.expect("tauri.conf.json must contain a window userAgent with version placeholder");
+
+    // JSON merge patch 对数组整体替换：补丁提供完整的 windows 数组。
+    let patch = serde_json::json!({ "app": { "windows": config["app"]["windows"] } });
+    let patch_json = patch.to_string();
+    // 当前构建脚本进程：`tauri_build::try_build` 会读取并 merge 此补丁。
+    env::set_var("TAURI_CONFIG", &patch_json);
+    // 编译 crate 的 rustc 进程：`generate_context!` 宏经 tauri-codegen 读取。
+    println!("cargo:rustc-env=TAURI_CONFIG={patch_json}");
+    // Rust 代码统一通过该常量取 UA，避免重复维护字符串。
+    println!("cargo:rustc-env=AZURPILOT_WEBVIEW_UA={ua}");
+}
 
 /// 执行 Tauri 构建并把编译期资源写入 `OUT_DIR`。
 ///
@@ -38,6 +85,10 @@ const DEFAULT_LAUNCHER_UPDATE_CN_URL: &str =
 /// `CARGO_MANIFEST_DIR` 缺失、base64 解码失败、本地证书读取失败，或
 /// REQUIRE_LAUNCHER_MTLS_IDENTITY 已设置但证书缺失时直接 panic。
 fn main() {
+    // 先注入动态 UA（TAURI_CONFIG 供 tauri-build 与 generate_context! 读取），
+    // 必须在 try_build 之前完成，否则构建期配置拿不到替换后的版本。
+    inject_webview_user_agent();
+
     // 内嵌 manifest：requireAdministrator 保证启动器始终以管理员运行，
     // 以便执行需要提权的安装与修复操作；Common-Controls 6 启用现代视觉
     // 样式，确保原生控件外观一致。

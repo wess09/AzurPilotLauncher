@@ -20,6 +20,7 @@
         "resizable": true,
         "additionalBrowserArgs": "--enable-features=msWebView2EnableDraggableRegions --disable-features=ElasticOverscroll,msWebOOUI,msPdfOOUI,msSmartScreenProtection --no-proxy-server --autoplay-policy=no-user-gesture-required",
         "url": "about:blank",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) AzurPilot/__AZURPILOT_VERSION__ Chrome/144.0.7559.60 Electron/40.0.0 Safari/537.36",
         "acceptFirstMouse": true,
         "visible": false,
         "create": false
@@ -33,6 +34,7 @@
         "decorations": false,
         "additionalBrowserArgs": "--enable-features=msWebView2EnableDraggableRegions --disable-features=ElasticOverscroll,msWebOOUI,msPdfOOUI,msSmartScreenProtection --no-proxy-server --autoplay-policy=no-user-gesture-required",
         "url": "index.html",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) AzurPilot/__AZURPILOT_VERSION__ Chrome/144.0.7559.60 Electron/40.0.0 Safari/537.36",
         "acceptFirstMouse": true,
         "visible": false,
         "create": true,

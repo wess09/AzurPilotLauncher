@@ -29,6 +29,7 @@ pub(crate) fn show_connection_error_dialog(app: &tauri::AppHandle) {
             WebviewUrl::App("index.html?window=connection".into()),
         )
         .title("AzurPilot")
+        .user_agent(crate::WEBVIEW_USER_AGENT)
         .inner_size(480.0, 248.0)
         .resizable(false)
         .maximizable(false)
@@ -92,6 +93,7 @@ pub(crate) fn show_crash_dialog(app: &tauri::AppHandle) {
             WebviewUrl::App("index.html?window=crash".into()),
         )
         .title("AzurPilot")
+        .user_agent(crate::WEBVIEW_USER_AGENT)
         // 起始尺寸接近内容高度，前端渲染后用 window_fit_content 精确贴合。
         .inner_size(480.0, 180.0)
         .resizable(false)
