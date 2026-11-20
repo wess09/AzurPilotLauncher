@@ -34,6 +34,8 @@ export interface Snapshot {
   phase: Phase;
   operation: Operation | null;
   update_version: string | null;
+  /** 更新清单中的更新说明，缺省为 null。 */
+  update_notes: string | null;
   update_checked: boolean;
   backend_running: boolean;
   deployment_required: boolean;
@@ -63,11 +65,16 @@ export interface LauncherSettings {
   autoStartService: boolean;
   keepWebviewOnTray: boolean;
   reducedMotion: boolean;
+  disableBackgroundVideo: boolean;
   preventSleep: boolean;
   audioEnabled: boolean;
+  skipUpdate: boolean;
   updateChannel: "stable" | "canary";
   updateSource: "auto" | "official" | "github" | "cloudflare" | "cnb" | "gitcode";
   language: string | null;
+  accentColor: string | null;
+  customBackgroundImage: string | null;
+  customBackgroundVideo: string | null;
   downloadSource: "auto" | "cnb" | "github";
   pythonSource: "auto" | "nju" | "ustc" | "npmmirror" | "aliyun" | "cnb" | "astral";
   nodejsSource: "auto" | "official" | "npmmirror" | "nju";

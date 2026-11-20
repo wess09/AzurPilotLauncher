@@ -4,9 +4,9 @@
 
 ## 唯一的线上清单
 
-主地址为 `https://launcher-api.azurpilot.com/updata/stable.json`，备用地址与启动器自更新相同。编译时的 `LAUNCHER_UPDATE_URL` 同时作用于启动器更新和组件部署。GitHub/CNB Release 仅保存组件 ZIP，不发布第二份运行清单。
+官方主地址为 `https://launcher-api.azurpilot.com/updata/stable.json`，国内优化入口为 `https://launcher-api.cn.azurpilot.com/updata/stable.json`。启动器自更新检查默认优先国内入口，失败回退官方入口；组件部署仍只使用编译时的 `LAUNCHER_UPDATE_URL`。构建时可用 `LAUNCHER_UPDATE_CN_URL` 覆盖国内入口；显式覆盖 `LAUNCHER_UPDATE_URL` 时自更新保持单源语义，不再访问国内入口。GitHub/CNB Release 仅保存组件 ZIP，不发布第二份运行清单。
 
-`stable.json` 的原有 `version`、`pub_date`、`notes` 和 `platforms` 字段继续用于启动器自更新。顶层 `runtime`（schema 2）：
+`stable.json` 的原有 `version`、`pub_date`、`notes` 和 `platforms` 字段继续用于启动器自更新，`notes`（兼容 `changelog` / `release_notes` / `update_notes` 别名）解析后作为更新说明展示在首页。顶层 `runtime`（schema 2）：
 
 | 字段 | 含义 |
 | --- | --- |

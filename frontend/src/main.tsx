@@ -5,7 +5,9 @@ import { App } from "./App";
 import { ConnectionWindow } from "./ConnectionWindow";
 import { CrashWindow } from "./CrashWindow";
 import { TrayMenu } from "./TrayMenu";
-import { launcherDarkTheme, launcherLightTheme } from "./theme";
+import { command, SETTINGS_CHANGED_EVENT } from "./bridge";
+import type { LauncherSettings } from "./types";
+import { defaultAccent, makeTheme } from "./theme";
 // 全局 NS2 彩虹焦点环：覆盖 Fluent 组件默认的深色焦点框。
 import "./focusRing.css";
 
@@ -21,7 +23,7 @@ function native() {
 }
 
 // 主题外壳：跟随系统深浅色，主页与托盘弹窗菜单共用。
-function FluentShell({ children }: { children: ReactNode }) {
+function FluentShell({ children }: { children: ReactNode | ((light: boolean) => ReactNode) }) {
   const [light, setLight] = useState(
     forced ? forced === "light" : matchMedia("(prefers-color-scheme: light)").matches,
   );
@@ -32,12 +34,30 @@ function FluentShell({ children }: { children: ReactNode }) {
     query.addEventListener("change", sync);
     return () => query.removeEventListener("change", sync);
   }, []);
+  const [accent, setAccent] = useState<string | null>(null);
+  useEffect(() => {
+    const refresh = () => {
+      void command<LauncherSettings>("settings_get")
+        .then((settings) => setAccent(settings?.accentColor ?? null))
+        .catch(() => {});
+    };
+    refresh();
+    window.addEventListener(SETTINGS_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(SETTINGS_CHANGED_EVENT, refresh);
+  }, []);
+  const theme = makeTheme(accent, light);
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--accent",
+      theme.colorBrandForeground1,
+    );
+  }, [theme.colorBrandForeground1]);
   return (
     <FluentProvider
-      theme={light ? launcherLightTheme : launcherDarkTheme}
+      theme={theme}
       style={{ backgroundColor: "transparent" }}
     >
-      {children}
+      {typeof children === "function" ? children(light) : children}
     </FluentProvider>
   );
 }
@@ -45,7 +65,7 @@ function FluentShell({ children }: { children: ReactNode }) {
 function Root() {
   return (
     <FluentShell>
-      <App />
+      {(light) => <App defaultAccentColor={defaultAccent(light)} />}
     </FluentShell>
   );
 }

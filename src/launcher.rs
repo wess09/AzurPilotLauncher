@@ -28,9 +28,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::Emitter;
-// 原生菜单仅在 macOS 使用：Windows 托盘右键由 tray_menu 自绘弹窗接管。
-#[cfg(target_os = "macos")]
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
 #[cfg(any(windows, target_os = "macos"))]
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, State, WebviewWindow};
@@ -71,6 +68,8 @@ pub(crate) struct Snapshot {
     pub phase: Phase,
     pub operation: Option<Operation>,
     pub update_version: Option<String>,
+    /// 更新清单中的更新说明；随版本信息一并展示在首页。
+    pub update_notes: Option<String>,
     pub update_checked: bool,
     pub backend_running: bool,
     pub deployment_required: bool,
@@ -113,6 +112,7 @@ impl Model {
                 phase: Phase::Idle,
                 operation: None,
                 update_version: None,
+                update_notes: None,
                 update_checked: false,
                 backend_running: false,
                 deployment_required: true,
@@ -404,15 +404,29 @@ impl Launcher {
             let result = (|| {
                 let deployment_required =
                     crate::components::deployment_required(&setup::azurpilot_repo_dir());
-                let update = if controller.skip_update {
+                let store = controller
+                    .app
+                    .state::<Arc<crate::settings::Store>>();
+                let settings = store.get();
+                let update = if controller.skip_update || settings.skip_update {
+                    info!("Launcher update check skipped by user setting");
                     None
                 } else {
-                    let channel = controller
-                        .app
-                        .state::<Arc<crate::settings::Store>>()
-                        .get()
-                        .update_channel;
-                    updater::check_update(&cancel, channel)?
+                    // 检查期间用户可能刚打开跳过开关：此时即使检查失败也放行启动。
+                    match updater::check_update(&cancel, settings.update_channel) {
+                        Ok(update) => update,
+                        Err(error) if store.get().skip_update => {
+                            warn!("Update check failed while updates are skipped: {error:#}");
+                            None
+                        }
+                        Err(error) => return Err(error),
+                    }
+                };
+                // 写回模型前再确认一次，避免检查期间切换设置导致门禁状态过期。
+                let update = if !controller.skip_update && store.get().skip_update {
+                    None
+                } else {
+                    update
                 };
                 let mut model = controller.model.lock().unwrap();
                 if !model.accepts(task) {
@@ -420,6 +434,7 @@ impl Launcher {
                 }
                 model.view.deployment_required = deployment_required;
                 model.view.update_version = update.as_ref().map(|u| u.version.clone());
+                model.view.update_notes = update.as_ref().and_then(|u| u.notes.clone());
                 model.update = update;
                 model.view.update_checked = true;
                 Ok(())
@@ -461,6 +476,24 @@ impl Launcher {
         if let Err(error) = self.check(false) {
             debug!("Skipped periodic update check: {error:#}");
         }
+    }
+
+    /// 切换“跳过更新”后立即同步启动门禁，不必等下一轮检查。
+    pub(crate) fn sync_skip_update(&self, skip: bool) {
+        self.change(|model| {
+            if model.active {
+                return;
+            }
+            if skip {
+                model.update = None;
+                model.view.update_version = None;
+                model.view.update_notes = None;
+                model.view.update_checked = true;
+            } else {
+                model.view.update_checked = false;
+            }
+            model.touch();
+        });
     }
 
     fn install_update(self: &Arc<Self>) -> Result<()> {
@@ -1139,9 +1172,11 @@ pub(crate) fn run() -> Result<()> {
             crate::save_as, crate::download_today_gui_log, crate::download_today_launcher_log, crate::retry_backend_connection,
             crate::download_log_archive, crate::prompt_log_archive_path,
             crate::settings::settings_get, crate::settings::settings_set,
+            crate::settings::pick_background_file,
             crate::window_hide, crate::window_minimize, crate::window_toggle_maximize, crate::window_close, crate::window_exit_application,
             crate::window_start_dragging, crate::window_is_maximized, crate::window_fit_content,
-            crate::tray_menu::tray_menu_action, crate::tray_menu::tray_menu_hide
+            crate::tray_menu::tray_menu_action, crate::tray_menu::tray_menu_hide,
+            crate::tray_menu::tray_instances
         ])
         .setup(move |app| {
             let controller = Arc::new(Launcher { app: app.handle().clone(), model: Mutex::new(Model::new()), changed: Condvar::new(),
@@ -1257,24 +1292,8 @@ pub(crate) fn run() -> Result<()> {
 fn create_tray(app: &mut tauri::App) -> Result<()> {
     // Windows 的原生托盘菜单是 Win32 HMENU，由系统绘制、无法自定义样式：
     // 右键改由 tray_menu 自绘弹窗接管，不再挂原生菜单；macOS 保留系统菜单。
-    #[cfg(not(windows))]
-    let menu = {
-        let home = MenuItemBuilder::new(t!("launcher.home"))
-            .id("home")
-            .build(app)?;
-        let toggle = MenuItemBuilder::new(t!("tray.toggle_visibility"))
-            .id("toggle")
-            .build(app)?;
-        let quit = MenuItemBuilder::new(t!("tray.quit"))
-            .id("quit")
-            .build(app)?;
-        MenuBuilder::new(app)
-            .item(&home)
-            .item(&toggle)
-            .separator()
-            .item(&quit)
-            .build()?
-    };
+    #[cfg(target_os = "macos")]
+    let menu = crate::tray_menu::native_menu(app.handle())?;
     #[cfg(windows)]
     app.manage(crate::tray_menu::TrayMenuState::default());
     let builder = TrayIconBuilder::with_id("main-tray")
@@ -1319,10 +1338,14 @@ fn create_tray(app: &mut tauri::App) -> Result<()> {
                 }
                 _ => {}
             }
-            #[cfg(not(windows))]
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::tray::TrayIconEvent::Click { .. }) {
+                crate::tray_menu::refresh_tray_menu(tray.app_handle());
+            }
+            #[cfg(not(any(windows, target_os = "macos")))]
             let _ = (tray, event);
         });
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     let builder = builder.menu(&menu);
     builder.build(app)?;
     // 预建隐藏弹窗：首次右键免 WebView2 初始化延迟。

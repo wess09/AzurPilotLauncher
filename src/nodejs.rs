@@ -200,7 +200,7 @@ pub(crate) fn configure_command(command: &mut Command, bin: &Path) -> Result<()>
 
 fn update(title: impl Into<String>, detail: impl Into<String>, progress: f64) -> SplashUpdate {
     SplashUpdate::loading(title, detail, progress)
-        .with_subtitle(t!("setup.syncing", tip = crate::setup::get_tip()))
+        .with_subtitle(t!("setup.syncing"))
 }
 
 fn download(

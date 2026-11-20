@@ -4,6 +4,7 @@
 // One primary action per state, all state logic identical to before.
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { Button, Spinner } from "@fluentui/react-components";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   ArrowClockwise16Filled,
   ArrowClockwise16Regular,
@@ -21,11 +22,14 @@ import {
   Wrench16Filled,
   Wrench16Regular,
 } from "@fluentui/react-icons";
-import { command, getContext, native, subscribe } from "./bridge";
-import { translator } from "./i18n";
+import { command, getContext, native, SETTINGS_CHANGED_EVENT, subscribe } from "./bridge";
+import { translator, type Key } from "./i18n";
 import { acceptSnapshot, busy, type Context, type LauncherSettings, type Snapshot } from "./types";
+
+// 启动阶段在取消按钮上方轮播的小贴士，第一条是双击取消说明。
+const TIP_KEYS: Key[] = Array.from({ length: 2 }, (_, index) => `tip_${index}` as Key);
+const TIP_INTERVAL_MS = 2000;
 import { Confirm } from "./Confirm";
-import { ContextMenu } from "./ContextMenu";
 import { ErrorDialog } from "./ErrorDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import background from "../../bg/bg.mp4";
@@ -42,7 +46,7 @@ const mainIcons: Record<string, ComponentType> = {
   retry_backend_connection: ArrowClockwise16Filled,
 };
 
-export function App() {
+export function App({ defaultAccentColor = "#4cc2ff" }: { defaultAccentColor?: string } = {}) {
   const [context, setContext] = useState<Context>({
     locale: "zh-CN",
     version: "",
@@ -54,12 +58,29 @@ export function App() {
   const [bridgeError, setBridgeError] = useState("");
   const [actionError, setActionError] = useState("");
   const [armCancel, setArmCancel] = useState(false);
+  const [tipIndex, setTipIndex] = useState(0);
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
   const [localeOverride, setLocaleOverride] = useState<string | null>(null);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(false);
+  const [disableBackgroundVideo, setDisableBackgroundVideo] = useState(false);
+  const [customBackgroundImage, setCustomBackgroundImage] = useState<string | null>(null);
+  const [customBackgroundVideo, setCustomBackgroundVideo] = useState(() => ({
+    path: null as string | null,
+    revision: Date.now(),
+  }));
+  const [failedVideoSrc, setFailedVideoSrc] = useState<string | null>(null);
+  const [systemReducedMotion, setSystemReducedMotion] = useState(false);
+  const customVideoSrc = native && customBackgroundVideo.path
+    ? `${convertFileSrc(customBackgroundVideo.path)}?v=${customBackgroundVideo.revision}`
+    : null;
+  const videoFailed = customVideoSrc !== null && customVideoSrc === failedVideoSrc;
+  const videoSrc = !videoFailed && customVideoSrc ? customVideoSrc : background;
+  const posterSrc = native && customBackgroundImage
+    ? convertFileSrc(customBackgroundImage)
+    : backgroundPoster;
   const t = useMemo(
     () => translator(localeOverride ?? context.locale),
     [localeOverride, context.locale],
@@ -77,16 +98,26 @@ export function App() {
       })
       .catch((e) => setBridgeError(String(e)));
     // 语言偏好（设置里选定的 UI 语言）覆盖系统语言；同时恢复动效与音频偏好。
-    command<LauncherSettings>("settings_get")
-      .then((s) => {
-        if (disposed) return;
-        if (s?.language) setLocaleOverride(s.language);
-        setReducedMotion(!!s?.reducedMotion);
-        setAudioEnabled(!!s?.audioEnabled);
-      })
-      .catch(() => {
-        /* 设置读取失败时沿用系统语言与默认偏好 */
-      });
+    const loadSettings = () => {
+      command<LauncherSettings>("settings_get")
+        .then((s) => {
+          if (disposed) return;
+          if (s?.language) setLocaleOverride(s.language);
+          setReducedMotion(!!s?.reducedMotion);
+          setAudioEnabled(!!s?.audioEnabled);
+          setDisableBackgroundVideo(!!s?.disableBackgroundVideo);
+          setCustomBackgroundImage(s?.customBackgroundImage ?? null);
+          setCustomBackgroundVideo((current) => ({
+            ...current,
+            path: s?.customBackgroundVideo ?? null,
+          }));
+        })
+        .catch(() => {
+          /* 设置读取失败时沿用系统语言与默认偏好 */
+        });
+    };
+    loadSettings();
+    window.addEventListener(SETTINGS_CHANGED_EVENT, loadSettings);
     subscribe(
       (s) => {
         if (!disposed) {
@@ -106,6 +137,7 @@ export function App() {
       });
     return () => {
       disposed = true;
+      window.removeEventListener(SETTINGS_CHANGED_EVENT, loadSettings);
       cleanup?.();
     };
   }, []);
@@ -117,6 +149,7 @@ export function App() {
   useEffect(() => {
     const motion = matchMedia("(prefers-reduced-motion: reduce)");
     const sync = () => {
+      setSystemReducedMotion(motion.matches);
       const element = video.current;
       if (!element) return;
       element.muted = !audioEnabled;
@@ -130,14 +163,16 @@ export function App() {
       document.removeEventListener("visibilitychange", sync);
       motion.removeEventListener("change", sync);
     };
-  }, [reducedMotion, audioEnabled]);
+  }, [reducedMotion, audioEnabled, disableBackgroundVideo, videoSrc]);
   // CSS 动画（步骤文字淡入、进度填充过渡）随设置一并停用。
   useEffect(() => {
     document.documentElement.classList.toggle("reduced-motion", reducedMotion);
   }, [reducedMotion]);
-  // 主页屏蔽浏览器默认交互：右键菜单、拖拽与文本选择（错误弹窗的日志
-  // 块标注 data-selectable 保持可复制），以及 F5 / Ctrl+R 触发的刷新。
+  // 主页完全禁止右键：不弹系统默认菜单，也不弹自定义菜单。捕获阶段拦截，
+  // 避免子元素 stopPropagation 让菜单漏出来。拖拽与文本选择仅在
+  // data-selectable 区域放行（错误日志仍可复制）；F5 / Ctrl+R 同样屏蔽。
   useEffect(() => {
+    const blockContextMenu = (event: Event) => event.preventDefault();
     const blockUnlessSelectable = (event: Event) => {
       const target = event.target;
       if (
@@ -154,12 +189,12 @@ export function App() {
       )
         event.preventDefault();
     };
-    document.addEventListener("contextmenu", blockUnlessSelectable);
+    document.addEventListener("contextmenu", blockContextMenu, true);
     document.addEventListener("selectstart", blockUnlessSelectable);
     document.addEventListener("dragstart", blockUnlessSelectable);
     document.addEventListener("keydown", blockReload);
     return () => {
-      document.removeEventListener("contextmenu", blockUnlessSelectable);
+      document.removeEventListener("contextmenu", blockContextMenu, true);
       document.removeEventListener("selectstart", blockUnlessSelectable);
       document.removeEventListener("dragstart", blockUnlessSelectable);
       document.removeEventListener("keydown", blockReload);
@@ -251,7 +286,16 @@ export function App() {
   // 两段式取消：第一次点击进入待确认态并保持，再次点击才取消；
   // 任务结束（launching 变 false）时自动复位。
   useEffect(() => {
-    if (!launching) setArmCancel(false);
+    if (!launching) {
+      setArmCancel(false);
+      setTipIndex(0);
+      return;
+    }
+    const timer = window.setInterval(
+      () => setTipIndex((index) => (index + 1) % TIP_KEYS.length),
+      TIP_INTERVAL_MS,
+    );
+    return () => window.clearInterval(timer);
   }, [launching]);
   // 出现新错误时自动弹出错误报告（PCL 风格）；关闭后可经“查看错误详情”重开。
   useEffect(() => {
@@ -295,30 +339,39 @@ export function App() {
   };
   return (
     <div className={styles.shell}>
-      <video
-        ref={video}
-        className={styles.background}
-        src={background}
-        poster={backgroundPoster}
-        loop
-        playsInline
-        aria-hidden="true"
-      />
+      {disableBackgroundVideo ? (
+        <img className={styles.backgroundStill}
+          src={posterSrc}
+          alt="" aria-hidden="true" />
+      ) : (
+        <video
+          ref={video}
+          className={styles.background}
+          src={videoSrc}
+          poster={videoSrc === background ? posterSrc : undefined}
+          preload="auto"
+          onError={videoSrc === customVideoSrc ? () => setFailedVideoSrc(videoSrc) : undefined}
+          loop
+          playsInline
+          aria-hidden="true"
+        />
+      )}
       <div className={styles.shade} />
       {!connection && (
         <>
       <header
           className={styles.titlebar}
-          data-tauri-drag-region
           onPointerDown={(e) => {
-            if (
-              native &&
-              context.platform !== "windows" &&
-              e.isPrimary &&
-              e.button === 0 &&
-              e.target === e.currentTarget
-            )
-              void command("window_start_dragging").catch(() => {});
+            if (!native || !e.isPrimary || e.button !== 0) return;
+            const target = e.target;
+            if (target instanceof Element && target.closest("button, a, input, [data-no-drag]")) return;
+            void command("window_start_dragging").catch(() => {});
+          }}
+          onDoubleClick={(e) => {
+            if (!native) return;
+            const target = e.target;
+            if (target instanceof Element && target.closest("button, a, input, [data-no-drag]")) return;
+            void command("window_toggle_maximize").catch(() => {});
           }}
         >
           <div className={styles.brand}>
@@ -396,9 +449,12 @@ export function App() {
               {launching && (
                 <span className={styles.launchHint} aria-hidden="true">
                   <Info16Regular fontSize={14} />
-                  {t("click_cancel_hint")}
+                  <span key={tipIndex} className={styles.launchTip}>
+                    {t(TIP_KEYS[tipIndex])}
+                  </span>
                 </span>
               )}
+              <div className={styles.launchAnchor}>
               <Button
               appearance="primary"
               size="large"
@@ -440,19 +496,27 @@ export function App() {
               )}
             </Button>
             </div>
+            </div>
           </div>
         ) : (
           <div className={styles.bottomStack}>
           <section className={styles.panel} aria-label={t("status")}>
             {state?.update_version && (
-              <p className={styles.taskDetail}>
-                {t("update_hint", { version: state.update_version })}
-              </p>
+              <>
+                <p className={styles.taskDetail}>
+                  {t("update_hint", { version: state.update_version })}
+                </p>
+                {state.update_notes && (
+                  <p className={styles.updateNotes}>{state.update_notes}</p>
+                )}
+              </>
             )}
-            {!active && !error && !state?.update_version && (
+            {!active && !error && !state?.update_version && state?.message && (
+              <p className={styles.taskDetail}>{state.message}</p>
+            )}
+            {!active && !error && !state?.update_version && !state?.message && !state?.backend_running && (
               <p className={styles.taskDetail}>
-                {state?.message ||
-                  t(state?.backend_running ? "repair_disabled" : state?.deployment_required ? "deploy_hint" : "start_hint")}
+                {t(state?.deployment_required ? "deploy_hint" : "start_hint")}
               </p>
             )}
             {shownError && state?.message && (
@@ -518,6 +582,7 @@ export function App() {
                     <span>{t("details")}</span>
                   </button>
                 )}
+                <div className={styles.launchAnchor}>
                 <Button
                   appearance="primary"
                   size="large"
@@ -536,8 +601,9 @@ export function App() {
                     ) : undefined
                   }
                 >
-                  {active ? t(phase) : t(mainLabel)}
+                      {active ? t(phase) : t(mainLabel)}
                 </Button>
+                </div>
               </div>
             </div>
           </div>
@@ -545,8 +611,6 @@ export function App() {
       </main>
         </>
       )}
-      {/* 拦截系统默认右键菜单，改用跟随主题的自定义菜单。 */}
-      <ContextMenu locale={localeOverride ?? context.locale} motion={!reducedMotion} />
       {dialog && (
         <Confirm
           title={t(dialog === "repair" ? "repair_title" : "close_title")}
@@ -589,10 +653,28 @@ export function App() {
       {settingsOpen && (
         <SettingsDialog
           title={t("settings")}
-          sourceLabels={{ download: t("settings_download_source"), python: t("settings_python_source"), nodejs: t("settings_nodejs_source"), pypi: t("settings_pypi_source"), hint: t("settings_sources_hint"), auto: t("source_auto"), official: t("source_official"), cnb: t("source_cnb"), github: t("source_github"), nju: t("source_nju"), ustc: t("source_ustc"), npmmirror: t("source_npmmirror"), aliyun: t("source_aliyun"), astral: t("source_astral"), pypi_name: t("source_pypi"), tsinghua: t("source_tsinghua"), tencent: t("source_tencent"), huawei: t("source_huawei") }}
+          interfaceGroupLabel={t("settings_group_interface")}
+          updateGroupLabel={t("settings_group_update")}
+          sourcesGroupLabel={t("settings_group_sources")}
+          startupGroupLabel={t("settings_group_startup")}
+          sourceLabels={{ download: t("settings_download_source"), python: t("settings_python_source"), nodejs: t("settings_nodejs_source"), pypi: t("settings_pypi_source"),  auto: t("source_auto"), official: t("source_official"), cnb: t("source_cnb"), github: t("source_github"), nju: t("source_nju"), ustc: t("source_ustc"), npmmirror: t("source_npmmirror"), aliyun: t("source_aliyun"), astral: t("source_astral"), pypi_name: t("source_pypi"), tsinghua: t("source_tsinghua"), tencent: t("source_tencent"), huawei: t("source_huawei") }}
           platform={context.platform}
           languageLabel={t("settings_language")}
           autoLanguageLabel={t("lang_auto")}
+          accentColorLabel={t("settings_accent_color")}
+          defaultAccentColor={defaultAccentColor}
+          customBackgroundImageLabel={t("settings_custom_background_image")}
+          customBackgroundVideoLabel={t("settings_custom_background_video")}
+          backgroundVideoStatus={videoFailed
+            ? t("settings_background_video_failed")
+            : customVideoSrc && !disableBackgroundVideo && (reducedMotion || systemReducedMotion)
+              ? t("settings_background_video_paused")
+              : undefined}
+          selectFileLabel={t("settings_select_file")}
+          clearLabel={t("settings_clear")}
+          resetLabel={t("settings_reset")}
+          applyLabel={t("settings_apply")}
+          cancelLabel={t("cancel")}
           updateChannelLabel={t("settings_update_channel")}
           channelStableLabel={t("channel_stable")}
           channelCanaryLabel={t("channel_canary")}
@@ -609,8 +691,10 @@ export function App() {
           autoStartServiceLabel={t("settings_auto_start_service")}
           keepWebviewOnTrayLabel={t("settings_keep_webview_tray")}
           reducedMotionLabel={t("settings_reduced_motion")}
+          disableBackgroundVideoLabel={t("settings_disable_background_video")}
           preventSleepLabel={t("settings_prevent_sleep")}
           audioEnabledLabel={t("settings_audio")}
+          skipUpdateLabel={t("settings_skip_update")}
           closeLabel={t("close")}
           unsupportedLabel={t("not_supported")}
           onLanguageChange={(locale) => {
@@ -619,6 +703,14 @@ export function App() {
           }}
           onReducedMotionChange={setReducedMotion}
           onAudioChange={setAudioEnabled}
+          onDisableBackgroundVideoChange={setDisableBackgroundVideo}
+          onCustomBackgroundVideoChange={(path) => {
+            // 同格式文件共用保存路径，每次选择仍需重新加载媒体。
+            setCustomBackgroundVideo(({ revision }) => ({
+              path,
+              revision: Math.max(Date.now(), revision + 1),
+            }));
+          }}
           onClose={() => setSettingsOpen(false)}
         />
       )}

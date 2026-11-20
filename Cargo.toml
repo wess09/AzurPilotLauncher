@@ -13,7 +13,7 @@ base64 = "0.22.1"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["webview-data-url", "tray-icon", "image-png"] }
+tauri = { version = "2", features = ["protocol-asset", "webview-data-url", "tray-icon", "image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"

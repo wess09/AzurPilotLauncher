@@ -24,7 +24,8 @@ cargo check            # 仅检查编译
 ### 构建脚本环境变量（build.rs）
 
 - `AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64`：launcher 自更新的 mTLS 客户端证书（base64 PEM）。未设置时回退读取仓库根目录的 `证书.txt`（不入库）。
-- `LAUNCHER_UPDATE_URL`：覆盖自更新源，默认 `https://launcher-api.azurpilot.com/updata/stable.json`。
+- `LAUNCHER_UPDATE_URL`：覆盖自更新官方源，默认 `https://launcher-api.azurpilot.com/updata/stable.json`；显式覆盖时自更新保持单源语义。
+- `LAUNCHER_UPDATE_CN_URL`：覆盖国内优化自更新入口，默认 `https://launcher-api.cn.azurpilot.com/updata/stable.json`；仅覆盖官方源时不访问该入口。
 
 注意：Windows 构建的 manifest 是 `requireAdministrator`（build.rs 内嵌），本地运行会弹 UAC。
 

@@ -9,11 +9,12 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { acceptSnapshot, type Snapshot } from "./types";
+import { acceptSnapshot, type LauncherSettings, type Snapshot } from "./types";
 import { translator, localeKeys } from "./i18n";
 import dictionaries from "virtual:launcher-locales";
 
 const bridge = vi.hoisted(() => ({
+  native: false,
   command: vi.fn(),
   getContext: vi.fn(),
   receive: (_s: Snapshot) => {},
@@ -25,6 +26,7 @@ const ready = (): Snapshot => ({
   phase: "idle",
   operation: null,
   update_version: null,
+  update_notes: null,
   update_checked: true,
   backend_running: false,
   deployment_required: false,
@@ -43,8 +45,9 @@ const ready = (): Snapshot => ({
   can_update: false,
   can_cancel: false,
 });
-vi.mock("./bridge", () => ({
-  native: false,
+vi.mock("./bridge", async (importOriginal) => ({
+  SETTINGS_CHANGED_EVENT: (await importOriginal<typeof import("./bridge")>()).SETTINGS_CHANGED_EVENT,
+  get native() { return bridge.native; },
   command: bridge.command,
   subscribeLogArchiveProgress: async () => () => {},
   getContext: bridge.getContext,
@@ -56,6 +59,7 @@ vi.mock("./bridge", () => ({
   },
 }));
 beforeEach(() => {
+  bridge.native = false;
   bridge.command.mockReset().mockResolvedValue(undefined);
   bridge.getContext.mockReset().mockResolvedValue({
     locale: "en",
@@ -78,7 +82,10 @@ beforeEach(() => {
   HTMLMediaElement.prototype.pause = vi.fn();
   HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 const mount = async () => {
   render(<App />);
   await screen.findByRole("button", { name: /Run$/ });
@@ -159,6 +166,84 @@ describe("launcher actions", () => {
     await waitFor(() => expect(pause).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("switch", { name: "Prevent automatic sleep" }));
     await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", { settings: { ...settings, reducedMotion: true, preventSleep: true } }));
+  });
+  it("enables, plays and reloads the selected background video when the saved path is reused", async () => {
+    const path = "C:/backgrounds/background_video.mp4";
+    bridge.native = true;
+    vi.stubGlobal("__TAURI_INTERNALS__", {
+      convertFileSrc: (filePath: string) => `http://asset.localhost/${encodeURIComponent(filePath)}`,
+    });
+    vi.mocked(window.matchMedia).mockReturnValue({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    } as unknown as MediaQueryList);
+    let settings: Partial<LauncherSettings> = { disableBackgroundVideo: true, customBackgroundVideo: null };
+    bridge.command.mockImplementation(async (name: string, args?: { settings: typeof settings }) => {
+      if (name === "pick_background_file") return path;
+      if (name === "settings_set" && args) settings = args.settings;
+      if (name === "settings_get" || name === "settings_set") return settings;
+    });
+    await mount();
+    expect(document.querySelector("video")).toBeNull();
+    vi.mocked(HTMLMediaElement.prototype.play).mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const choose = await screen.findByText("Choose file", {
+      selector: 'button[aria-label="Custom background video"]',
+    });
+    fireEvent.click(choose);
+    await waitFor(() => expect(document.querySelector("video")?.src).toContain(encodeURIComponent(path)));
+    const video = document.querySelector("video")!;
+    expect(settings.disableBackgroundVideo).toBe(false);
+    expect(video.play).toHaveBeenCalledTimes(1);
+    const firstSrc = video.src;
+
+    fireEvent.click(choose);
+    await waitFor(() => expect(video.src).not.toBe(firstSrc));
+    expect(video.src).toContain(encodeURIComponent(path));
+    expect(video.play).toHaveBeenCalledTimes(2);
+
+    fireEvent.error(video);
+    expect(video.src).not.toContain(encodeURIComponent(path));
+    expect(screen.getByText("This video couldn’t play. Try an H.264 MP4 file.")).toBeTruthy();
+  });
+  it("shows the selected video as a still frame under reduced motion", async () => {
+    bridge.native = true;
+    vi.stubGlobal("__TAURI_INTERNALS__", {
+      convertFileSrc: () => "http://asset.localhost/background_video.mp4",
+    });
+    bridge.command.mockImplementation(async (name: string) => name === "settings_get" ? {
+      customBackgroundVideo: "background_video.mp4",
+      reducedMotion: true,
+    } : undefined);
+    await mount();
+    const video = document.querySelector("video")!;
+    await waitFor(() => expect(video.src).toContain("asset.localhost/background_video.mp4"));
+    expect(video.hasAttribute("poster")).toBe(false);
+    expect(video.pause).toHaveBeenCalled();
+    expect(video.play).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByText("Reduced motion is on. The background shows a still frame.")).toBeTruthy();
+  });
+  it("accepts an accent color typed one character at a time", async () => {
+    const settings = { accentColor: null };
+    bridge.command.mockImplementation(async (name: string, args?: { settings: unknown }) => {
+      if (name === "settings_get") return settings;
+      if (name === "settings_set") return args?.settings;
+    });
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Accent color" }));
+    const input = await screen.findByRole("textbox", { name: "Accent color" });
+    const apply = screen.getByRole("button", { name: "Apply" });
+    fireEvent.change(input, { target: { value: "#f0" } });
+    expect(input).toHaveProperty("value", "#f0");
+    expect(apply).toHaveProperty("disabled", true);
+    fireEvent.change(input, { target: { value: "#F00707" } });
+    fireEvent.click(apply);
+    await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", {
+      settings: { accentColor: "#f00707" },
+    }));
   });
   it("pauses hidden-window video and resumes it on restore", async () => {
     window.matchMedia = vi.fn().mockReturnValue({

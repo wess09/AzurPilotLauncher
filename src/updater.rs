@@ -28,8 +28,12 @@ use std::{
 use tauri::Url;
 use tempfile::Builder as TempDirBuilder;
 
-/// 启动器更新清单主 URL：编译期由构建脚本经环境变量注入。
+/// 启动器更新清单官方 URL：编译期由构建脚本经环境变量注入。
 pub(crate) const LAUNCHER_UPDATE_URL: &str = env!("LAUNCHER_UPDATE_URL");
+/// 国内优化的更新清单 URL：编译期由构建脚本注入，更新检查优先使用。
+pub(crate) const LAUNCHER_UPDATE_CN_URL: &str = env!("LAUNCHER_UPDATE_CN_URL");
+/// 构建脚本是否显式覆盖了官方入口；覆盖时保持单源，不再走国内入口优先。
+const LAUNCHER_UPDATE_URL_CUSTOM: &str = env!("AZURPILOT_LAUNCHER_UPDATE_URL_CUSTOM");
 /// 存在该环境变量时跳过启动器更新检查（自更新重启后的新一轮启动会带上）。
 const LAUNCHER_UPDATE_SKIP_ENV: &str = "AZURPILOT_SKIP_LAUNCHER_UPDATE";
 /// 迷你版启动器的版本号：迷你版即使已是"最新"也必须升级到正式版。
@@ -64,8 +68,11 @@ const LAUNCHER_UPDATE_APPLY_ARG: &str = "--apply-launcher-update";
 struct LauncherUpdateManifest {
     /// 清单声明的最新启动器版本。
     version: String,
-    /// 平台标识（如 windows-x86_64）到对应载荷的映射。
+    /// 平台标识（如 windows-x86_64）到对应载荷的映射，含各下载地址与摘要。
     platforms: HashMap<String, LauncherUpdatePlatform>,
+    /// 更新说明；同时兼容 `changelog` / `release_notes` / `update_notes` 写法。
+    #[serde(default, alias = "changelog", alias = "release_notes", alias = "update_notes")]
+    notes: Option<String>,
     /// 金丝雀通道载荷；与顶层正式版结构一致，缺失表示尚无金丝雀构建。
     #[serde(default)]
     canary: Option<LauncherUpdateChannelManifest>,
@@ -73,13 +80,16 @@ struct LauncherUpdateManifest {
     runtime: Option<serde_json::Value>,
 }
 
-/// 金丝雀通道的版本与平台载荷，结构同清单顶层的正式版字段。
+/// 金丝雀通道的版本、更新说明与平台载荷，结构同清单顶层的正式版字段。
 #[derive(Debug, Deserialize)]
 struct LauncherUpdateChannelManifest {
     /// 金丝雀版本号（提交哈希+UTC 时间戳，如 `3.0.3-canary.a5913db0.20261026100000`）。
     version: String,
     /// 平台标识到对应载荷的映射。
     platforms: HashMap<String, LauncherUpdatePlatform>,
+    /// 金丝雀更新说明；字段缺失时为 None。
+    #[serde(default, alias = "changelog", alias = "release_notes", alias = "update_notes")]
+    notes: Option<String>,
 }
 
 /// 更新通道：正式版走清单顶层字段，金丝雀版走 `canary` 字段。
@@ -387,15 +397,58 @@ fn launcher_update_http_client(
     Ok(builder.build()?)
 }
 
-/// 从内置官方入口获取清单；传输层在读取清单前即提供 QUIC 与重置恢复。
+/// 更新检查的清单地址顺序。
+///
+/// 默认国内优化入口优先、官方入口回退；构建时显式覆盖官方入口时保持单源语义，
+/// 不再访问国内入口，避免覆盖配置被意外绕过。
+fn launcher_update_manifest_urls() -> Vec<&'static str> {
+    if LAUNCHER_UPDATE_URL_CUSTOM == "1" {
+        return vec![LAUNCHER_UPDATE_URL];
+    }
+    let mut urls = vec![LAUNCHER_UPDATE_CN_URL];
+    if LAUNCHER_UPDATE_URL != LAUNCHER_UPDATE_CN_URL {
+        urls.push(LAUNCHER_UPDATE_URL);
+    }
+    urls
+}
+
+/// 按内置地址顺序获取清单；首个可用入口即返回，全部失败时汇总各入口错误。
+/// 传输层在读取清单前即提供 QUIC 与重置恢复。
 ///
 /// # Errors
-/// 官方入口请求或清单解析失败时返回 Err，不访问备用域名。
+/// 所有入口均请求失败、非 2xx 或 JSON 解析失败时返回 Err；任务取消时立即返回。
 fn fetch_launcher_update_manifest(
     client: &Client,
     cancel: &Arc<AtomicBool>,
 ) -> Result<LauncherUpdateManifest> {
-    fetch_launcher_update_manifest_from_url(client, LAUNCHER_UPDATE_URL, cancel)
+    fetch_launcher_update_manifest_from_urls(client, &launcher_update_manifest_urls(), cancel)
+}
+
+/// 按给定地址顺序获取清单，首个成功即返回；失败地址的错误逐条记录后回退下一地址。
+///
+/// # Errors
+/// 每个地址都请求或解析失败时返回汇总错误；循环中检查取消标志。
+fn fetch_launcher_update_manifest_from_urls(
+    client: &Client,
+    urls: &[&str],
+    cancel: &Arc<AtomicBool>,
+) -> Result<LauncherUpdateManifest> {
+    if urls.is_empty() {
+        bail!("no launcher update manifest entry configured");
+    }
+    let mut errors = Vec::new();
+    for url in urls {
+        crate::launcher::ensure_not_cancelled(cancel)?;
+        match fetch_launcher_update_manifest_from_url(client, url, cancel) {
+            Ok(manifest) => return Ok(manifest),
+            Err(error) => {
+                tracing::warn!("Launcher update manifest {url}: {error:#}");
+                errors.push(format!("{url}: {error:#}"));
+            }
+        }
+    }
+    crate::launcher::ensure_not_cancelled(cancel)?;
+    bail!("{}", errors.join("; "))
 }
 
 /// 从单个 URL 拉取并解析启动器更新清单 JSON。
@@ -467,7 +520,7 @@ pub(crate) fn check_update(
     select_launcher_update(&manifest, current_version, channel, platform_key)
 }
 
-/// 按所选通道选择版本与同一组平台载荷；与网络和本机版本解耦以验证切换行为。
+/// 按所选通道选择版本、更新说明与同一组平台载荷；与网络和本机版本解耦以验证切换行为。
 fn select_launcher_update(
     manifest: &LauncherUpdateManifest,
     current_version: &str,
@@ -475,8 +528,12 @@ fn select_launcher_update(
     platform_key: &str,
 ) -> Result<Option<AvailableUpdate>> {
     let mini_launcher = launcher_version_is_mini(current_version);
-    let (latest_version, latest_platforms) = match channel {
-        UpdateChannel::Stable => (manifest.version.clone(), &manifest.platforms),
+    let (latest_version, latest_platforms, latest_notes) = match channel {
+        UpdateChannel::Stable => (
+            manifest.version.clone(),
+            &manifest.platforms,
+            manifest.notes.clone(),
+        ),
         UpdateChannel::Canary => {
             let Some(canary) = manifest.canary.as_ref() else {
                 tracing::info!("No canary payload in update manifest; treating as up to date");
@@ -489,7 +546,7 @@ fn select_launcher_update(
                 }
                 return Ok(None);
             };
-            (canary.version.clone(), &canary.platforms)
+            (canary.version.clone(), &canary.platforms, canary.notes.clone())
         }
     };
     let update_available = launcher_version_is_newer(current_version, &latest_version, channel)
@@ -543,6 +600,7 @@ fn select_launcher_update(
     }
     Ok(Some(AvailableUpdate {
         version: latest_version,
+        notes: latest_notes,
         payload: platform.clone(),
     }))
 }
@@ -550,6 +608,9 @@ fn select_launcher_update(
 #[derive(Clone, Debug)]
 pub(crate) struct AvailableUpdate {
     pub version: String,
+    /// 清单中的更新说明；缺省时前端只展示版本号。
+    pub notes: Option<String>,
+    /// 清单中该平台的首选下载地址与镜像地址，下载时按顺序尝试。
     payload: LauncherUpdatePlatform,
 }
 
@@ -648,6 +709,179 @@ mod source_tests {
             vec![cloudflare, cnb, gitcode, url, github],
             "fixed auto priority: Cloudflare, CNB, GitCode, EdgeOne(url), GitHub"
         );
+    }
+}
+
+#[cfg(test)]
+mod manifest_source_tests {
+    use super::*;
+
+    /// 单请求本地清单服务；用于验证入口回退而不访问公网。
+    fn manifest_test_server(response: String) -> (String, thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/stable.json", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let server = thread::spawn(move || {
+            let started_at = Instant::now();
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(accepted) => break accepted,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            started_at.elapsed() < Duration::from_secs(5),
+                            "missing manifest request"
+                        );
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept manifest request: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request);
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        (url, server)
+    }
+
+    fn json_response(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+    }
+
+    fn error_response(status: &str) -> String {
+        format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    }
+
+    fn valid_manifest_body(notes: &str) -> String {
+        serde_json::json!({
+            "version": "9.9.9",
+            "notes": notes,
+            "platforms": {
+                "windows-x86_64": {
+                    "url": "https://updates.example/launcher.exe",
+                    "sha256": "a".repeat(64)
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn test_client() -> Client {
+        Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap()
+    }
+
+    /// 默认构建下国内入口优先，官方入口作为回退。
+    #[test]
+    fn manifest_urls_prefer_cn_then_official() {
+        let urls = launcher_update_manifest_urls();
+        if LAUNCHER_UPDATE_URL_CUSTOM == "1" {
+            assert_eq!(urls, vec![LAUNCHER_UPDATE_URL]);
+        } else {
+            assert_eq!(urls, vec![LAUNCHER_UPDATE_CN_URL, LAUNCHER_UPDATE_URL]);
+        }
+    }
+
+    /// 国内入口 5xx 时回退官方入口，并解析版本号、下载地址与更新说明。
+    #[test]
+    fn manifest_falls_back_when_cn_entry_fails() {
+        let (primary, primary_server) =
+            manifest_test_server(error_response("503 Service Unavailable"));
+        let (fallback, fallback_server) =
+            manifest_test_server(json_response(&valid_manifest_body("修复若干问题")));
+        let manifest = fetch_launcher_update_manifest_from_urls(
+            &test_client(),
+            &[&primary, &fallback],
+            &Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(manifest.version, "9.9.9");
+        let update =
+            select_launcher_update(&manifest, "9.9.8", UpdateChannel::Stable, "windows-x86_64")
+                .unwrap()
+                .unwrap();
+        assert_eq!(update.notes.as_deref(), Some("修复若干问题"));
+        assert_eq!(update.payload.url, "https://updates.example/launcher.exe");
+        primary_server.join().unwrap();
+        fallback_server.join().unwrap();
+    }
+
+    /// 国内入口返回损坏 JSON 时按数据格式错误回退，不把错误直接抛给启动流程。
+    #[test]
+    fn manifest_falls_back_on_malformed_json() {
+        let (primary, primary_server) = manifest_test_server(json_response("{not json"));
+        let (fallback, fallback_server) =
+            manifest_test_server(json_response(&valid_manifest_body("备用说明")));
+        let manifest = fetch_launcher_update_manifest_from_urls(
+            &test_client(),
+            &[&primary, &fallback],
+            &Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(manifest.notes.as_deref(), Some("备用说明"));
+        primary_server.join().unwrap();
+        fallback_server.join().unwrap();
+    }
+
+    /// 所有入口都失败时汇总各入口错误，便于定位是网络还是格式问题。
+    #[test]
+    fn manifest_reports_all_entry_failures() {
+        let (first, first_server) =
+            manifest_test_server(error_response("503 Service Unavailable"));
+        let (second, second_server) = manifest_test_server(json_response("broken"));
+        let error = fetch_launcher_update_manifest_from_urls(
+            &test_client(),
+            &[&first, &second],
+            &Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains(&first), "missing first entry in {message}");
+        assert!(message.contains(&second), "missing second entry in {message}");
+        first_server.join().unwrap();
+        second_server.join().unwrap();
+    }
+
+    /// 已取消的任务不再发起清单请求。
+    #[test]
+    fn manifest_check_honours_cancellation_before_requests() {
+        let cancel = Arc::new(AtomicBool::new(true));
+        let unreachable = "http://127.0.0.1:1/stable.json";
+        assert!(fetch_launcher_update_manifest_from_urls(
+            &test_client(),
+            &[unreachable],
+            &cancel,
+        )
+        .is_err());
+    }
+
+    /// 更新说明兼容别名；版本未提升时按"已是最新"处理，不因说明字段报错。
+    #[test]
+    fn manifest_notes_aliases_and_no_update_are_compatible() {
+        let manifest: LauncherUpdateManifest = serde_json::from_value(serde_json::json!({
+            "version": "9.9.9",
+            "changelog": "兼容旧字段",
+            "platforms": {
+                "windows-x86_64": {
+                    "url": "https://updates.example/launcher.exe",
+                    "sha256": "a".repeat(64)
+                }
+            }
+        }))
+        .unwrap();
+        assert_eq!(manifest.notes.as_deref(), Some("兼容旧字段"));
+        assert!(select_launcher_update(&manifest, "9.9.9", UpdateChannel::Stable, "windows-x86_64")
+            .unwrap()
+            .is_none());
     }
 }
 

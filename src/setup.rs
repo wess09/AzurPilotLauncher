@@ -15,7 +15,6 @@
 
 use crate::http_client::Client;
 use anyhow::{anyhow, bail, Context, Result};
-use chrono::Local;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
@@ -39,17 +38,6 @@ use crate::window_util::CreateNoWindow as _;
 use rust_i18n::t;
 
 pub use crate::progress::SplashUpdate;
-
-/// 启动画面小贴士总数，需与 locales 中 `tips.*` 键的数量保持一致。
-const TIPS_COUNT: usize = 19;
-
-/// 随机取一条启动画面小贴士（按当前时间戳取模轮换）。
-pub fn get_tip() -> String {
-    let now = Local::now().timestamp() as usize;
-    let idx = now % TIPS_COUNT;
-    let key = format!("tips.{idx}");
-    t!(&key).to_string()
-}
 
 /// 脚本执行的阶段细分，用于在总进度中区分 git 更新、前端构建与依赖同步。
 #[derive(Clone, Copy, Debug)]
@@ -504,7 +492,7 @@ pub fn setup_azurpilot_repo(
             t!("components.checking_detail"),
             5,
         )
-        .with_subtitle(t!("setup.checking_env", tip = get_tip())),
+        .with_subtitle(t!("setup.checking_env")),
     );
     if crate::components::deployment_required(&azurpilot_repo_dir()) {
         bail!(t!("launcher.deploy_hint"));
@@ -530,12 +518,12 @@ pub fn setup_azurpilot_repo(
                 t!("setup.skipping_update_detail"),
                 41,
             )
-            .with_subtitle(t!("setup.preview_mode", tip = get_tip())),
+            .with_subtitle(t!("setup.preview_mode")),
         );
     } else {
         status_updater(
             SplashUpdate::loading(t!("setup.updating"), t!("setup.fetching_patches"), 41)
-                .with_subtitle(t!("setup.syncing", tip = get_tip())),
+                .with_subtitle(t!("setup.syncing")),
         );
         git_update(&mut status_updater, &bootstrap_uv, &cancel_requested)?;
         ensure_repository_files()?;
@@ -549,7 +537,7 @@ pub fn setup_azurpilot_repo(
     )?;
     status_updater(
         SplashUpdate::loading(t!("setup.finishing"), t!("setup.ready_to_launch"), 94)
-            .with_subtitle(t!("setup.launching", tip = get_tip())),
+            .with_subtitle(t!("setup.launching")),
     );
     Ok(())
 }
@@ -571,7 +559,7 @@ pub fn repair_environment(
 
     status_updater(
         SplashUpdate::loading(t!("setup.preparing_env"), t!("launcher.repair_body"), 4)
-            .with_subtitle(t!("setup.rebuilding_env", tip = get_tip())),
+            .with_subtitle(t!("setup.rebuilding_env")),
     );
     crate::components::repair(
         &azurpilot_repo_dir(),
@@ -595,7 +583,7 @@ pub fn repair_environment(
 
     status_updater(
         SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.verifying_deps"), 70)
-            .with_subtitle(t!("setup.syncing_deps", tip = get_tip())),
+            .with_subtitle(t!("setup.syncing_deps")),
     );
     migrate_dependency_config(sources)?;
     uv_sync_project(
@@ -827,9 +815,9 @@ fn run_command(
     // 依赖阶段起点 60%，同步完成后再构建前端。
     let mut dependency_progress = 60.0;
     let phase_subtitle = match phase {
-        ScriptPhase::Git => t!("setup.syncing", tip = get_tip()).to_string(),
-        ScriptPhase::App => t!("setup.syncing", tip = get_tip()).to_string(),
-        ScriptPhase::Dependencies => t!("setup.syncing_deps", tip = get_tip()).to_string(),
+        ScriptPhase::Git => t!("setup.syncing").to_string(),
+        ScriptPhase::App => t!("setup.syncing").to_string(),
+        ScriptPhase::Dependencies => t!("setup.syncing_deps").to_string(),
     };
     let mut dependency_detail = None;
     let started_at = Instant::now();
@@ -921,7 +909,7 @@ fn run_command(
                     86.0,
                     94.0,
                 )
-                .with_subtitle(t!("setup.syncing", tip = get_tip()).to_string()),
+                .with_subtitle(t!("setup.syncing").to_string()),
             );
             last_wait_update = Instant::now();
         }
@@ -1047,11 +1035,11 @@ fn splash_retry_update(phase: ScriptPhase, retry_count: usize, error_text: &str)
     );
     match phase {
         ScriptPhase::Git => SplashUpdate::loading(t!("setup.retrying_update"), detail, 40)
-            .with_subtitle(t!("setup.syncing", tip = get_tip())),
+            .with_subtitle(t!("setup.syncing")),
         ScriptPhase::App => SplashUpdate::loading(t!("setup.building_frontend"), detail, 86)
-            .with_subtitle(t!("setup.syncing", tip = get_tip())),
+            .with_subtitle(t!("setup.syncing")),
         ScriptPhase::Dependencies => SplashUpdate::loading(t!("setup.retrying_deps"), detail, 60)
-            .with_subtitle(t!("setup.syncing_deps", tip = get_tip()))
+            .with_subtitle(t!("setup.syncing_deps"))
             .with_uv_progress(2, t!("setup.uv_resolving", secs = "0")),
     }
 }
@@ -1059,14 +1047,14 @@ fn splash_retry_update(phase: ScriptPhase, retry_count: usize, error_text: &str)
 /// 构造依赖同步阶段的起始进度（60%，uv 子进度从 2% 开始解析）。
 fn dependency_start_update() -> SplashUpdate {
     SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.uv_parsing"), 60)
-        .with_subtitle(t!("setup.syncing_deps", tip = get_tip()))
+        .with_subtitle(t!("setup.syncing_deps"))
         .with_uv_progress(2, t!("setup.uv_resolving", secs = "0"))
 }
 
 /// 子命令成功退出后确认依赖同步完成，推进到本阶段的终点。
 fn dependency_complete_update() -> SplashUpdate {
     SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.uv_completed"), 86)
-        .with_subtitle(t!("setup.syncing_deps", tip = get_tip()))
+        .with_subtitle(t!("setup.syncing_deps"))
         .with_uv_progress(100, t!("setup.uv_completed"))
 }
 
@@ -1087,7 +1075,7 @@ fn dependency_wait_update(
     };
 
     SplashUpdate::loading(t!("setup.installing_deps"), detail, progress)
-        .with_subtitle(t!("setup.syncing_deps", tip = get_tip()))
+        .with_subtitle(t!("setup.syncing_deps"))
         .with_uv_progress(uv_progress.progress(), uv_progress.detail())
 }
 
@@ -1192,7 +1180,7 @@ fn sync_dependencies_and_frontend(
 ) -> Result<()> {
     status_updater(
         SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.verifying_deps"), 60)
-            .with_subtitle(t!("setup.syncing_deps", tip = get_tip())),
+            .with_subtitle(t!("setup.syncing_deps")),
     );
     uv_sync_project(&mut status_updater, bootstrap_uv, cancel_requested, sources)?;
     if build_frontend {
@@ -1202,7 +1190,7 @@ fn sync_dependencies_and_frontend(
                 t!("setup.building_frontend_detail"),
                 86,
             )
-            .with_subtitle(t!("setup.syncing", tip = get_tip())),
+            .with_subtitle(t!("setup.syncing")),
         );
         app_update(&mut status_updater, cancel_requested, sources)?;
     }
@@ -1636,7 +1624,7 @@ fn runtime_tools_update(
     progress: impl Into<f64>,
 ) -> SplashUpdate {
     SplashUpdate::loading(title, detail, progress)
-        .with_subtitle(t!("setup.rebuilding_env", tip = get_tip()).to_string())
+        .with_subtitle(t!("setup.rebuilding_env").to_string())
 }
 
 /// 构造运行时工具阶段的等待进度：按耗时在 start/end 区间内线性推进，
@@ -1777,7 +1765,7 @@ fn pypi_index_fallback_update(next_index: &str) -> SplashUpdate {
         format!("PyPI index: {next_index}"),
         70,
     )
-    .with_subtitle(t!("setup.syncing_deps", tip = get_tip()))
+    .with_subtitle(t!("setup.syncing_deps"))
     .with_uv_progress(2, t!("setup.uv_resolving", secs = "0"))
 }
 
@@ -2391,7 +2379,7 @@ fn splash_update_for_output(
 /// GIT INIT 等），按标题映射到预设进度点；其余行尝试解析
 /// `git fetch --progress` 的百分比。
 fn splash_update_for_git_output(line: &str, state: &mut GitProgressState) -> Option<SplashUpdate> {
-    let subtitle = t!("setup.syncing", tip = get_tip()).to_string();
+    let subtitle = t!("setup.syncing").to_string();
 
     if line.contains("=====") {
         let detail = line.replace('=', " ");
@@ -2505,7 +2493,7 @@ fn dependency_splash_update(
     uv_progress: &mut UvProgressState,
 ) -> SplashUpdate {
     SplashUpdate::loading(t!("setup.installing_deps"), detail, progress)
-        .with_subtitle(t!("setup.syncing_deps", tip = get_tip()))
+        .with_subtitle(t!("setup.syncing_deps"))
         .with_uv_progress(uv_progress.progress(), uv_progress.detail())
 }
 

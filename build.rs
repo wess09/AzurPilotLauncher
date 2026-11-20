@@ -4,7 +4,8 @@
 //! 处理 `AZURPILOT_BOOTSTRAP_UV`（内嵌 uv 引导二进制，未设置时写空占位符、
 //! 运行时回退 `UV` 环境变量或 PATH 中的 uv）、
 //! `AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64`（mTLS 自更新证书
-//! base64，未设置回退"证书.txt"）与 `LAUNCHER_UPDATE_URL`（自更新源覆盖）。
+//! base64，未设置回退"证书.txt"）、`LAUNCHER_UPDATE_URL`（自更新源覆盖）
+//! 与 `LAUNCHER_UPDATE_CN_URL`（国内优化自更新源覆盖）。
 use std::{env, fs, path::PathBuf};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
@@ -15,8 +16,15 @@ const MTLS_IDENTITY_ENV: &str = "AZURPILOT_LAUNCHER_MTLS_IDENTITY_PEM_B64";
 const REQUIRE_MTLS_ENV: &str = "REQUIRE_LAUNCHER_MTLS_IDENTITY";
 /// 编译期覆盖自更新源地址的环境变量名。
 const LAUNCHER_UPDATE_URL_ENV: &str = "LAUNCHER_UPDATE_URL";
+/// 编译期覆盖国内优化自更新源地址的环境变量名。
+const LAUNCHER_UPDATE_CN_URL_ENV: &str = "LAUNCHER_UPDATE_CN_URL";
+/// 是否显式覆盖了官方入口；覆盖时自更新保持单源语义，不再优先访问国内入口。
+const LAUNCHER_UPDATE_URL_CUSTOM_ENV: &str = "AZURPILOT_LAUNCHER_UPDATE_URL_CUSTOM";
 /// 未显式覆盖时使用的默认自更新源地址。
 const DEFAULT_LAUNCHER_UPDATE_URL: &str = "https://launcher-api.azurpilot.com/updata/stable.json";
+/// 国内优化的更新检查入口：默认优先使用，失败回退官方入口。
+const DEFAULT_LAUNCHER_UPDATE_CN_URL: &str =
+    "https://launcher-api.cn.azurpilot.com/updata/stable.json";
 
 /// 执行 Tauri 构建并把编译期资源写入 `OUT_DIR`。
 ///
@@ -66,14 +74,26 @@ fn main() {
     println!("cargo:rerun-if-env-changed={MTLS_IDENTITY_ENV}");
     println!("cargo:rerun-if-env-changed={REQUIRE_MTLS_ENV}");
     println!("cargo:rerun-if-env-changed={LAUNCHER_UPDATE_URL_ENV}");
+    println!("cargo:rerun-if-env-changed={LAUNCHER_UPDATE_CN_URL_ENV}");
 
     // 自更新源允许在构建时覆盖；空白值视同未设置，回落到默认地址。
-    let launcher_update_url = env::var(LAUNCHER_UPDATE_URL_ENV)
+    let custom_update_url = env::var(LAUNCHER_UPDATE_URL_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let launcher_update_url = custom_update_url
+        .clone()
+        .unwrap_or_else(|| DEFAULT_LAUNCHER_UPDATE_URL.to_string());
+    let launcher_update_cn_url = env::var(LAUNCHER_UPDATE_CN_URL_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_LAUNCHER_UPDATE_URL.to_string());
-    // cargo:rustc-env 在编译期注入该值，运行时用 env! 宏读取。
+        .unwrap_or_else(|| DEFAULT_LAUNCHER_UPDATE_CN_URL.to_string());
+    // cargo:rustc-env 在编译期注入这些值，运行时用 env! 宏读取。
     println!("cargo:rustc-env={LAUNCHER_UPDATE_URL_ENV}={launcher_update_url}");
+    println!("cargo:rustc-env={LAUNCHER_UPDATE_CN_URL_ENV}={launcher_update_cn_url}");
+    println!(
+        "cargo:rustc-env={LAUNCHER_UPDATE_URL_CUSTOM_ENV}={}",
+        if custom_update_url.is_some() { "1" } else { "0" }
+    );
 
     // uv 引导二进制与 mTLS 证书统一写入 OUT_DIR，供运行时按路径内嵌。
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR is set by Cargo");

@@ -22,7 +22,15 @@ export default defineConfig({
               `${locale}.yml`,
             );
             this.addWatchFile(path);
-            return [locale, parse(readFileSync(path, "utf8")).launcher];
+            const parsed = parse(readFileSync(path, "utf8"));
+            // Tips 由主页取消按钮上方轮播展示，放进前端字典供 typed key 读取。
+            const tips = Object.fromEntries(
+              Object.entries(parsed.tips ?? {}).map(([index, text]) => [
+                `tip_${index}`,
+                text,
+              ]),
+            );
+            return [locale, { ...parsed.launcher, ...tips }];
           }),
         );
         const keys = Object.keys(dictionaries["zh-CN"]).sort().join(",");

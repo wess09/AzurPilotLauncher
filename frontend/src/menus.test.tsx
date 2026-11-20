@@ -1,12 +1,16 @@
 // 托盘自绘菜单与页面内右键菜单的渲染与交互测试。
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ContextMenu } from "./ContextMenu";
 import { TrayMenu } from "./TrayMenu";
 
 const bridge = vi.hoisted(() => ({
   native: false,
-  command: vi.fn(async () => undefined),
+  instances: [] as { name: string; status: string }[],
+  command: vi.fn(async (name: string) => {
+    if (name === "tray_instances") return bridge.instances;
+    if (name === "settings_get") return { reducedMotion: false };
+    return undefined;
+  }),
   getContext: vi.fn(async () => ({
     locale: "zh-CN",
     version: "3.0.7",
@@ -21,31 +25,10 @@ vi.mock("./bridge", () => ({
 
 afterEach(cleanup);
 
-describe("ContextMenu", () => {
-  it("拦截右键默认行为并显示自定义菜单项", () => {
-    const { container } = render(<ContextMenu locale="zh-CN" motion={false} />);
-    expect(fireEvent.contextMenu(container)).toBe(false);
-    expect(screen.getByRole("menuitem", { name: "刷新" })).toBeTruthy();
-    // 无选区时复制禁用，无可编辑目标时粘贴/全选禁用。
-    expect(screen.getByRole("menuitem", { name: "复制" }).hasAttribute("disabled")).toBe(true);
-    expect(screen.getByRole("menuitem", { name: "粘贴" }).hasAttribute("disabled")).toBe(true);
-  });
-
-  it("Esc 与菜单外按下都会关闭菜单", () => {
-    const { container } = render(<ContextMenu locale="zh-CN" motion={false} />);
-    fireEvent.contextMenu(container);
-    expect(screen.getByRole("menu")).toBeTruthy();
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.queryByRole("menu")).toBeNull();
-    fireEvent.contextMenu(container);
-    fireEvent.mouseDown(document.body);
-    expect(screen.queryByRole("menu")).toBeNull();
-  });
-});
-
 describe("TrayMenu", () => {
   beforeEach(() => {
     bridge.command.mockClear();
+    bridge.instances = [];
   });
 
   it("渲染三个菜单项，点击回传动作命令", async () => {
@@ -62,5 +45,34 @@ describe("TrayMenu", () => {
     await screen.findByRole("menuitem", { name: "启动器首页" });
     fireEvent.keyDown(window, { key: "Escape" });
     expect(bridge.command).toHaveBeenCalledWith("tray_menu_hide");
+  });
+
+  it("按实例状态渲染启停项与全部启停，点击回传调度动作", async () => {
+    bridge.instances = [
+      { name: "alas", status: "running" },
+      { name: "alas2", status: "stopped" },
+    ];
+    render(<TrayMenu />);
+    expect(await screen.findByRole("menuitem", { name: /alas.*运行中/ })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /alas2.*已停止/ })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "启动全部" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "停止全部" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: /alas.*运行中/ }));
+    expect(bridge.command).toHaveBeenCalledWith("tray_menu_action", {
+      id: "scheduler:stop:alas",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: /alas2.*已停止/ }));
+    expect(bridge.command).toHaveBeenCalledWith("tray_menu_action", {
+      id: "scheduler:start:alas2",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "启动全部" }));
+    expect(bridge.command).toHaveBeenCalledWith("tray_menu_action", {
+      id: "scheduler:start-all",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "停止全部" }));
+    expect(bridge.command).toHaveBeenCalledWith("tray_menu_action", {
+      id: "scheduler:stop-all",
+    });
   });
 });

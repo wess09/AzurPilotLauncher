@@ -61,6 +61,7 @@ fn normalize_locale(input: &str) -> String {
 /// 视为 `en`。
 fn detect_locale() -> String {
     let sys_locale = sys_locale::get_locale().unwrap_or_else(|| "en".to_string());
+    tracing::info!("Detected system locale: {}", sys_locale);
 
     let lang = sys_locale.to_lowercase();
     if lang.starts_with("zh") {

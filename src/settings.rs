@@ -5,9 +5,10 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tracing::warn;
+use tauri_plugin_dialog::DialogExt;
+use tracing::{info, warn};
 
 /// 启动器行为设置；序列化为 camelCase 与前端对齐。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -21,12 +22,27 @@ pub struct Settings {
     pub keep_webview_on_tray: bool,
     /// 减弱动态效果（暂停背景视频等界面动效）。
     pub reduced_motion: bool,
+    /// 关闭背景视频（改用静态图片作为背景）。
+    #[serde(default)]
+    pub disable_background_video: bool,
     /// 阻止计算机自动睡眠（持有系统电源锁）。
     pub prevent_sleep: bool,
     /// 背景视频播放音频（默认关闭）。
     pub audio_enabled: bool,
+    /// 跳过启动器更新：不检查更新，也不因待更新/检查失败阻断启动。
+    #[serde(default)]
+    pub skip_update: bool,
     /// UI 语言偏好；None 表示跟随系统。
     pub language: Option<String>,
+    /// 自定义强调色（#RRGGBB）；None 表示跟随系统默认主题色。
+    #[serde(default)]
+    pub accent_color: Option<String>,
+    /// 自定义背景图片路径（应用数据目录内的文件）；None 表示使用内置图片。
+    #[serde(default)]
+    pub custom_background_image: Option<String>,
+    /// 自定义背景视频路径（应用数据目录内的文件）；None 表示使用内置视频。
+    #[serde(default)]
+    pub custom_background_video: Option<String>,
     /// 更新通道：正式版或金丝雀版（每次 main 构建）。
     pub update_channel: crate::updater::UpdateChannel,
     /// 更新下载源：自动 / 官方源 / GitHub / Cloudflare CDN。
@@ -107,17 +123,22 @@ impl Store {
                 _ => false,
             }
         };
-        let language = raw("language").and_then(|value| match value {
-            rusqlite::types::Value::Text(t) if !t.is_empty() => Some(t),
-            _ => None,
-        });
+        let as_string = |value: Option<rusqlite::types::Value>| -> Option<String> {
+            match value {
+                Some(rusqlite::types::Value::Text(t)) if !t.is_empty() => Some(t),
+                _ => None,
+            }
+        };
+        let language = as_string(raw("language"));
         Settings {
             launch_on_startup: as_bool(raw("launchOnStartup")),
             auto_start_service: as_bool(raw("autoStartService")),
             keep_webview_on_tray: as_bool(raw("keepWebviewOnTray")),
             reduced_motion: as_bool(raw("reducedMotion")),
+            disable_background_video: as_bool(raw("disableBackgroundVideo")),
             prevent_sleep: as_bool(raw("preventSleep")),
             audio_enabled: as_bool(raw("audioEnabled")),
+            skip_update: as_bool(raw("skipUpdate")),
             update_channel: match raw("updateChannel") {
                 Some(rusqlite::types::Value::Text(ref text)) if text == "canary" => {
                     crate::updater::UpdateChannel::Canary
@@ -136,6 +157,9 @@ impl Store {
                 _ => crate::updater::UpdateSource::Auto,
             },
             language,
+            accent_color: as_string(raw("accentColor")),
+            custom_background_image: as_string(raw("customBackgroundImage")),
+            custom_background_video: as_string(raw("customBackgroundVideo")),
             sources: crate::sources::Preferences {
                 download_source: read_source(raw("downloadSource")),
                 python_source: read_source(raw("pythonSource")),
@@ -187,12 +211,28 @@ impl Store {
             if settings.reduced_motion { "1" } else { "0" },
         )?;
         upsert(
+            "disableBackgroundVideo",
+            if settings.disable_background_video {
+                "1"
+            } else {
+                "0"
+            },
+        )?;
+        upsert(
             "preventSleep",
             if settings.prevent_sleep { "1" } else { "0" },
         )?;
         upsert(
             "audioEnabled",
             if settings.audio_enabled { "1" } else { "0" },
+        )?;
+        upsert(
+            "skipUpdate",
+            if settings.skip_update {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         upsert(
             "updateChannel",
@@ -212,12 +252,25 @@ impl Store {
                 crate::updater::UpdateSource::Gitcode => "gitcode",
             },
         )?;
-        match settings.language.as_deref() {
-            Some(language) => upsert("language", language)?,
-            None => {
-                transaction
-                    .execute("DELETE FROM settings WHERE key = 'language'", [])
-                    .map_err(anyhow::Error::from)?;
+        for (key, value) in [
+            ("language", settings.language.as_deref()),
+            ("accentColor", settings.accent_color.as_deref()),
+            (
+                "customBackgroundImage",
+                settings.custom_background_image.as_deref(),
+            ),
+            (
+                "customBackgroundVideo",
+                settings.custom_background_video.as_deref(),
+            ),
+        ] {
+            match value {
+                Some(value) => upsert(key, value)?,
+                None => {
+                    transaction
+                        .execute("DELETE FROM settings WHERE key = ?1", [key])
+                        .map_err(anyhow::Error::from)?;
+                }
             }
         }
         for (key, value) in [
@@ -279,18 +332,25 @@ mod tests {
         assert!(!store.get().auto_start_service);
         assert!(!store.get().keep_webview_on_tray);
         assert!(!store.get().reduced_motion);
+        assert!(!store.get().disable_background_video);
         assert!(!store.get().prevent_sleep);
         assert!(!store.get().audio_enabled);
+        assert!(!store.get().skip_update);
         let next = Settings {
             launch_on_startup: true,
             auto_start_service: false,
             keep_webview_on_tray: true,
             reduced_motion: true,
+            disable_background_video: true,
             prevent_sleep: true,
             audio_enabled: true,
+            skip_update: true,
             update_channel: crate::updater::UpdateChannel::Canary,
             update_source: crate::updater::UpdateSource::Cloudflare,
             language: Some("zh-CN".to_string()),
+            accent_color: Some("#ff5500".to_string()),
+            custom_background_image: Some("image.png".to_string()),
+            custom_background_video: Some("video.mp4".to_string()),
             sources: crate::sources::Preferences::default(),
         };
         store.set(&next).expect("save settings");
@@ -298,11 +358,16 @@ mod tests {
         assert!(read.launch_on_startup);
         assert!(read.keep_webview_on_tray);
         assert!(read.reduced_motion);
+        assert!(read.disable_background_video);
         assert!(read.prevent_sleep);
         assert!(read.audio_enabled);
+        assert!(read.skip_update);
         assert_eq!(read.update_channel, crate::updater::UpdateChannel::Canary);
         assert_eq!(read.update_source, crate::updater::UpdateSource::Cloudflare);
         assert_eq!(read.language.as_deref(), Some("zh-CN"));
+        assert_eq!(read.accent_color.as_deref(), Some("#ff5500"));
+        assert_eq!(read.custom_background_image.as_deref(), Some("image.png"));
+        assert_eq!(read.custom_background_video.as_deref(), Some("video.mp4"));
     }
     #[test]
     fn mirror_preferences_round_trip_and_legacy_records_default_to_auto() {
@@ -368,6 +433,23 @@ mod tests {
             .unwrap();
         assert_eq!(store.get().sources.nodejs_source, NodejsSource::Auto);
     }
+
+    #[test]
+    fn replaces_background_only_after_a_successful_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("selected.mp4");
+        let destination = root.path().join("backgrounds").join("background_video.mp4");
+        std::fs::write(&source, b"first video").unwrap();
+        copy_background_file(&source, &destination).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"first video");
+
+        assert!(copy_background_file(&root.path().join("missing.mp4"), &destination).is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"first video");
+
+        std::fs::write(&source, b"replacement video").unwrap();
+        copy_background_file(&source, &destination).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"replacement video");
+    }
 }
 
 /// 设置数据库路径：系统数据目录/AzurPilot/launcher.db。
@@ -418,8 +500,83 @@ pub(crate) fn settings_set(
         // 通道切换后立即静默检查一次更新，结果反映到首页，由用户手动确认安装。
         controller.request_update_check();
     }
+    if previous.skip_update != settings.skip_update {
+        // 立即放行/重新封锁启动门禁，再跑一次检查同步首页的更新提示。
+        controller.sync_skip_update(settings.skip_update);
+        controller.request_update_check();
+    }
     crate::i18n::apply_override(settings.language.as_deref());
     Ok(store.get())
+}
+
+/// 弹出文件对话框选择背景图片/视频，复制到应用数据目录并返回其绝对路径。
+/// 取消选择时返回 None。
+#[tauri::command]
+pub(crate) async fn pick_background_file(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    kind: String,
+) -> std::result::Result<Option<String>, String> {
+    crate::launcher::authorize(&window, true)?;
+    let (filter_name, extensions, stem) = match kind.as_str() {
+        "image" => (
+            "Images",
+            vec!["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"],
+            "background_image",
+        ),
+        "video" => (
+            "Videos",
+            vec!["mp4", "webm", "mkv", "avi", "mov"],
+            "background_video",
+        ),
+        _ => return Err(format!("Unsupported background kind: {kind}")),
+    };
+    let builder = app
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .add_filter(filter_name, &extensions);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    builder.pick_file(move |path| {
+        let _ = sender.send(path.map(|p| p.to_string()));
+    });
+    let picked = tauri::async_runtime::spawn_blocking(move || receiver.recv())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    let source = PathBuf::from(path);
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("bin");
+    let directory = database_path()
+        .map_err(|e| e.to_string())?
+        .parent()
+        .ok_or_else(|| "Unable to resolve background directory".to_string())?
+        .join("backgrounds");
+    let destination = directory.join(format!("{stem}.{extension}"));
+    tauri::async_runtime::spawn_blocking(move || {
+        copy_background_file(&source, &destination).map_err(|e| e.to_string())?;
+        info!("Copied custom {kind} background to {}", destination.display());
+        Ok(Some(destination.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn copy_background_file(source: &Path, destination: &Path) -> Result<()> {
+    let directory = destination
+        .parent()
+        .ok_or_else(|| anyhow!("Unable to resolve background directory"))?;
+    std::fs::create_dir_all(directory)?;
+    // 同格式替换时先完整复制，避免播放中的请求读到半写入的文件。
+    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
+    std::io::copy(&mut std::fs::File::open(source)?, &mut temporary)?;
+    temporary.persist(destination)?;
+    Ok(())
 }
 
 fn read_source<T: serde::de::DeserializeOwned + Default>(

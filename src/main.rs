@@ -15,6 +15,8 @@ mod backend_env;
 #[cfg(windows)]
 mod backend_process;
 mod cancel;
+/// 后端 WebUI v1 本机控制通道：托盘查询实例与启停调度器。
+mod control_api;
 mod format_util;
 mod fs_util;
 /// Rust 自身的 HTTP/3 优先联网与安全回退。

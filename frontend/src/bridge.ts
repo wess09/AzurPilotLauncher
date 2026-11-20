@@ -8,6 +8,8 @@ import {
 } from "./types";
 
 export const native = "__TAURI_INTERNALS__" in window;
+/** 设置保存成功后在页面内广播，供主题与背景等全局偏好即时刷新。 */
+export const SETTINGS_CHANGED_EVENT = "launcher-settings-changed";
 const preview = import.meta.env.DEV && !native;
 let simulated: Snapshot = {
   sequence: 1,
@@ -15,6 +17,7 @@ let simulated: Snapshot = {
   phase: "idle",
   operation: null,
   update_version: null,
+  update_notes: null,
   update_checked: true,
   backend_running: false,
   deployment_required: false,
@@ -62,6 +65,7 @@ if (preview && scenario) {
       can_update: phase === "update_available",
       can_cancel: phase === "starting" || phase === "repairing",
       update_version: phase === "update_available" ? "3.0.0" : null,
+      update_notes: phase === "update_available" ? "示例：修复若干问题并提升稳定性。" : null,
       error:
         phase === "error"
           ? "Failed to connect to the local service.\nConnection refused: 127.0.0.1:22267"

@@ -5,6 +5,12 @@
   "identifier": "moe.taiho.azurpilot",
   "app": {
     "withGlobalTauri": true,
+    "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$DATA/AzurPilot/backgrounds/**"]
+      }
+    },
     "windows": [
       {
         "label": "main",

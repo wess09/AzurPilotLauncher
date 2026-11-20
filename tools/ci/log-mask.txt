@@ -6,6 +6,8 @@
 http.https://github.com/.extraheader
 https://launcher-api.azurpilot.com/updata/stable.json
 https://launcher-api.azurpilot.com
+https://launcher-api.cn.azurpilot.com/updata/stable.json
+https://launcher-api.cn.azurpilot.com
 https://launcher-download.azurpilot.com
 https://api.cnb.cool
 https://cnb.cool
@@ -48,6 +50,8 @@ https://github.com/cloudflare/workers-sdk
 https://example.com
 launcher-api.azurpilot.com/updata/*
 launcher-api.azurpilot.com
+launcher-api.cn.azurpilot.com/updata/*
+launcher-api.cn.azurpilot.com
 launcher-download.azurpilot.com
 azurpilot.com
 api.cnb.cool
