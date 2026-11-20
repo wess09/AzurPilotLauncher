@@ -56,6 +56,7 @@ pub(crate) fn show_connection_error_dialog(app: &tauri::AppHandle) {
                     state: None,
                     radius: None,
                     color: None,
+                    interactive: false,
                 });
         builder.build()
     };
@@ -112,6 +113,7 @@ pub(crate) fn show_crash_dialog(app: &tauri::AppHandle) {
                     state: None,
                     radius: None,
                     color: None,
+                    interactive: false,
                 });
         builder.build()
     };
