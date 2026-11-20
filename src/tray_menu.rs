@@ -232,7 +232,7 @@ pub(crate) fn refresh_tray_menu(app: &tauri::AppHandle) {
     match native_menu(app) {
         Ok(menu) => {
             if let Some(tray) = app.tray_by_id("main-tray") {
-                if let Err(error) = tray.set_menu(&menu) {
+                if let Err(error) = tray.set_menu(Some(&menu)) {
                     warn!("Failed to refresh macOS tray menu: {error}");
                 }
             }
