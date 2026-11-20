@@ -109,7 +109,7 @@ describe("launcher actions", () => {
     });
     await mount();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    const toggle = await screen.findByRole("switch", { name: "Start the service when the launcher starts" });
+    const toggle = await screen.findByRole("switch", { name: "Start the service on launch" });
     fireEvent.click(toggle);
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Error: Settings permission denied");
     expect(toggle).toHaveProperty("checked", false);
@@ -358,7 +358,10 @@ describe("launcher actions", () => {
         .getByRole("button", { name: /Repair environment/ })
         .hasAttribute("disabled"),
     ).toBe(true);
-    expect(screen.getByText(/Click to cancel/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Starting/ }));
+    expect(screen.getByText(/Click again to cancel/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Click again to cancel/ }));
+    expect(bridge.command).toHaveBeenCalledWith("launcher_cancel");
   });
   it("offers an explicit update and blocks launch and repair", async () => {
     await mount();
@@ -499,7 +502,8 @@ describe("snapshot ordering and progress", () => {
     });
     const button = screen.getByRole("button", { name: "Preparing" });
     expect(button.hasAttribute("disabled")).toBe(false);
-    expect(screen.getByText(/Click to cancel/)).toBeTruthy();
+    fireEvent.click(button);
+    expect(screen.getByText(/Click again to cancel/)).toBeTruthy();
     expect(screen.queryByText(/FETCH/)).toBeNull();
     expect(screen.queryByText(/Dependencies/)).toBeNull();
   });
@@ -524,8 +528,8 @@ describe("snapshot ordering and progress", () => {
   });
 });
 
-it("uses the same complete translation keys in all four languages", () => {
-  for (const locale of ["zh-CN", "zh-TW", "ja", "en"]) {
+it("uses the same complete translation keys in all languages including zh-neko", () => {
+  for (const locale of ["zh-CN", "zh-TW", "ja", "en", "zh-neko"]) {
     expect(Object.keys(dictionaries[locale]).sort()).toEqual(
       [...localeKeys].sort(),
     );

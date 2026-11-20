@@ -32,7 +32,9 @@ pub fn apply_override(language: Option<&str>) {
 /// 永远有可用的语言。
 fn normalize_locale(input: &str) -> String {
     let lower = input.to_ascii_lowercase();
-    if lower.starts_with("zh") {
+    if lower == "zh-neko" || lower.contains("neko") {
+        "zh-neko".to_string()
+    } else if lower.starts_with("zh") {
         if lower.contains("tw")
             || lower.contains("hk")
             || lower.contains("hant")
@@ -74,5 +76,22 @@ fn detect_locale() -> String {
         "ja".to_string()
     } else {
         "en".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_locale() {
+        assert_eq!(normalize_locale("zh-neko"), "zh-neko");
+        assert_eq!(normalize_locale("neko"), "zh-neko");
+        assert_eq!(normalize_locale("ZH-NEKO"), "zh-neko");
+        assert_eq!(normalize_locale("zh-CN"), "zh-CN");
+        assert_eq!(normalize_locale("zh-TW"), "zh-TW");
+        assert_eq!(normalize_locale("ja"), "ja");
+        assert_eq!(normalize_locale("en"), "en");
+        assert_eq!(normalize_locale("unknown"), "en");
     }
 }

@@ -33,7 +33,7 @@ describe("TrayMenu", () => {
 
   it("渲染三个菜单项，点击回传动作命令", async () => {
     render(<TrayMenu />);
-    expect(await screen.findByRole("menuitem", { name: "启动器首页" })).toBeTruthy();
+    expect(await screen.findByRole("menuitem", { name: "首页" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "显示 / 隐藏" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "退出" })).toBeTruthy();
     fireEvent.click(screen.getByRole("menuitem", { name: "退出" }));
@@ -42,7 +42,7 @@ describe("TrayMenu", () => {
 
   it("Esc 调用收起命令", async () => {
     render(<TrayMenu />);
-    await screen.findByRole("menuitem", { name: "启动器首页" });
+    await screen.findByRole("menuitem", { name: "首页" });
     fireEvent.keyDown(window, { key: "Escape" });
     expect(bridge.command).toHaveBeenCalledWith("tray_menu_hide");
   });

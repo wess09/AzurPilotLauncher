@@ -15,7 +15,7 @@ export default defineConfig({
       load(id) {
         if (id !== "\0launcher-locales") return;
         const dictionaries = Object.fromEntries(
-          ["zh-CN", "zh-TW", "ja", "en"].map((locale) => {
+          ["zh-CN", "zh-TW", "ja", "en", "zh-neko"].map((locale) => {
             const path = resolve(
               import.meta.dirname,
               "../locales",

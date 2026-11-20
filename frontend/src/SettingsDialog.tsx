@@ -59,6 +59,7 @@ export const languageOptions = [
   { value: "zh-TW", label: "繁體中文" },
   { value: "ja", label: "日本語" },
   { value: "en", label: "English" },
+  { value: "zh-neko", label: "猫娘语 (ฅ'ω'ฅ)" },
 ] as const;
 
 type SourceLabel = "download" | "python" | "nodejs" | "pypi" | "auto" | "official" | "cnb" | "github" | "nju" | "ustc" | "npmmirror" | "aliyun" | "astral" | "pypi_name" | "tsinghua" | "tencent" | "huawei";
