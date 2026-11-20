@@ -227,6 +227,30 @@ errors:
   time_bomb_format_error: "time-bomb.expires-at の形式が正しくありません：%{error}"
   download_python_failed_mirror: "Python %{version} のダウンロードに失敗しました。ミラー：%{mirror}"
   read_log_file: "ログファイル %{path} を読み取れません: %{error}"
+  log_dir_missing: "ログディレクトリが見つからず、エラーログをまとめられません"
+  network_hint: "サーバーに接続できません。インターネット接続を確認してからもう一度お試しください。"
+  network_timeout_hint: "ネットワーク要求がタイムアウトしました。インターネット接続を確認してからもう一度お試しください。"
+  network_http_hint: "サーバーがエラーを返しました。インターネット接続を確認するか、しばらくしてからお試しください。"
+  network_checksum_hint: "ダウンロードした内容の検証に失敗しました。インターネット接続を確認してからもう一度お試しください。"
+
+# バックエンドのクラッシュ報告：終了コードを平易な要約に変換する
+# （UI 文言は launcher.crash_* に置く）。
+crash:
+  generic: "バックエンドが予期せず終了しました"
+  code_command: "起動コマンドの実行に失敗しました"
+  code_git_fetch: "ソースリポジトリの取得に失敗しました"
+  code_git_merge: "リポジトリの変更のマージに失敗しました"
+  code_deps: "Python の依存関係が正しくインストールされていません"
+  code_startup: "バックエンドの起動に失敗しました"
+  code_worker_cleanup: "前回のバックグラウンドプロセスが正常に終了していません"
+  code_frontend: "インターフェースのビルドに失敗しました"
+  code_subprocess: "バックエンドサービスが複数回起動に失敗しました"
+  code_port_timeout: "バックエンドのポートが準備できませんでした。使用中かもしれません"
+  code_webui_crash: "バックエンドサービスが繰り返しクラッシュしました"
+  code_terminate: "古いプロセスを停止できませんでした"
+  code_ipc: "バックエンド内部の通信エラーが発生しました"
+  code_unhandled: "バックエンドで未処理のエラーが発生しました"
+  code_unknown: "バックエンドが予期せず終了しました"
 
 tips:
   0: "指揮官、今日も頑張りましょう！"
@@ -250,6 +274,10 @@ tips:
   18: "アイアンブラッドの科学技術は世界一！"
 
 launcher:
+  crash_title: "バックエンドのクラッシュ報告"
+  crash_summary_prefix: "クラッシュの原因"
+  crash_download_log: "エラーログをダウンロード"
+  crash_close: "閉じる"
   settings_download_source: "コンポーネントの取得元"
   settings_python_source: "Python の取得元"
   settings_nodejs_source: "Node.js の取得元"

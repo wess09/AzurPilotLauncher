@@ -567,6 +567,7 @@ export function App() {
       {shownError && errorDialogOpen && (
         <ErrorDialog
           title={errorTitle}
+          advice={state?.error_hint && !connection ? state.error_hint : undefined}
           log={shownError}
           hint={t("need_log_help")}
           downloadLabel={t("download_error_log")}

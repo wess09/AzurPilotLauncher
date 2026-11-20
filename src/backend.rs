@@ -653,6 +653,52 @@ fn extract_failure_reason(log_tail: &str) -> Option<String> {
         .filter(|reason| !reason.is_empty())
 }
 
+/// 读取崩溃报告的原始详情：(原因, 详情文本)。
+///
+/// 复用失败原因的日志定位逻辑（当日或最新 `_gui.txt` 尾部）。详情取尾部中
+/// 最后一个结构化错误块（`[错误] ... / 原因 / 影响 / 建议 / Traceback`）起
+/// 到末尾的内容——gui.py 的致命错误都先写该块再写失败标记，因此它包含真正
+/// 的异常类型和堆栈；找不到块时退回整个日志尾部。
+///
+/// 读取失败返回 `(None, String::new())`，由调用方退用已有错误文本。
+pub(crate) fn read_backend_failure_detail() -> (Option<String>, String) {
+    let log_directory = azurpilot_repo_dir().join("log");
+    let today = log_directory.join(format!("{}_gui.txt", Local::now().format("%Y-%m-%d")));
+    let log_path = if today.is_file() {
+        today
+    } else {
+        match newest_gui_log(&log_directory) {
+            Some(path) => path,
+            None => return (None, String::new()),
+        }
+    };
+    let tail = match read_log_tail(&log_path) {
+        Some(tail) => tail,
+        None => return (None, String::new()),
+    };
+    let reason = extract_failure_reason(&tail);
+    let detail = extract_error_block(&tail).unwrap_or_else(|| tail.trim_end().to_owned());
+    (reason, detail)
+}
+
+/// 从日志尾部截取最后一个结构化错误块到末尾。
+///
+/// 块起始标志为行内出现 `[错误]`；错误块的后续行（原因/影响/建议/异常/
+/// Traceback）通常不带日志前缀，因此直接从该行截到尾部即可完整保留。
+fn extract_error_block(log_tail: &str) -> Option<String> {
+    let lines: Vec<&str> = log_tail.lines().collect();
+    let start = lines
+        .iter()
+        .rposition(|line| line.contains("[错误]"))?;
+    let block = lines[start..].join("\n");
+    let block = block.trim_end().to_owned();
+    if block.is_empty() {
+        None
+    } else {
+        Some(block)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

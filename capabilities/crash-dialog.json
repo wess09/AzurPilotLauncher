@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "crash-dialog-local",
+  "description": "The standalone backend crash report dialog may read the snapshot, download the GUI log and close itself.",
+  "windows": ["crash"],
+  "permissions": ["allow-crash-dialog"]
+}

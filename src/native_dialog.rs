@@ -70,3 +70,59 @@ pub(crate) fn close_connection_dialog(app: &tauri::AppHandle) {
         let _ = window.close();
     }
 }
+
+/// 崩溃报告独立窗口的 label（capabilities 按此授权）。
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+const CRASH_WINDOW_LABEL: &str = "crash";
+
+/// 打开（或聚焦已存在的）崩溃报告窗口。
+///
+/// 与连接错误窗同构的无边框置顶窗口，尺寸更大以容纳人话摘要、可展开的
+/// Traceback 详情与操作栏。内容由前端 `CrashWindow` 从 Snapshot.crash 读取。
+pub(crate) fn show_crash_dialog(app: &tauri::AppHandle) {
+    if let Some(existing) = app.get_webview_window(CRASH_WINDOW_LABEL) {
+        let _ = existing.set_focus();
+        return;
+    }
+    let result = {
+        let builder = WebviewWindowBuilder::new(
+            app,
+            CRASH_WINDOW_LABEL,
+            WebviewUrl::App("index.html?window=crash".into()),
+        )
+        .title("AzurPilot")
+        // 起始尺寸接近内容高度，前端渲染后用 window_fit_content 精确贴合。
+        .inner_size(480.0, 180.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .center()
+        .additional_browser_args(
+            "--enable-features=msWebView2EnableDraggableRegions --disable-features=ElasticOverscroll,msWebOOUI,msPdfOOUI,msSmartScreenProtection --no-proxy-server --autoplay-policy=no-user-gesture-required",
+        );
+        #[cfg(windows)]
+        let builder =
+            builder
+                .transparent(true)
+                .effects(tauri::utils::config::WindowEffectsConfig {
+                    effects: vec![tauri::utils::WindowEffect::Acrylic],
+                    state: None,
+                    radius: None,
+                    color: None,
+                });
+        builder.build()
+    };
+    if let Err(error) = result {
+        tracing::warn!("Failed to open crash report window: {error:?}");
+    }
+}
+
+/// 关闭崩溃报告窗口（用户关闭或重新启动后端时调用）。
+pub(crate) fn close_crash_dialog(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(CRASH_WINDOW_LABEL) {
+        let _ = window.close();
+    }
+}

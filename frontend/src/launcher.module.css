@@ -507,6 +507,13 @@ body {
   flex-shrink: 0;
   margin-top: 2px;
 }
+.messageBoxAdvice {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--colorPaletteRedForeground1, #b10e1c);
+  margin: 0 0 12px;
+}
 .messageBoxHint {
   font-size: 12px;
   line-height: 1.6;
@@ -549,6 +556,35 @@ body {
 .connectionWindow .messageBoxContent {
   flex: 1;
   min-height: 0;
+}
+/* 崩溃报告窗：高度由内容决定（Rust 侧 window_fit_content 贴合），不撑满视口。 */
+.crashWindow {
+  position: relative;
+  height: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: color-mix(in srgb, var(--colorNeutralBackground1) 78%, transparent);
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--colorNeutralStroke1);
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.28), 0 0 2px rgba(0, 0, 0, 0.12);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.crashWindow .messageBoxContent {
+  flex: 0 0 auto;
+}
+.crashWindow .messageBoxFooter {
+  background-color: color-mix(in srgb, var(--colorNeutralBackground3, #f0f2f5) 82%, transparent) !important;
+}
+.crashWindow .messageBoxCloseBtn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 /* 云母窗口内底部操作栏同样半透明，让材质连续透出。 */
 .connectionWindow .messageBoxFooter {

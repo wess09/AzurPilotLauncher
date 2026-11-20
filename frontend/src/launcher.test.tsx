@@ -31,6 +31,8 @@ const ready = (): Snapshot => ({
   progress: null,
   error: null,
   error_code: null,
+  error_hint: null,
+  crash: null,
   connection_error: null,
   message: null,
   can_start: true,

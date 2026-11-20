@@ -227,6 +227,30 @@ errors:
   time_bomb_format_error: "time-bomb.expires-at format error: %{error}"
   download_python_failed_mirror: "Failed to download Python %{version}, mirror: %{mirror}"
   read_log_file: "Unable to read log file %{path}: %{error}"
+  log_dir_missing: "Log directory not found; cannot package the error log"
+  network_hint: "Could not reach the server. Check your internet connection and try again."
+  network_timeout_hint: "The network request timed out. Check your internet connection and try again."
+  network_http_hint: "The server returned an error. Check your internet connection or try again later."
+  network_checksum_hint: "The downloaded content failed verification. Check your internet connection and try again."
+
+# Backend crash report: exit codes become plain-language summaries
+# (UI strings live under launcher.crash_*).
+crash:
+  generic: "The backend exited unexpectedly"
+  code_command: "The startup command failed to run"
+  code_git_fetch: "Failed to fetch the source repository"
+  code_git_merge: "Failed to merge the repository changes"
+  code_deps: "Python dependencies are not installed properly"
+  code_startup: "The backend failed to start"
+  code_worker_cleanup: "A leftover background process did not exit cleanly"
+  code_frontend: "The interface failed to build"
+  code_subprocess: "The backend service failed to start after several attempts"
+  code_port_timeout: "The backend port never became ready; it may be in use"
+  code_webui_crash: "The backend service kept crashing"
+  code_terminate: "The old process could not be stopped"
+  code_ipc: "An internal backend communication error occurred"
+  code_unhandled: "The backend hit an unhandled error"
+  code_unknown: "The backend exited unexpectedly"
 
 tips:
   0: "Commander, let's do our best again today!"
@@ -250,6 +274,10 @@ tips:
   18: "Iron Blood's technology is the best in the world!"
 
 launcher:
+  crash_title: "Backend crash report"
+  crash_summary_prefix: "Crash reason"
+  crash_download_log: "Download error log"
+  crash_close: "Close"
   settings_download_source: "Component source"
   settings_python_source: "Python source"
   settings_nodejs_source: "Node.js source"

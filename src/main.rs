@@ -45,6 +45,8 @@ mod updater;
 mod windows;
 use windows::*;
 mod components;
+/// 后端崩溃报告：退出码人话映射与日志详情提取。
+mod crash_report;
 /// 首次部署、组件更新与后端配置。
 mod setup;
 /// 窗口工具（控制台附着状态等平台辅助）。
@@ -639,6 +641,17 @@ fn window_exit_application(app_handle: tauri::AppHandle) -> Result<(), String> {
         .state::<Arc<launcher::Launcher>>()
         .exit()
         .map_err(|e| e.to_string())
+}
+
+/// Tauri 命令：按 CSS 像素内容尺寸调整当前窗口大小（崩溃报告窗自适应高度）。
+///
+/// 前端测量内容区实际高度后传入逻辑像素尺寸，这里按窗口 DPI 换算为物理像素，
+/// 使无边框弹窗高度精确贴合内容，而不是固定一个大尺寸留下空白。
+#[tauri::command]
+fn window_fit_content(window: WebviewWindow, width: u32, height: u32) -> tauri::Result<()> {
+    use tauri::LogicalSize;
+    // LogicalSize 由 Tauri 按窗口当前 DPI 自动换算为物理像素。
+    window.set_size(LogicalSize::new(width, height))
 }
 
 /// Tauri 命令：开始拖动窗口（标题栏拖拽区与 splash 拖拽区调用）。

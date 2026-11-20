@@ -3,6 +3,7 @@
 use crate::tray_icon_for_platform;
 use crate::{
     backend::{ManagedBackend, WebuiLaunchConfig},
+    crash_report::{self, CrashReport},
     initialize_logging,
     launcher_control::{start_launcher_channel, ChannelHandler, LauncherChannel},
     notify::NotificationClickHandler,
@@ -76,6 +77,11 @@ pub(crate) struct Snapshot {
     pub progress: Option<SplashUpdate>,
     pub error: Option<String>,
     pub error_code: Option<i32>,
+    /// 面向用户的友好提示：网络类错误时给出“请检查互联网连接”等可行动建议。
+    /// 原始技术细节仍在 `error`，供日志卡片与排障使用。
+    pub error_hint: Option<String>,
+    /// 后端崩溃报告（启动失败 / 运行期意外退出时填充），供独立崩溃报告窗口展示。
+    pub crash: Option<CrashReport>,
     pub connection_error: Option<String>,
     pub message: Option<String>,
     pub can_start: bool,
@@ -113,6 +119,8 @@ impl Model {
                 progress: None,
                 error: None,
                 error_code: None,
+                error_hint: None,
+                crash: None,
                 connection_error: None,
                 message: None,
                 can_start: false,
@@ -222,11 +230,19 @@ impl Model {
                     };
                     self.view.error = None;
                     self.view.error_code = None;
+                    self.view.error_hint = None;
+                    self.view.crash = None;
                     self.view.progress = None;
                 }
                 Err(error) => {
                     self.view.phase = Phase::Error;
                     let (text, code) = split_error_code(&format!("{error:#}"));
+                    self.view.error_hint = network_error_hint(&text);
+                    // 带分类退出码的启动/部署失败属于后端崩溃，采集报告并弹窗。
+                    // 分类码之外的普通任务错误（如 check/update 的网络失败）不弹崩溃窗。
+                    if code.is_some_and(is_crash_code) {
+                        self.view.crash = Some(crash_report::collect(code, &text));
+                    }
                     self.view.error = Some(text);
                     self.view.error_code = code;
                 }
@@ -373,6 +389,10 @@ impl Launcher {
             m.finish(task, result);
         });
         if failed && !self.lock_model().exiting {
+            // 带分类退出码的崩溃已写入 Snapshot.crash，弹出独立崩溃报告窗口。
+            if self.lock_model().view.crash.is_some() {
+                crate::native_dialog::show_crash_dialog(&self.app);
+            }
             let _ = show_launcher_home(&self.app);
         }
     }
@@ -603,6 +623,8 @@ impl Launcher {
     }
 
     fn start_session(self: &Arc<Self>, task: u64) {
+        // 重新启动时关闭上一次的崩溃报告窗口。
+        let _ = crate::native_dialog::close_crash_dialog(&self.app);
         let stop = Arc::new(AtomicBool::new(false));
         let on_click: NotificationClickHandler = {
             let controller = self.clone();
@@ -633,23 +655,24 @@ impl Launcher {
         thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 thread::sleep(Duration::from_millis(250));
-                let exited = {
+                let exit_status = {
                     let mut backend = controller.lock_backend();
                     backend
                         .as_mut()
                         .filter(|(id, _)| *id == task)
                         .and_then(|(_, b)| b.try_wait().ok().flatten())
-                        .is_some()
                 };
-                if exited && !stop.load(Ordering::SeqCst) {
-                    controller.unexpected_exit(task);
-                    break;
+                if let Some(status) = exit_status {
+                    if !stop.load(Ordering::SeqCst) {
+                        controller.unexpected_exit(task, status.code());
+                        break;
+                    }
                 }
             }
         });
     }
 
-    fn unexpected_exit(&self, task: u64) {
+    fn unexpected_exit(&self, task: u64, exit_code: Option<i32>) {
         // Claim this session before joining its streams. A simultaneous stop wins safely.
         {
             let mut model = self.lock_model();
@@ -665,18 +688,24 @@ impl Launcher {
             model.touch();
         }
         let _ = self.stop_backend();
+        let fallback = t!("launcher.backend_exited").to_string();
+        let report = crash_report::collect(exit_code, &fallback);
         self.change(|m| {
             m.active = false;
             m.view.backend_running = false;
             m.view.phase = Phase::Error;
             m.view.operation = Some(Operation::Start);
-            m.view.error = Some(t!("launcher.backend_exited").to_string());
+            m.view.error = Some(fallback.clone());
+            m.view.error_code = exit_code;
             m.view.connection_error = m.view.error.clone();
+            m.view.crash = Some(report);
             m.touch();
         });
         if let Some(window) = self.app.get_webview_window("main") {
-            let _ = navigate_to_backend_error(&window, self.port, &t!("launcher.backend_exited"));
+            let _ = navigate_to_backend_error(&window, self.port, &fallback);
         }
+        // 独立崩溃报告窗口（PCL2 风格：人话摘要 + 可展开详情 + 下载日志）。
+        crate::native_dialog::show_crash_dialog(&self.app);
         let _ = show_launcher_home(&self.app);
 
         // 后端意外退出（如熔断退出码 76 等）时发送系统通知；点击通知唤起启动器主页
@@ -871,6 +900,67 @@ pub(crate) fn split_error_code(text: &str) -> (String, Option<i32>) {
     (clean.trim().to_string(), Some(code))
 }
 
+/// 是否属于「后端崩溃」分类退出码：deploy ErrorCodes（1、10-13）与 gui EXIT_*（70-78）。
+/// 只有这些码才弹独立崩溃报告窗口；check/update 的普通错误不带此类码。
+fn is_crash_code(code: i32) -> bool {
+    code == 1 || (10..=13).contains(&code) || (70..=78).contains(&code)
+}
+
+/// 从错误文本识别网络类错误，返回面向用户的可行动提示；非网络错误返回 None。
+///
+/// 错误来源混杂：既有 i18n 中文（如 `network.deadline` = "网络请求超时"），
+/// 也有 reqwest/anyhow 的英文串（如 `HTTP status server error (500)`、
+/// `primary unavailable`、`dns error`）。这里按关键词归类，给出统一提示，
+/// 原始技术串仍由 `error` 字段保留在日志卡片中供排障。
+///
+/// 本地后端不可达（`errors.backend_unreachable`）不属于互联网问题，排除在外，
+/// 它由独立的连接错误窗口处理。
+pub(crate) fn network_error_hint(text: &str) -> Option<String> {
+    if text.is_empty() {
+        return None;
+    }
+    let lower = text.to_ascii_lowercase();
+
+    // 本地后端错误走独立的连接错误窗口，不套用互联网提示。
+    if lower.contains("本地后端") || lower.contains("local backend") {
+        return None;
+    }
+
+    const NETWORK_MARKERS: &[&str] = &[
+        "http", "https", "tls", "ssl", "dns", "tcp", "quic",
+        "connection", "connect ", "connected", "refused", "unreachable",
+        "timeout", "timed out", "deadline", "download", "download failed",
+        "primary unavailable", "network", "socket", "certificate",
+        "redirect", "response", "checksum", "sha256", "digest mismatch",
+        "网络", "连接", "下载", "超时", "校验", "无法检查", "无法获取组件清单",
+    ];
+    if !NETWORK_MARKERS.iter().any(|m| lower.contains(m)) {
+        return None;
+    }
+
+    let hint = if lower.contains("checksum")
+        || lower.contains("sha256")
+        || lower.contains("digest mismatch")
+        || lower.contains("校验")
+    {
+        t!("errors.network_checksum_hint")
+    } else if lower.contains("timeout")
+        || lower.contains("timed out")
+        || lower.contains("deadline")
+        || lower.contains("超时")
+    {
+        t!("errors.network_timeout_hint")
+    } else if lower.contains("http status")
+        || lower.contains("returned http")
+        || (lower.contains("http ") && lower.contains("error"))
+    {
+        t!("errors.network_http_hint")
+    } else {
+        t!("errors.network_hint")
+    };
+    Some(hint.to_string())
+}
+
 pub(crate) fn is_local_page(app: &tauri::AppHandle, window: &WebviewWindow) -> bool {
     let Ok(url) = window.url() else {
         return false;
@@ -898,11 +988,10 @@ pub(crate) fn authorize(window: &WebviewWindow, home_only: bool) -> Result<(), S
     // 来源由 permissions/launcher.toml 和 capabilities/*.json 交给 Tauri
     // 按本次 IPC 的调用来源校验；这里仅保留窗口标签的防御性检查。
     // 不再读取 WebView 当前 URL，避免 WKWebView 的 URL 查询差异误拒本地调用。
-    // tray_menu 弹窗只做只读调用（读语言、设置）。
+    // tray_menu 弹窗与 crash 崩溃报告窗口只做只读调用（读语言、状态/设置）。
     let label = window.label();
-    if label != "launcher"
-        && (home_only || (label != "main" && label != crate::tray_menu::TRAY_MENU_LABEL))
-    {
+    let read_only_aux = label == crate::tray_menu::TRAY_MENU_LABEL || label == "crash";
+    if label != "launcher" && (home_only || (label != "main" && !read_only_aux)) {
         warn!(
             "Rejected IPC from window '{}': home_only={}",
             label, home_only
@@ -1051,7 +1140,7 @@ pub(crate) fn run() -> Result<()> {
             crate::download_log_archive, crate::prompt_log_archive_path,
             crate::settings::settings_get, crate::settings::settings_set,
             crate::window_hide, crate::window_minimize, crate::window_toggle_maximize, crate::window_close, crate::window_exit_application,
-            crate::window_start_dragging, crate::window_is_maximized,
+            crate::window_start_dragging, crate::window_is_maximized, crate::window_fit_content,
             crate::tray_menu::tray_menu_action, crate::tray_menu::tray_menu_hide
         ])
         .setup(move |app| {
@@ -1269,6 +1358,35 @@ mod tests {
         let (text, code) = split_error_code("普通错误，无标记");
         assert_eq!(code, None);
         assert_eq!(text, "普通错误，无标记");
+    }
+
+    #[test]
+    fn network_error_hint_classifies_network_failures() {
+        // 互联网类错误都应有友好提示。
+        for text in [
+            "launcher update download returned HTTP 503",
+            "HTTP status server error (500 Internal Server Error)",
+            "网络请求超时",
+            "dns error: failed to lookup address",
+            "primary unavailable",
+            "launcher update sha256 mismatch: expected a, got b",
+            "下载组件失败：连接被重置",
+        ] {
+            assert!(
+                network_error_hint(text).is_some(),
+                "expected a network hint for: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn network_error_hint_skips_local_backend_and_plain_errors() {
+        // 本地后端错误走独立连接窗口，不应套用互联网提示。
+        assert!(network_error_hint("无法连接本地后端 http://127.0.0.1:22267").is_none());
+        // 普通业务错误不应误判为网络问题。
+        assert!(network_error_hint("文件路径无效").is_none());
+        assert!(network_error_hint("任务已取消").is_none());
+        assert!(network_error_hint("").is_none());
     }
 
     #[test]

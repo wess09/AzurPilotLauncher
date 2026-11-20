@@ -227,6 +227,29 @@ errors:
   time_bomb_format_error: "time-bomb.expires-at 格式错误：%{error}"
   download_python_failed_mirror: "下载 Python %{version} 失败，镜像：%{mirror}"
   read_log_file: "无法读取日志文件 %{path}: %{error}"
+  log_dir_missing: "找不到日志目录，无法打包错误日志"
+  network_hint: "无法连接服务器，请检查互联网连接后重试。"
+  network_timeout_hint: "网络连接超时，请检查互联网连接后重试。"
+  network_http_hint: "服务器返回错误，请检查互联网连接或稍后重试。"
+  network_checksum_hint: "下载内容校验失败，请检查互联网连接后重试。"
+
+# 后端崩溃报告：退出码翻译成人话摘要（前端展示文案在 launcher.crash_*）。
+crash:
+  generic: "后端异常退出"
+  code_command: "启动命令执行失败"
+  code_git_fetch: "拉取仓库源码失败"
+  code_git_merge: "合并仓库代码失败"
+  code_deps: "Python 依赖没有安装好"
+  code_startup: "后端启动失败"
+  code_worker_cleanup: "上次的后台进程没有正常退出"
+  code_frontend: "界面构建失败"
+  code_subprocess: "后端服务多次启动失败"
+  code_port_timeout: "后端端口迟迟没有就绪，可能被占用"
+  code_webui_crash: "后端服务反复意外退出"
+  code_terminate: "旧进程无法停止"
+  code_ipc: "后端内部通信出错"
+  code_unhandled: "后端遇到未处理的错误"
+  code_unknown: "后端异常退出"
 
 tips:
   0: "指挥官，今天也要加油哦！"
@@ -250,6 +273,10 @@ tips:
   18: "铁血的科技世界第一！"
 
 launcher:
+  crash_title: "后端崩溃报告"
+  crash_summary_prefix: "崩溃原因"
+  crash_download_log: "下载错误日志"
+  crash_close: "关闭"
   settings_download_source: "组件下载源"
   settings_python_source: "Python 下载源"
   settings_nodejs_source: "Node.js 下载源"

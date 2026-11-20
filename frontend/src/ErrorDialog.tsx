@@ -24,6 +24,7 @@ import { useInstantDialog } from "./useInstantDialog";
 // 底部操作区为灰阶分层底栏，含“下载错误日志”与“关闭”主操作。
 export function ErrorDialog({
   title,
+  advice,
   log,
   hint,
   downloadLabel,
@@ -33,6 +34,7 @@ export function ErrorDialog({
   onClose,
 }: {
   title: string;
+  advice?: string;
   log: string;
   hint: string;
   downloadLabel: string;
@@ -99,6 +101,9 @@ export function ErrorDialog({
               />
             </div>
             <DialogContent className={styles.messageBoxInnerContent}>
+              {advice && (
+                <p className={styles.messageBoxAdvice} role="alert">{advice}</p>
+              )}
               {log && (
                 <pre className={styles.messageBoxLogCard} data-selectable>{log}</pre>
               )}

@@ -36,6 +36,14 @@ description = "Close, drag or exit from the standalone connection error dialog."
 commands.allow = ["window_exit_application", "window_close", "window_start_dragging"]
 
 [[permission]]
+identifier = "allow-crash-dialog"
+description = "Read the crash report and download the backend log from the standalone crash report dialog."
+commands.allow = [
+  "launcher_context", "launcher_snapshot", "download_today_gui_log",
+  "window_close", "window_start_dragging", "window_fit_content",
+]
+
+[[permission]]
 identifier = "allow-tray-menu"
 description = "Run tray popup menu actions and hide the popup window itself."
 commands.allow = ["tray_menu_action", "tray_menu_hide"]

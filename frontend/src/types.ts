@@ -21,6 +21,13 @@ export interface Progress {
   terminal: boolean;
   sequence: number;
 }
+export interface CrashReport {
+  code: number | null;
+  /** 人话一句话崩溃原因。 */
+  summary: string;
+  /** 原始日志/Traceback，可展开查看。 */
+  detail: string;
+}
 export interface Snapshot {
   sequence: number;
   task_id: number;
@@ -33,6 +40,9 @@ export interface Snapshot {
   progress: Progress | null;
   error: string | null;
   error_code: number | null;
+  error_hint: string | null;
+  /** 后端崩溃报告（启动失败/运行期意外退出时填充）。 */
+  crash: CrashReport | null;
   connection_error: string | null;
   message: string | null;
   can_start: boolean;

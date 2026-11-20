@@ -227,6 +227,29 @@ errors:
   time_bomb_format_error: "time-bomb.expires-at 格式錯誤：%{error}"
   download_python_failed_mirror: "下載 Python %{version} 失敗，鏡像：%{mirror}"
   read_log_file: "無法讀取日誌檔案 %{path}: %{error}"
+  log_dir_missing: "找不到日誌目錄，無法打包錯誤日誌"
+  network_hint: "無法連線至伺服器，請檢查網際網路連線後重試。"
+  network_timeout_hint: "網路連線逾時，請檢查網際網路連線後重試。"
+  network_http_hint: "伺服器回傳錯誤，請檢查網際網路連線或稍後重試。"
+  network_checksum_hint: "下載內容校驗失敗，請檢查網際網路連線後重試。"
+
+# 後端崩潰報告：退出碼翻譯成人話摘要（前端展示文案在 launcher.crash_*）。
+crash:
+  generic: "後端異常結束"
+  code_command: "啟動命令執行失敗"
+  code_git_fetch: "拉取儲存庫原始碼失敗"
+  code_git_merge: "合併儲存庫程式碼失敗"
+  code_deps: "Python 依賴沒有安裝好"
+  code_startup: "後端啟動失敗"
+  code_worker_cleanup: "上次的背景處理程序沒有正常結束"
+  code_frontend: "介面建置失敗"
+  code_subprocess: "後端服務多次啟動失敗"
+  code_port_timeout: "後端連接埠遲遲沒有就緒，可能被佔用"
+  code_webui_crash: "後端服務反覆意外結束"
+  code_terminate: "舊處理程序無法停止"
+  code_ipc: "後端內部通訊出錯"
+  code_unhandled: "後端遇到未處理的錯誤"
+  code_unknown: "後端異常結束"
 
 tips:
   0: "指揮官，今天也要加油哦！"
@@ -250,6 +273,10 @@ tips:
   18: "鐵血的科技世界第一！"
 
 launcher:
+  crash_title: "後端崩潰報告"
+  crash_summary_prefix: "崩潰原因"
+  crash_download_log: "下載錯誤日誌"
+  crash_close: "關閉"
   settings_download_source: "元件下載來源"
   settings_python_source: "Python 下載來源"
   settings_nodejs_source: "Node.js 下載來源"

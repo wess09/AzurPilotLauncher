@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { FluentProvider } from "@fluentui/react-components";
 import { App } from "./App";
 import { ConnectionWindow } from "./ConnectionWindow";
+import { CrashWindow } from "./CrashWindow";
 import { TrayMenu } from "./TrayMenu";
 import { launcherDarkTheme, launcherLightTheme } from "./theme";
 // 全局 NS2 彩虹焦点环：覆盖 Fluent 组件默认的深色焦点框。
@@ -57,7 +58,18 @@ const isConnectionDialogWindow =
 // 不渲染主页的视频背景与状态逻辑。
 const isTrayMenuWindow =
   new URLSearchParams(location.search).get("view") === "tray";
-if (isTrayMenuWindow) {
+// 后端崩溃报告独立窗口（?window=crash）：人话摘要 + 可展开详情 + 下载日志。
+const isCrashWindow =
+  new URLSearchParams(location.search).get("window") === "crash";
+if (isCrashWindow) {
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <FluentShell>
+        <CrashWindow />
+      </FluentShell>
+    </StrictMode>,
+  );
+} else if (isTrayMenuWindow) {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       <FluentShell>
