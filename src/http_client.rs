@@ -648,8 +648,26 @@ pub(crate) fn read_limited(
         if remaining.is_zero() {
             bail!(t!("network.deadline"));
         }
-        let response = crate::cancel::request(request.try_clone().timeout(remaining), &cancel)?
-            .error_for_status()?;
+        // 连接池复用半关闭连接时，请求阶段也会断连；这类传输错误与原
+        // body 读取错误同样可重试。HTTP 状态码由 error_for_status 原样返回，
+        // 交给上层入口回退，绝不在这里重试。
+        let response = match crate::cancel::request(
+            request.try_clone().timeout(remaining),
+            &cancel,
+        ) {
+            Ok(response) => response,
+            Err(error) => {
+                if !retryable_anyhow(&error) || attempt == MAX_TRANSPORT_RETRIES {
+                    return Err(error);
+                }
+                backoff(attempt, &cancel, timeout, started)?;
+                continue;
+            }
+        };
+        let response = match response.error_for_status() {
+            Ok(response) => response,
+            Err(error) => return Err(error.into()),
+        };
         let mut bytes = Vec::new();
         match crate::cancel::body(response, cancel.clone())
             .take(limit as u64 + 1)
@@ -666,20 +684,37 @@ pub(crate) fn read_limited(
                 if !retry || attempt == MAX_TRANSPORT_RETRIES {
                     return Err(error.into());
                 }
-                let delay = retry_delay(attempt).min(timeout.saturating_sub(started.elapsed()));
-                let backoff_started = Instant::now();
-                while backoff_started.elapsed() < delay {
-                    crate::launcher::ensure_not_cancelled(&cancel)?;
-                    std::thread::sleep(
-                        delay
-                            .saturating_sub(backoff_started.elapsed())
-                            .min(Duration::from_millis(50)),
-                    );
-                }
+                backoff(attempt, &cancel, timeout, started)?;
             }
         }
     }
     unreachable!()
+}
+
+/// 判断 anyhow 包装的请求错误是否为可重试的传输层断连。
+fn retryable_anyhow(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<reqwest::Error>()
+        .is_some_and(retryable)
+}
+
+fn backoff(
+    attempt: usize,
+    cancel: &AtomicBool,
+    timeout: Duration,
+    started: Instant,
+) -> Result<()> {
+    let delay = retry_delay(attempt).min(timeout.saturating_sub(started.elapsed()));
+    let backoff_started = Instant::now();
+    while backoff_started.elapsed() < delay {
+        crate::launcher::ensure_not_cancelled(cancel)?;
+        std::thread::sleep(
+            delay
+                .saturating_sub(backoff_started.elapsed())
+                .min(Duration::from_millis(50)),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]

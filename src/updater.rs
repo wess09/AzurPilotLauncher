@@ -716,46 +716,54 @@ mod source_tests {
 mod manifest_source_tests {
     use super::*;
 
-    /// 单请求本地清单服务；用于验证入口回退而不访问公网。
+    /// 本地清单服务；在 5 秒窗口内接受所有请求，避免客户端连接池复用
+    /// 半关闭连接时在 Windows 上偶发 `unexpected message from connection`。
     fn manifest_test_server(response: String) -> (String, thread::JoinHandle<()>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/stable.json", listener.local_addr().unwrap());
         listener.set_nonblocking(true).unwrap();
         let server = thread::spawn(move || {
             let started_at = Instant::now();
-            let (mut stream, _) = loop {
+            let mut requests = 0usize;
+            loop {
                 match listener.accept() {
-                    Ok(accepted) => break accepted,
+                    Ok((mut stream, _)) => {
+                        requests += 1;
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(5)))
+                            .unwrap();
+                        let mut request = [0u8; 1024];
+                        let _ = stream.read(&mut request);
+                        stream.write_all(response.as_bytes()).unwrap();
+                    }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        // 覆盖 transport 重试的退避窗口，确保重试连接也能被服务。
+                        if requests > 0 && started_at.elapsed() >= Duration::from_secs(2) {
+                            break;
+                        }
                         assert!(
-                            started_at.elapsed() < Duration::from_secs(5),
+                            started_at.elapsed() < Duration::from_secs(8),
                             "missing manifest request"
                         );
                         thread::sleep(Duration::from_millis(5));
                     }
                     Err(error) => panic!("accept manifest request: {error}"),
                 }
-            };
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            let mut request = [0u8; 1024];
-            let _ = stream.read(&mut request);
-            stream.write_all(response.as_bytes()).unwrap();
+            }
         });
         (url, server)
     }
 
     fn json_response(body: &str) -> String {
         format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
             body
         )
     }
 
     fn error_response(status: &str) -> String {
-        format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\n\r\n")
     }
 
     fn valid_manifest_body(notes: &str) -> String {

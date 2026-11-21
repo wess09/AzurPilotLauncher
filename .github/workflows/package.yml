@@ -931,21 +931,33 @@ jobs:
                     >/dev/null || echo "WARN: could not delete old asset ${name}, continuing"
                 fi
                 echo "Uploading to GitCode: ${name}"
-                # 第一步：取预签名上传地址与请求头。
-                upload_json="$(curl -fsS --max-time 30 \
-                  "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/upload_url?access_token=${GITCODE_TOKEN}&file_name=${name}")"
-                put_url="$(jq -r '.url' <<<"${upload_json}")"
-                if [[ -z "${put_url}" || "${put_url}" == "null" ]]; then
-                  echo "::error::GitCode 未返回上传地址: ${upload_json}" >&2
+                # 预签名 PUT 偶发长时间无响应（CI 上曾四个平台同时 300s 超时）。
+                # 缩短单次超时并重试；每次重试重新取地址，避免用过期预签名 URL。
+                local uploaded=0 attempt
+                for attempt in 1 2 3; do
+                  upload_json="$(curl -fsS --max-time 30 \
+                    "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/upload_url?access_token=${GITCODE_TOKEN}&file_name=${name}")" || continue
+                  put_url="$(jq -r '.url' <<<"${upload_json}")"
+                  if [[ -z "${put_url}" || "${put_url}" == "null" ]]; then
+                    echo "::error::GitCode 未返回上传地址: ${upload_json}" >&2
+                    exit 1
+                  fi
+                  if curl -fsS --max-time 90 -X PUT "${put_url}" \
+                    -H "x-obs-meta-project-id: $(jq -r '.headers["x-obs-meta-project-id"]' <<<"${upload_json}")" \
+                    -H "x-obs-acl: $(jq -r '.headers["x-obs-acl"]' <<<"${upload_json}")" \
+                    -H "x-obs-callback: $(jq -r '.headers["x-obs-callback"]' <<<"${upload_json}")" \
+                    -H "Content-Type: $(jq -r '.headers["Content-Type"]' <<<"${upload_json}")" \
+                    --data-binary "@${file}" >/dev/null; then
+                    uploaded=1
+                    break
+                  fi
+                  echo "GitCode 上传 ${name} 第 ${attempt} 次失败，重试..."
+                  sleep 3
+                done
+                if [[ "${uploaded}" -ne 1 ]]; then
+                  echo "::error::GitCode 上传 ${name} 失败（已重试 3 次）" >&2
                   exit 1
                 fi
-                # 第二步：用返回的 headers 原样 PUT 文件二进制。
-                curl -fsS --max-time 300 -X PUT "${put_url}" \
-                  -H "x-obs-meta-project-id: $(jq -r '.headers["x-obs-meta-project-id"]' <<<"${upload_json}")" \
-                  -H "x-obs-acl: $(jq -r '.headers["x-obs-acl"]' <<<"${upload_json}")" \
-                  -H "x-obs-callback: $(jq -r '.headers["x-obs-callback"]' <<<"${upload_json}")" \
-                  -H "Content-Type: $(jq -r '.headers["Content-Type"]' <<<"${upload_json}")" \
-                  --data-binary "@${file}" >/dev/null
               ) &
               pids+=($!)
             done
