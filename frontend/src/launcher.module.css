@@ -878,6 +878,14 @@ body {
   overflow-y: auto;
   padding-bottom: 20px;
   padding-right: 10px;
+  /* 设置弹窗滚动条完全隐藏，内容仍可滚动；覆盖全局胶囊滚动条样式。 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.settingsContent::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
 }
 
 /* Windows 11 / WinUI 3 动态极简胶囊滚动条（移除原生丑陋粗滚动条与三角箭头） */
