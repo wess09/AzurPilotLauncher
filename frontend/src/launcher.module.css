@@ -1,14 +1,36 @@
 @font-face {
   font-family: MiSans;
   src: url("../../fonts/MiSansLauncher.ttf") format("truetype");
-  font-weight: 100 900;
+  font-weight: 150 700;
+  font-display: swap;
+}
+/* 主 VF 不含泰文 / 阿拉伯文，猫娘语颜文字用到时按需加载对应子字体。 */
+@font-face {
+  font-family: MiSans;
+  src: url("../../fonts/MiSansThaiLauncher.ttf") format("truetype");
+  font-weight: 150 700;
+  font-display: swap;
+  unicode-range: U+0E00-0E7F;
+}
+@font-face {
+  font-family: MiSans;
+  src: url("../../fonts/MiSansArabicLauncher.ttf") format("truetype");
+  font-weight: 150 700;
+  font-display: swap;
+  unicode-range: U+0600-06FF;
+}
+@font-face {
+  font-family: GoogleSans;
+  src: url("../../fonts/GoogleSansLauncher.ttf") format("truetype");
+  font-weight: 400 700;
   font-display: swap;
 }
 /* WinUI 3 / Fluent 2 分层：交互控件全部来自 @fluentui/react-components，
-   这里只保留布局、Mica 底材与文字阶梯。深浅双主题跟随系统。 */
+   这里只保留布局、Mica 底材与文字阶梯。深浅双主题跟随系统。
+   GoogleSans 在前负责英文与数字，中文回退 MiSans，字重按各字体实际轴范围声明。 */
 :root {
   font-family:
-    MiSans, "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI",
+    GoogleSans, MiSans, "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI",
     "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
   color: #ffffff;
   font-synthesis: none;

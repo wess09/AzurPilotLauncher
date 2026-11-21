@@ -10,8 +10,9 @@
 AzurLaneAutoScript.app/
 证书.txt
 
-# Source font used to generate the tracked launcher subset.
+# Source fonts used to generate the tracked launcher subsets.
 /fonts/MiSansVF.ttf
+/fonts/GoogleSans-VariableFont_GRAD,opsz,wght.ttf
 
 # Cloudflare Worker local state and generated deployment manifest.
 /cf-worker/.wrangler/

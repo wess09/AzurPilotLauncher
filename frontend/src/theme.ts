@@ -8,9 +8,9 @@ import {
   type Theme,
 } from "@fluentui/react-components";
 
-// WinUI 排版：内嵌 MiSans 优先覆盖中西文，Segoe UI Variable 随系统兜底。
+// WinUI 排版：GoogleSans 负责英文与数字，MiSans 覆盖中文，Segoe UI Variable 随系统兜底。
 const fontFamilyBase =
-  'MiSans,"Segoe UI Variable Text","Segoe UI Variable","Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",sans-serif';
+  'GoogleSans,MiSans,"Segoe UI Variable Text","Segoe UI Variable","Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",sans-serif';
 const fontFamilyMonospace =
   '"Cascadia Code",Consolas,"Courier New",monospace';
 

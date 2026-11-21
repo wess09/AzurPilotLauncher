@@ -1032,7 +1032,13 @@ jobs:
               "${r2_prefix}/"*/) ;;
               *) echo "Refusing to delete unexpected R2 prefix: ${version_prefix}" >&2; exit 1 ;;
             esac
-            if [ "${is_tag_release}" != "tag" ]; then
+            if [ "${is_tag_release}" = "tag" ]; then
+              # 正式版发布只清理历史正式版目录，绝不触碰金丝雀载荷：
+              # canary 清单滚动指向上一次金丝雀构建，误删会让更新 404。
+              case "$(basename "${version_prefix%/}")" in
+                *-canary.*) continue ;;
+              esac
+            else
               # 金丝雀发布只清理历史金丝雀目录，绝不触碰正式版本载荷。
               case "$(basename "${version_prefix%/}")" in
                 *-canary.*) ;;
