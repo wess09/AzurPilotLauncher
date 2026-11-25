@@ -5,6 +5,7 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri_plugin_dialog::DialogExt;
@@ -49,6 +50,12 @@ pub struct Settings {
     pub update_source: crate::updater::UpdateSource,
     #[serde(flatten)]
     pub sources: crate::sources::Preferences,
+    /// 启用 Mirror 酱 Git Pack 本体源码更新。
+    #[serde(default)]
+    pub use_mirror_chyan: bool,
+    /// Mirror 酱 CDK（仅用于本体源码下载，不在日志输出明文）。
+    #[serde(default)]
+    pub mirror_chyan_cdk: Option<String>,
 }
 
 /// SQLite 设置存储：内部互斥锁保护连接。
@@ -166,6 +173,8 @@ impl Store {
                 nodejs_source: read_source(raw("nodejsSource")),
                 pypi_source: read_source(raw("pypiSource")),
             },
+            use_mirror_chyan: as_bool(raw("useMirrorChyan")),
+            mirror_chyan_cdk: as_string(raw("mirrorChyanCdk")),
         }
     }
 
@@ -252,6 +261,10 @@ impl Store {
                 crate::updater::UpdateSource::Gitcode => "gitcode",
             },
         )?;
+        upsert(
+            "useMirrorChyan",
+            if settings.use_mirror_chyan { "1" } else { "0" },
+        )?;
         for (key, value) in [
             ("language", settings.language.as_deref()),
             ("accentColor", settings.accent_color.as_deref()),
@@ -262,6 +275,14 @@ impl Store {
             (
                 "customBackgroundVideo",
                 settings.custom_background_video.as_deref(),
+            ),
+            (
+                "mirrorChyanCdk",
+                settings
+                    .mirror_chyan_cdk
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty()),
             ),
         ] {
             match value {
@@ -336,6 +357,8 @@ mod tests {
         assert!(!store.get().prevent_sleep);
         assert!(!store.get().audio_enabled);
         assert!(!store.get().skip_update);
+        assert!(!store.get().use_mirror_chyan);
+        assert!(store.get().mirror_chyan_cdk.is_none());
         let next = Settings {
             launch_on_startup: true,
             auto_start_service: false,
@@ -352,6 +375,8 @@ mod tests {
             custom_background_image: Some("image.png".to_string()),
             custom_background_video: Some("video.mp4".to_string()),
             sources: crate::sources::Preferences::default(),
+            use_mirror_chyan: true,
+            mirror_chyan_cdk: Some("cdk-test".to_string()),
         };
         store.set(&next).expect("save settings");
         let read = store.get();
@@ -368,7 +393,38 @@ mod tests {
         assert_eq!(read.accent_color.as_deref(), Some("#ff5500"));
         assert_eq!(read.custom_background_image.as_deref(), Some("image.png"));
         assert_eq!(read.custom_background_video.as_deref(), Some("video.mp4"));
+        assert!(read.use_mirror_chyan);
+        assert_eq!(read.mirror_chyan_cdk.as_deref(), Some("cdk-test"));
     }
+
+    #[test]
+    fn mirror_settings_sync_to_git_section_in_the_bootstrap_format() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config/deploy.yaml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        let original = "Deploy:\n  Git:\n    Branch: master\n  Webui:\n    WebuiPort: 22267\n";
+        std::fs::write(&config, original).unwrap();
+
+        assert!(!sync_mirror_chyan_to_deploy_yaml(root.path(), true, Some("cdk-test")).unwrap());
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), original);
+
+        let client = root.path().join("deploy/mirrorchyan/client.py");
+        std::fs::create_dir_all(client.parent().unwrap()).unwrap();
+        std::fs::write(client, "").unwrap();
+        assert!(sync_mirror_chyan_to_deploy_yaml(root.path(), true, Some(" cdk-test ")).unwrap());
+        let updated = std::fs::read_to_string(&config).unwrap();
+        assert!(updated.contains("    MirrorChyanCdk: 'cdk-test'\n"));
+        let parsed: serde_json::Value = serde_yaml::from_str(&updated).unwrap();
+        assert_eq!(parsed["Deploy"]["Git"]["UseMirrorChyan"], true);
+        assert_eq!(parsed["Deploy"]["Git"]["MirrorChyanCdk"], "cdk-test");
+        assert_eq!(parsed["Deploy"]["Webui"]["WebuiPort"], 22267);
+
+        assert!(sync_mirror_chyan_to_deploy_yaml(root.path(), false, None).unwrap());
+        let disabled = std::fs::read_to_string(&config).unwrap();
+        assert_eq!(disabled.matches("MirrorChyanCdk:").count(), 1);
+        assert!(disabled.contains("    UseMirrorChyan: false\n    MirrorChyanCdk: null\n"));
+    }
+
     #[test]
     fn mirror_preferences_round_trip_and_legacy_records_default_to_auto() {
         use crate::sources::*;
@@ -506,7 +562,103 @@ pub(crate) fn settings_set(
         controller.request_update_check();
     }
     crate::i18n::apply_override(settings.language.as_deref());
-    Ok(store.get())
+    let saved = store.get();
+    if previous.use_mirror_chyan != saved.use_mirror_chyan
+        || previous.mirror_chyan_cdk != saved.mirror_chyan_cdk
+    {
+        if let Err(error) = sync_mirror_chyan_to_deploy_yaml(
+            &crate::setup::azurpilot_repo_dir(),
+            saved.use_mirror_chyan,
+            saved.mirror_chyan_cdk.as_deref(),
+        ) {
+            warn!("Failed to sync MirrorChyan settings to config/deploy.yaml: {error:#}");
+        }
+    }
+    Ok(saved)
+}
+
+/// 将 Mirror 酱配置同步到支持它的本体部署脚本。首次部署前仅保存在启动器数据库中。
+pub(crate) fn sync_mirror_chyan_to_deploy_yaml(
+    root: &Path,
+    use_mirror_chyan: bool,
+    mirror_chyan_cdk: Option<&str>,
+) -> Result<bool> {
+    // 旧版本的部署脚本会把未知配置项写入日志。
+    if !root.join("deploy/mirrorchyan/client.py").is_file() {
+        return Ok(false);
+    }
+    let directory = root.join("config");
+    let path = directory.join("deploy.yaml");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    let updated = apply_mirror_chyan_lines(&content, use_mirror_chyan, mirror_chyan_cdk)?;
+    if updated != content {
+        let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;
+        temporary.write_all(updated.as_bytes())?;
+        temporary.persist(&path).map_err(|error| error.error)?;
+    }
+    Ok(true)
+}
+
+/// 按行更新 YAML 文本中的 `UseMirrorChyan` 与 `MirrorChyanCdk`，不输出明文 CDK。
+fn apply_mirror_chyan_lines(
+    content: &str,
+    use_mirror_chyan: bool,
+    mirror_chyan_cdk: Option<&str>,
+) -> Result<String> {
+    let bool_str = if use_mirror_chyan { "true" } else { "false" };
+    let cdk_val = match mirror_chyan_cdk.map(str::trim).filter(|cdk| !cdk.is_empty()) {
+        Some(cdk) => {
+            if cdk.chars().any(char::is_control) {
+                return Err(anyhow!("MirrorChyan CDK contains control characters"));
+            }
+            // 本体引导阶段的简易 YAML 读取器只剥除外层单引号。
+            format!("'{}'", cdk.replace('\'', "''"))
+        }
+        None => "null".to_owned(),
+    };
+
+    let mut found_use = false;
+    let mut found_cdk = false;
+    let mut git_insertion = None;
+    let mut output = String::with_capacity(content.len() + 64);
+
+    for line in content.lines() {
+        let indent_len = line.len() - line.trim_start().len();
+        let indent = &line[..indent_len];
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("UseMirrorChyan:") {
+            found_use = true;
+            output.push_str(indent);
+            output.push_str("UseMirrorChyan: ");
+            output.push_str(bool_str);
+        } else if trimmed.starts_with("MirrorChyanCdk:") {
+            found_cdk = true;
+            output.push_str(indent);
+            output.push_str("MirrorChyanCdk: ");
+            output.push_str(&cdk_val);
+        } else {
+            output.push_str(line);
+        }
+        output.push('\n');
+        if trimmed == "Git:" {
+            git_insertion = Some((output.len(), indent_len + 2));
+        }
+    }
+
+    let (position, indent) = git_insertion.unwrap_or((output.len(), 0));
+    let mut missing = String::new();
+    if !found_use {
+        missing.push_str(&format!("{:indent$}UseMirrorChyan: {bool_str}\n", ""));
+    }
+    if !found_cdk {
+        missing.push_str(&format!("{:indent$}MirrorChyanCdk: {cdk_val}\n", ""));
+    }
+    output.insert_str(position, &missing);
+    Ok(output)
 }
 
 /// 弹出文件对话框选择背景图片/视频，复制到应用数据目录并返回其绝对路径。

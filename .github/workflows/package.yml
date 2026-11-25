@@ -441,14 +441,14 @@ jobs:
       - name: Package standalone launcher
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         run: python tools/package_launcher.py
-      - name: Install Inno Setup (Windows x64 only)
-        if: matrix.os == 'windows-latest' && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
+      - name: Install Inno Setup (Windows x64 / ARM64)
+        if: (matrix.os == 'windows-latest' || matrix.os == 'windows-11-arm') && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
         shell: bash
         run: |
           set -o pipefail
           choco install innosetup --no-progress --limit-output -y 2>&1 | bash tools/ci/redact-urls.sh
-      - name: Build Windows installer (Windows x64 only)
-        if: matrix.os == 'windows-latest' && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
+      - name: Build Windows installer (Windows x64 / ARM64)
+        if: (matrix.os == 'windows-latest' || matrix.os == 'windows-11-arm') && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
         shell: pwsh
         env:
           WINDOWS_SIGNING_PFX_B64: ${{ secrets.WINDOWS_SIGNING_PFX_B64 }}
@@ -471,11 +471,12 @@ jobs:
           }
           $signingScript = (Resolve-Path tools/ci/sign-windows.ps1).Path
           $signingCommand = 'pwsh.exe -NoProfile -NonInteractive -File $q' + $signingScript + '$q -Path $f'
+          $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
           & $iscc install.iss `
             '/DCodeSigning' `
             "/Sazurpilot=$signingCommand" `
             "/DAppVersion=$env:PACKAGE_VERSION" `
-            "/DOutputBaseFilename=AzurPilot_Setup_$env:PACKAGE_VERSION" `
+            "/DOutputBaseFilename=AzurPilot_Setup_$($env:PACKAGE_VERSION)_$arch" `
             "/DPackageRoot=package-root\AzurPilot" `
             "/DSetupRoot=setup"
           if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation or code signing failed.' }
@@ -813,9 +814,9 @@ jobs:
               --cache-control "public, max-age=31536000, immutable" \
               --only-show-errors
           done
-      # GitHub Actions 只上传 CNB（海外能连，慢）；GitCode 附件预签名地址固定在
-      # 华为云华南节点，海外 runner 直连不通，改由 CNB 国内流水线转传同步。
-      - name: Upload launcher payloads to CNB and trigger GitCode sync
+      # CNB 与 GitCode 两个源并行上传；每个源内部多个平台产物也并行。
+      # 任一上传失败都会被 wait 收集，最终让本 step 失败，不会静默发布半套产物。
+      - name: Upload launcher payloads to CNB and GitCode releases
         env:
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
@@ -890,38 +891,77 @@ jobs:
             fi
           }
 
-          # 触发 CNB 国内流水线，把刚上传到 CNB Release 的本次产物同步到 GitCode。
-          # 文件名按换行传给 CNB；GITCODE_TOKEN / CNB_TOKEN 作为触发器环境变量，
-          # 由 GitHub Actions 的 secrets 自动脱敏，不在流水线配置里落明文。
-          sync_gitcode() {
-            if [[ -z "${GITCODE_TOKEN:-}" || -z "${CNB_TOKEN:-}" ]]; then
-              echo "::error::缺少 GITCODE_TOKEN 或 CNB_TOKEN，无法触发 CNB→GitCode 同步" >&2
+          upload_gitcode() {
+            if [[ -z "${GITCODE_TOKEN:-}" ]]; then
+              echo "::error::缺少 GITCODE_TOKEN，无法上传构建产物到 GitCode" >&2
               return 1
             fi
-            npm install -g @cnbcool/cnb-cli >/dev/null
-            local payload_files
-            payload_files="$(printf '%s\n' "${files[@]##*/}")"
-            CNB_TOKEN="${CNB_TOKEN}" cnb build start-build \
-              --repo "${CNB_REPO}" \
-              --event api_trigger_sync_gitcode \
-              --branch main \
-              --env "PAYLOAD_FILES=${payload_files}" \
-              --env "GITCODE_TOKEN=${GITCODE_TOKEN}" \
-              --env "CNB_TOKEN=${CNB_TOKEN}" \
-              --title "sync gitcode ${GITHUB_REF_NAME}"
+            # GITCODE_TOKEN 必须是纯 token 值：配置时用 gh secret set --body，
+            # 不要用 PowerShell 管道写入，否则尾部换行会让 GitCode 返回 401。
+            local tag="${GITCODE_RELEASE_TAG}"
+            local release_resp release_code release_json
+            release_resp="$(curl -sS --max-time 30 -w $'\n%{http_code}' \
+              "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}?access_token=${GITCODE_TOKEN}")"
+            release_code="$(tail -n1 <<<"${release_resp}")"
+            release_json="$(sed '$d' <<<"${release_resp}")"
+            if [[ "${release_code}" == "401" || "${release_code}" == "403" ]]; then
+              echo "::error::GitCode token 鉴权失败 (HTTP ${release_code})，请检查 GITCODE_TOKEN" >&2
+              return 1
+            fi
+            if [[ "${release_code}" == "404" || -z "$(jq -r '.tag_name // empty' <<<"${release_json}")" ]]; then
+              echo "GitCode release ${tag} not found, creating it"
+              curl -fsS --max-time 30 -X POST \
+                "${GITCODE_API}/repos/${GITCODE_REPO}/releases?access_token=${GITCODE_TOKEN}" \
+                -H 'Content-Type: application/json' \
+                --data-raw "{\"tag_name\":\"${tag}\",\"name\":\"${tag}\",\"body\":\"Launcher payloads (rolling)\",\"target_commitish\":\"main\",\"release_status\":\"latest\"}" \
+                >/dev/null
+              release_json="$(curl -fsS --max-time 30 \
+                "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}?access_token=${GITCODE_TOKEN}")"
+            fi
+
+            local pids=() file name asset_id
+            for file in "${files[@]}"; do
+              [[ -f "${file}" ]] || continue
+              name="$(basename "${file}")"
+              asset_id="$(jq -r --arg name "${name}" '.assets[]? | select(.name == $name and .type == "attach") | .id' <<<"${release_json}" | head -n1)"
+              (
+                if [[ -n "${asset_id}" && "${asset_id}" != "null" ]]; then
+                  echo "Deleting existing GitCode asset: ${name} (${asset_id})"
+                  curl -fsS --max-time 30 -X DELETE \
+                    "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/attach_files/${asset_id}?access_token=${GITCODE_TOKEN}" \
+                    >/dev/null || echo "WARN: could not delete old asset ${name}, continuing"
+                fi
+                echo "Uploading to GitCode: ${name}"
+                # 第一步：取预签名上传地址与请求头。
+                upload_json="$(curl -fsS --max-time 30 \
+                  "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/upload_url?access_token=${GITCODE_TOKEN}&file_name=${name}")"
+                put_url="$(jq -r '.url' <<<"${upload_json}")"
+                if [[ -z "${put_url}" || "${put_url}" == "null" ]]; then
+                  echo "::error::GitCode 未返回上传地址: ${upload_json}" >&2
+                  exit 1
+                fi
+                # 第二步：用返回的 headers 原样 PUT 文件二进制。
+                curl -fsS --max-time 300 -X PUT "${put_url}" \
+                  -H "x-obs-meta-project-id: $(jq -r '.headers["x-obs-meta-project-id"]' <<<"${upload_json}")" \
+                  -H "x-obs-acl: $(jq -r '.headers["x-obs-acl"]' <<<"${upload_json}")" \
+                  -H "x-obs-callback: $(jq -r '.headers["x-obs-callback"]' <<<"${upload_json}")" \
+                  -H "Content-Type: $(jq -r '.headers["Content-Type"]' <<<"${upload_json}")" \
+                  --data-binary "@${file}" >/dev/null
+              ) &
+              pids+=($!)
+            done
+            for pid in "${pids[@]}"; do
+              wait "${pid}"
+            done
           }
 
           upload_cnb &
           cnb_pid=$!
+          upload_gitcode &
+          gitcode_pid=$!
           rc=0
           wait "${cnb_pid}" || rc=1
-
-          # CNB 上传成功后触发 CNB 国内流水线，把本次产物同步到 GitCode。
-          # GitCode 附件预签名地址固定在华为云华南节点，海外 runner 直连不通；
-          # CNB 流水线在国内执行，下载/上传都是国内链路。
-          if [[ "${rc}" -eq 0 ]]; then
-            sync_gitcode
-          fi
+          wait "${gitcode_pid}" || rc=1
           exit "${rc}"
       # stable.json 以静态资源整体发布到 Worker（cf-worker/ 中没有 main 脚本），
       # 命中资源的请求不执行 Worker，不消耗 Workers 请求配额。
@@ -993,13 +1033,7 @@ jobs:
               "${r2_prefix}/"*/) ;;
               *) echo "Refusing to delete unexpected R2 prefix: ${version_prefix}" >&2; exit 1 ;;
             esac
-            if [ "${is_tag_release}" = "tag" ]; then
-              # 正式版发布只清理历史正式版目录，绝不触碰金丝雀载荷：
-              # canary 清单滚动指向上一次金丝雀构建，误删会让更新 404。
-              case "$(basename "${version_prefix%/}")" in
-                *-canary.*) continue ;;
-              esac
-            else
+            if [ "${is_tag_release}" != "tag" ]; then
               # 金丝雀发布只清理历史金丝雀目录，绝不触碰正式版本载荷。
               case "$(basename "${version_prefix%/}")" in
                 *-canary.*) ;;

@@ -38,8 +38,8 @@ OutputBaseFilename={#OutputBaseFilename}
 Compression=lzma
 SolidCompression=yes
 
-ArchitecturesAllowed=x86 x64
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64os arm64
+ArchitecturesInstallIn64BitMode=x64os arm64
 DisableProgramGroupPage=yes
 WizardStyle=modern
 ShowLanguageDialog=no
@@ -77,9 +77,9 @@ Name: "{app}\.venv";    Permissions: users-modify
 Source: "{#PackageRoot}\AzurPilot.exe";      DestDir: "{app}";          Flags: ignoreversion; Permissions: users-modify
 
 ; 运行时安装器（释放到临时目录，安装后自动清理）
-Source: "{#SetupRoot}\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist
-Source: "{#SetupRoot}\vcredist_x64.exe";               DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist; Check: IsWin64
-Source: "{#SetupRoot}\vcredist_x86.exe";               DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist
+Source: "{#SetupRoot}\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist; Check: ShouldInstallRuntime
+Source: "{#SetupRoot}\vcredist_x64.exe";               DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist; Check: ShouldInstallRuntime64
+Source: "{#SetupRoot}\vcredist_x86.exe";               DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist; Check: ShouldInstallRuntime
 
 [Icons]
 Name: "{autoprograms}\AzurPilot"; Filename: "{app}\AzurPilot.exe"; WorkingDir: "{app}"
@@ -94,56 +94,28 @@ Filename: "{tmp}\vcredist_x64.exe"; \
   Parameters: "/install /quiet /norestart"; \
   StatusMsg: "正在从塞壬主服务器里偷取最新的运行环境 (x64)..."; \
   Flags: waituntilterminated skipifdoesntexist; \
-  Check: IsWin64
+  Check: ShouldInstallRuntime64
 
 Filename: "{tmp}\vcredist_x86.exe"; \
   Parameters: "/install /quiet /norestart"; \
   StatusMsg: "正在从塞壬主服务器里偷取最新的运行环境 (x86)..."; \
-  Flags: waituntilterminated skipifdoesntexist
+  Flags: waituntilterminated skipifdoesntexist; \
+  Check: ShouldInstallRuntime
 
 ; WebView2 Bootstrapper：联网检测+安装，可能耗时较长
 Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; \
   Parameters: "/silent /install"; \
   StatusMsg: "正在向明石支付800红宝石以解锁WebView2的下载带宽（可能需要几分钟）..."; \
-  Flags: waituntilterminated skipifdoesntexist
+  Flags: waituntilterminated skipifdoesntexist; \
+  Check: ShouldInstallRuntime
 
+; postinstall 默认使用未提升的原用户；启动器要求管理员权限时会触发错误 740。
 Filename: "{app}\AzurPilot.exe"; \
   Description: "{cm:LaunchProgram,AzurPilot}"; \
   WorkingDir: "{app}"; \
-  Flags: nowait postinstall skipifsilent
+  Flags: nowait postinstall skipifsilent runascurrentuser
 
 [Code]
-
-// ==========================================================================
-//  用户协议 / 隐私声明（内嵌网页）
-//  通过 ATL ActiveX Host 创建 AtlAxWin 子窗口，嵌入本地 wrapper HTML。
-//  Wrapper 内用 iframe 加载线上协议页，强制 scrolling="yes" 保证滚动条可用。
-// ==========================================================================
-const
-  WS_CHILD = $40000000;
-  WS_VISIBLE = $10000000;
-  WS_BORDER = $00800000;
-  WS_CLIPSIBLINGS = $04000000;
-  WS_TABSTOP = $00010000;
-  AGREEMENT_URL = 'https://alas.nanoda.work/WVSb8fdprkNr8pEWnVS56XxxrpRtS7tVpj8b5Bs8A242Z8K8hv7rPdbsZmsX/privacydisclaimer.html';
-
-function AtlAxWinInit(): Boolean;
-  external 'AtlAxWinInit@atl.dll cdecl';
-
-function CreateWindowEx(dwExStyle: LongWord; lpClassName, lpWindowName: String;
-  dwStyle: LongWord; x, y, nWidth, nHeight: Integer;
-  hWndParent, hMenu, hInstance: HWND; lpParam: LongWord): HWND;
-#ifdef UNICODE
-  external 'CreateWindowExW@user32.dll stdcall';
-#else
-  external 'CreateWindowExA@user32.dll stdcall';
-#endif
-
-function DestroyWindow(hWnd: HWND): Boolean;
-  external 'DestroyWindow@user32.dll stdcall';
-
-function SetFocus(hWnd: HWND): HWND;
-  external 'SetFocus@user32.dll stdcall';
 
 function GetTickCount: Cardinal;
   external 'GetTickCount@kernel32.dll stdcall';
@@ -152,12 +124,6 @@ function GetTickCount: Cardinal;
 //  全局变量
 // ==========================================================================
 var
-  AgreementPage: TWizardPage;
-  AgreementCheck: TNewCheckBox;
-  AgreementBrowser: HWND;
-  AgreementWrapperPath: String;
-  AgreementOpenButton: TNewButton;
-
   ETALabel: TNewStaticText;
   InstallStartTick: Cardinal;
   PermStartTick: Cardinal;
@@ -165,117 +131,86 @@ var
   KeepDeployYaml: Boolean;
   DeployYamlBackupPath: String;
 
-// ==========================================================================
-//  用户协议页面
-// ==========================================================================
-procedure UpdateAgreementNextButton;
-begin
-  if Assigned(AgreementPage) and (WizardForm.CurPageID = AgreementPage.ID) then
-    WizardForm.NextButton.Enabled := AgreementCheck.Checked;
-end;
+  InstallModePage: TInputOptionWizardPage;
+  ExistingInstallFound: Boolean;
+  SelectedInstallMode: Integer;
 
-procedure AgreementCheckClick(Sender: TObject);
-begin
-  UpdateAgreementNextButton;
-end;
+const
+  INSTALL_MODE_INSTALL = 0;
+  INSTALL_MODE_UPDATE = 1;
+  INSTALL_MODE_REPAIR = 2;
 
-function HtmlEscapeForAttr(const S: String): String;
-begin
-  Result := S;
-  StringChangeEx(Result, '&', '&amp;', True);
-  StringChangeEx(Result, '"', '&quot;', True);
-  StringChangeEx(Result, '<', '&lt;', True);
-  StringChangeEx(Result, '>', '&gt;', True);
-end;
-
-function BuildAgreementWrapperHtml: String;
+function HasExistingInstallAt(const Dir: String): Boolean;
 begin
   Result :=
-    '<!doctype html>' + #13#10 +
-    '<html>' + #13#10 +
-    '<head>' + #13#10 +
-    '  <meta http-equiv="X-UA-Compatible" content="IE=edge" />' + #13#10 +
-    '  <meta charset="utf-8" />' + #13#10 +
-    '  <style>' + #13#10 +
-    '    html, body { width:100%; height:100%; margin:0; padding:0; overflow:hidden; background:#fff; }' + #13#10 +
-    '    #wrap { position:absolute; left:0; top:0; right:0; bottom:0; overflow-y:scroll; overflow-x:hidden; -ms-overflow-style:scrollbar; }' + #13#10 +
-    '    iframe { display:block; width:100%; height:6000px; border:0; overflow:hidden; }' + #13#10 +
-    '  </style>' + #13#10 +
-    '</head>' + #13#10 +
-    '<body>' + #13#10 +
-    '  <div id="wrap">' + #13#10 +
-    '    <iframe src="' + HtmlEscapeForAttr(AGREEMENT_URL) + '" scrolling="yes"></iframe>' + #13#10 +
-    '  </div>' + #13#10 +
-    '</body>' + #13#10 +
-    '</html>';
-end;
-
-function PrepareAgreementWrapper: Boolean;
-begin
-  AgreementWrapperPath := ExpandConstant('{tmp}\azurpilot_agreement_wrapper.html');
-  Result := SaveStringToFile(AgreementWrapperPath, BuildAgreementWrapperHtml, False);
-end;
-
-function LocalPathToFileUrl(const Path: String): String;
-begin
-  Result := Path;
-  StringChangeEx(Result, '\', '/', True);
-  StringChangeEx(Result, ' ', '%20', True);
-  Result := 'file:///' + Result;
-end;
-
-procedure AgreementOpenButtonClick(Sender: TObject);
-var
-  ResultCode: Integer;
-begin
-  ShellExec('open', AGREEMENT_URL, '', '', SW_SHOWNORMAL, ewNoWait, ResultCode);
-end;
-
-procedure CreateAgreementPage;
-var
-  BrowserTop: Integer;
-  BrowserHeight: Integer;
-  BrowserUrl: String;
-begin
-  AgreementPage := CreateCustomPage(
-    wpSelectDir,
-    '用户协议与隐私声明',
-    '请阅读页面内容，勾选同意后继续安装 AzurPilot。'
-  );
-
-  BrowserTop := 0;
-  BrowserHeight := AgreementPage.SurfaceHeight - ScaleY(64);
-
-  if PrepareAgreementWrapper then
-    BrowserUrl := LocalPathToFileUrl(AgreementWrapperPath)
-  else
-    BrowserUrl := AGREEMENT_URL;
-
-  if AtlAxWinInit() then
-  begin
-    AgreementBrowser := CreateWindowEx(
-      0,
-      'AtlAxWin',
-      BrowserUrl,
-      WS_CHILD or WS_VISIBLE or WS_BORDER or WS_CLIPSIBLINGS or WS_TABSTOP,
-      ScaleX(0),
-      BrowserTop,
-      AgreementPage.SurfaceWidth,
-      BrowserHeight,
-      AgreementPage.Surface.Handle,
-      0, 0, 0
+    DirExists(Dir) and
+    (
+      FileExists(AddBackslash(Dir) + 'AzurPilot.exe') or
+      FileExists(AddBackslash(Dir) + 'alas-launcher.exe') or
+      DirExists(AddBackslash(Dir) + 'config') or
+      DirExists(AddBackslash(Dir) + 'deploy') or
+      DirExists(AddBackslash(Dir) + 'bootstrap')
     );
-  end;
+end;
 
-  AgreementCheck := TNewCheckBox.Create(AgreementPage);
-  AgreementCheck.Parent := AgreementPage.Surface;
-  AgreementCheck.Left := ScaleX(0);
-  AgreementCheck.Top := AgreementPage.SurfaceHeight - ScaleY(28);
-  AgreementCheck.Width := AgreementPage.SurfaceWidth;
-  AgreementCheck.Height := ScaleY(22);
-  AgreementCheck.Caption := '我已阅读并同意用户协议与隐私声明';
-  AgreementCheck.Checked := False;
-  AgreementCheck.OnClick := @AgreementCheckClick;
+function CurrentInstallMode: Integer;
+begin
+  if ExistingInstallFound then
+    Result := SelectedInstallMode
+  else
+    Result := INSTALL_MODE_INSTALL;
+end;
+
+function IsUpdateMode: Boolean;
+begin
+  Result := CurrentInstallMode = INSTALL_MODE_UPDATE;
+end;
+
+function IsRepairMode: Boolean;
+begin
+  Result := CurrentInstallMode = INSTALL_MODE_REPAIR;
+end;
+
+function ShouldInstallRuntime: Boolean;
+begin
+  Result := not IsUpdateMode;
+end;
+
+function ShouldInstallRuntime64: Boolean;
+begin
+  Result := IsWin64 and ShouldInstallRuntime;
+end;
+
+// ==========================================================================
+//  已安装时的操作类型选择
+// ==========================================================================
+procedure CreateInstallModePage;
+begin
+  InstallModePage := CreateInputOptionPage(
+    wpSelectDir,
+    '选择维护方式',
+    '检测到本计算机已有 AzurPilot，请选择本次要执行的操作。',
+    '',
+    True,
+    False
+  );
+  InstallModePage.Add('安装');
+  InstallModePage.Add('更新');
+  InstallModePage.Add('修复');
+  InstallModePage.Values[0] := True;
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+
+  if Assigned(InstallModePage) and (PageID = InstallModePage.ID) then
+  begin
+    ExistingInstallFound := HasExistingInstallAt(RemoveBackslashUnlessRoot(WizardDirValue));
+    Result := not ExistingInstallFound;
+    if not ExistingInstallFound then
+      SelectedInstallMode := INSTALL_MODE_INSTALL;
+  end;
 end;
 
 // ==========================================================================
@@ -283,7 +218,10 @@ end;
 // ==========================================================================
 procedure InitializeWizard;
 begin
-  CreateAgreementPage;
+  SelectedInstallMode := INSTALL_MODE_INSTALL;
+  ExistingInstallFound := False;
+
+  CreateInstallModePage;
 
   ETALabel := TNewStaticText.Create(WizardForm);
   ETALabel.Parent := WizardForm.InstallingPage;
@@ -291,31 +229,6 @@ begin
   ETALabel.Top := WizardForm.ProgressGauge.Top + WizardForm.ProgressGauge.Height + ScaleY(4);
   ETALabel.Width := WizardForm.ProgressGauge.Width;
   ETALabel.Caption := '';
-end;
-
-// ==========================================================================
-//  向导页面切换
-// ==========================================================================
-procedure CurPageChanged(CurPageID: Integer);
-var
-  FocusedWindow: HWND;
-begin
-  if Assigned(AgreementPage) and (CurPageID = AgreementPage.ID) then
-  begin
-    WizardForm.NextButton.Enabled := AgreementCheck.Checked;
-    if AgreementBrowser <> 0 then
-      FocusedWindow := SetFocus(AgreementBrowser);
-  end
-  else
-    WizardForm.NextButton.Enabled := True;
-end;
-
-procedure DeinitializeSetup;
-var
-  Destroyed: Boolean;
-begin
-  if AgreementBrowser <> 0 then
-    Destroyed := DestroyWindow(AgreementBrowser);
 end;
 
 // ==========================================================================
@@ -410,16 +323,20 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   Dir, FixedDir: String;
+  I: Integer;
 begin
   Result := True;
 
-  if Assigned(AgreementPage) and (CurPageID = AgreementPage.ID) then
+  if Assigned(InstallModePage) and (CurPageID = InstallModePage.ID) then
   begin
-    if not AgreementCheck.Checked then
+    SelectedInstallMode := INSTALL_MODE_INSTALL;
+    for I := 0 to 2 do
     begin
-      MsgBox('指挥官，请先阅读并同意用户协议与隐私声明后再出港。', mbError, MB_OK);
-      Result := False;
-      Exit;
+      if InstallModePage.Values[I] then
+      begin
+        SelectedInstallMode := I;
+        Break;
+      end;
     end;
   end;
 
@@ -475,6 +392,55 @@ begin
 end;
 
 // ==========================================================================
+//  修复模式清理
+//  删除 {app} 下除 config / bootstrap / deploy / log 以外的全部子文件夹
+// ==========================================================================
+function ShouldKeepRepairFolder(const Name: String): Boolean;
+begin
+  Result :=
+    (CompareText(Name, 'config') = 0) or
+    (CompareText(Name, 'bootstrap') = 0) or
+    (CompareText(Name, 'deploy') = 0) or
+    (CompareText(Name, 'log') = 0);
+end;
+
+procedure CleanRepairFolders;
+var
+  AppDir, FolderPath: String;
+  FindRec: TFindRec;
+begin
+  if IsUnsafeInstallDir then
+    Exit;
+
+  AppDir := ExpandConstant('{app}');
+  if not DirExists(AppDir) then
+    Exit;
+
+  WizardForm.StatusLabel.Caption := '正在清理需要修复的目录...';
+
+  if FindFirst(AddBackslash(AppDir) + '*', FindRec) then
+  begin
+    try
+      repeat
+        if
+          ((FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0) and
+          (FindRec.Name <> '.') and
+          (FindRec.Name <> '..') and
+          (not ShouldKeepRepairFolder(FindRec.Name))
+        then
+        begin
+          FolderPath := AddBackslash(AppDir) + FindRec.Name;
+          WizardForm.FilenameLabel.Caption := FolderPath;
+          DelTree(FolderPath, True, True, True);
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+// ==========================================================================
 //  安装前准备
 //  路径安全校验 → deploy.yaml 备份 → 清理残留进程
 // ==========================================================================
@@ -511,6 +477,9 @@ begin
   end;
 
   StopRunningProcesses;
+
+  if IsRepairMode then
+    CleanRepairFolders;
 end;
 
 // ==========================================================================
@@ -623,7 +592,14 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    RunPermissionSteps;
+    // 新启动器已成功安装后再移除旧名称，下载失败不会影响已有安装。
+    if FileExists(ExpandConstant('{app}\AzurPilot.exe')) and
+       FileExists(ExpandConstant('{app}\alas-launcher.exe')) then
+      if not DeleteFile(ExpandConstant('{app}\alas-launcher.exe')) then
+        Log('Legacy alas-launcher.exe could not be removed.');
+
+    if not IsUpdateMode then
+      RunPermissionSteps;
 
     if KeepDeployYaml and (DeployYamlBackupPath <> '') then
       FileCopy(DeployYamlBackupPath, ExpandConstant('{app}\config\deploy.yaml'), False);

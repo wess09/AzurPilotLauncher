@@ -120,6 +120,9 @@ export function SettingsDialog({
   channelCanaryLabel,
   updateSourceLabel,
   updateSourceLabels,
+  useMirrorChyanLabel,
+  mirrorChyanCdkLabel,
+  mirrorChyanCdkPlaceholder,
   launchOnStartupLabel,
   autoStartServiceLabel,
   keepWebviewOnTrayLabel,
@@ -164,6 +167,9 @@ export function SettingsDialog({
     "auto" | "official" | "github" | "cloudflare" | "cnb" | "gitcode",
     string
   >;
+  useMirrorChyanLabel: string;
+  mirrorChyanCdkLabel: string;
+  mirrorChyanCdkPlaceholder: string;
   launchOnStartupLabel: string;
   autoStartServiceLabel: string;
   keepWebviewOnTrayLabel: string;
@@ -188,6 +194,7 @@ export function SettingsDialog({
   const [colorOpen, setColorOpen] = useState(false);
   const [colorDraft, setColorDraft] = useState(() => new TinyColor(defaultAccentColor).toHsv());
   const [hexDraft, setHexDraft] = useState(defaultAccentColor);
+  const [cdkDraft, setCdkDraft] = useState("");
   useInstantDialog();
   useEffect(() => {
     let disposed = false;
@@ -210,10 +217,16 @@ export function SettingsDialog({
       pythonSource: "auto",
       nodejsSource: "auto",
       pypiSource: "auto",
+      useMirrorChyan: false,
+      mirrorChyanCdk: null,
     };
     void command<LauncherSettings>("settings_get")
       .then((s) => {
-        if (!disposed) setSettings(s ?? fallback);
+        if (!disposed) {
+          const resolved = s ?? fallback;
+          setSettings(resolved);
+          setCdkDraft(resolved.mirrorChyanCdk ?? "");
+        }
       })
       .catch(() => {
         if (!disposed) setSettings(fallback);
@@ -473,6 +486,36 @@ export function SettingsDialog({
                   <Switch aria-label={skipUpdateLabel} disabled={saving}
                     checked={settings.skipUpdate}
                     onChange={(_e, data) => void update({ skipUpdate: data.checked })} />
+                </SettingCard>
+                <SettingCard icon={ArrowDownload16Regular} title={useMirrorChyanLabel}>
+                  <Switch aria-label={useMirrorChyanLabel} disabled={saving}
+                    checked={settings.useMirrorChyan}
+                    onChange={(_e, data) => void update({ useMirrorChyan: data.checked })} />
+                </SettingCard>
+                <SettingCard icon={Wrench16Regular} title={mirrorChyanCdkLabel}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <Input
+                      size="small"
+                      type="password"
+                      aria-label={mirrorChyanCdkLabel}
+                      placeholder={mirrorChyanCdkPlaceholder}
+                      value={cdkDraft}
+                      disabled={saving}
+                      onChange={(_e, data) => setCdkDraft(data.value)}
+                    />
+                    <Button
+                      size="small"
+                      aria-label={`${applyLabel} ${mirrorChyanCdkLabel}`}
+                      disabled={saving}
+                      onClick={() =>
+                        void update({
+                          mirrorChyanCdk: cdkDraft.trim() ? cdkDraft.trim() : null,
+                        })
+                      }
+                    >
+                      {applyLabel}
+                    </Button>
+                  </div>
                 </SettingCard>
                 <div className={styles.settingsGroupTitle}>{sourcesGroupLabel}</div>
                 {sourceGroups.map((group) => {

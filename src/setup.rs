@@ -33,6 +33,7 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use crate::fs_util::is_symlink_or_reparse_point;
+use crate::settings::Settings;
 use crate::sources::Preferences;
 use crate::window_util::CreateNoWindow as _;
 use rust_i18n::t;
@@ -483,8 +484,9 @@ pub fn setup_azurpilot_repo(
     mut status_updater: impl FnMut(SplashUpdate),
     cancel_requested: Arc<AtomicBool>,
     skip_repository_update: bool,
-    sources: &Preferences,
+    settings: &Settings,
 ) -> Result<()> {
+    let sources = &settings.sources;
     info!("Starting setup for AzurPilot repository...");
     status_updater(
         SplashUpdate::loading(
@@ -525,7 +527,7 @@ pub fn setup_azurpilot_repo(
             SplashUpdate::loading(t!("setup.updating"), t!("setup.fetching_patches"), 41)
                 .with_subtitle(t!("setup.syncing")),
         );
-        git_update(&mut status_updater, &bootstrap_uv, &cancel_requested)?;
+        git_update(&mut status_updater, &bootstrap_uv, &cancel_requested, settings)?;
         ensure_repository_files()?;
     }
     sync_dependencies_and_frontend(
@@ -1109,7 +1111,19 @@ fn git_update(
     status_updater: impl FnMut(SplashUpdate),
     bootstrap_uv: &Path,
     cancel_requested: &AtomicBool,
+    settings: &Settings,
 ) -> Result<()> {
+    if settings.use_mirror_chyan || settings.mirror_chyan_cdk.is_some() {
+        let synced = crate::settings::sync_mirror_chyan_to_deploy_yaml(
+            &azurpilot_repo_dir(),
+            settings.use_mirror_chyan,
+            settings.mirror_chyan_cdk.as_deref(),
+        )
+        .context("Failed to sync MirrorChyan settings before updating AzurPilot")?;
+        if !synced && settings.use_mirror_chyan {
+            warn!("MirrorChyan is unavailable in the installed deploy scripts, using the existing update source");
+        }
+    }
     // Decorate execute() to get fetch progress
     let script = r#"
 import deploy.git

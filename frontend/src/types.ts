@@ -79,6 +79,8 @@ export interface LauncherSettings {
   pythonSource: "auto" | "nju" | "ustc" | "npmmirror" | "aliyun" | "cnb" | "astral";
   nodejsSource: "auto" | "official" | "npmmirror" | "nju";
   pypiSource: "auto" | "pypi" | "tsinghua" | "ustc" | "aliyun" | "tencent" | "huawei" | "nju";
+  useMirrorChyan: boolean;
+  mirrorChyanCdk: string | null;
 }
 export const busy = (s: Snapshot) =>
   [

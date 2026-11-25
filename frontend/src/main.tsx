@@ -11,6 +11,10 @@ import { defaultAccent, makeTheme } from "./theme";
 // 全局 NS2 彩虹焦点环：覆盖 Fluent 组件默认的深色焦点框。
 import "./focusRing.css";
 
+// 所有窗口统一禁止右键系统菜单。主页、连接错误弹窗、崩溃报告弹窗、
+// 托盘菜单都从本入口加载；捕获阶段拦截，避免子元素 stopPropagation 漏出。
+document.addEventListener("contextmenu", (event) => event.preventDefault(), true);
+
 // 开发预览可用 ?theme=dark|light 强制主题，生产始终跟随系统。
 const forced =
   import.meta.env.DEV && !native()

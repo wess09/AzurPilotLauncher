@@ -687,6 +687,9 @@ export function App({ defaultAccentColor = "#4cc2ff" }: { defaultAccentColor?: s
             cnb: t("update_source_cnb"),
             gitcode: t("update_source_gitcode"),
           }}
+          useMirrorChyanLabel={t("settings_use_mirror_chyan")}
+          mirrorChyanCdkLabel={t("settings_mirror_chyan_cdk")}
+          mirrorChyanCdkPlaceholder={t("settings_mirror_chyan_cdk_placeholder")}
           launchOnStartupLabel={t("settings_launch_on_startup")}
           autoStartServiceLabel={t("settings_auto_start_service")}
           keepWebviewOnTrayLabel={t("settings_keep_webview_tray")}

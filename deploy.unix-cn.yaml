@@ -31,6 +31,10 @@ Deploy:
     # [其他情况] 连接到不受信任的网络时使用 false
     # [Other] Use false to when connected to an untrusted network
     SSLVerify: true
+    # Enable MirrorChyan Git Pack source updates
+    UseMirrorChyan: false
+    # MirrorChyan CDK
+    MirrorChyanCdk: null
     # 启动时自动更新 AzurPilot
     # Update AzurPilot at startup
     # [大多数情况] 使用 true
