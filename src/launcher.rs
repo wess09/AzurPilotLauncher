@@ -590,8 +590,7 @@ impl Launcher {
                     &controller
                         .app
                         .state::<Arc<crate::settings::Store>>()
-                        .get()
-                        .sources,
+                        .get(),
                 )?;
                 ensure_not_cancelled(&cancel)?;
                 let mut config =
