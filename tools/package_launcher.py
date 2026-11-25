@@ -25,4 +25,3 @@ else:
 filename = root / f'{prefix}-{os_name}-{arch}.tar.xz'
 with tarfile.open(filename, 'w:xz') as archive:
     archive.add(target, arcname=target.name)
-shutil.copy2(filename, root / f'{prefix}-CN-{os_name}-{arch}.tar.xz')

@@ -528,15 +528,6 @@ jobs:
             AzurPilot-${{ runner.os }}-*
             AP-${{ runner.os }}-*
             AzurPilot_Setup_*.exe
-      - name: Upload artifacts (CN)
-        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-CN-${{ matrix.os }}
-          compression-level: 0
-          path: |
-            AzurPilot-CN-${{ runner.os }}-*
-            AP-CN-${{ runner.os }}-*
       - name: Release
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
@@ -544,9 +535,7 @@ jobs:
           prerelease: false
           files: |
             AzurPilot-${{ runner.os }}-*
-            AzurPilot-CN-${{ runner.os }}-*
             AP-${{ runner.os }}-*
-            AP-CN-${{ runner.os }}-*
             AzurPilot_Setup_*.exe
       - name: Upload canary payloads to GitHub Release
         if: github.event_name == 'push'
