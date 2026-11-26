@@ -182,6 +182,7 @@ autostart:
   set_failed: "Failed to set autostart: %{error}"
 
 errors:
+  open_mirror_chyan_failed: "Could not open the MirrorChyan website (%{error})"
   uv_not_found: "Launcher does not have built-in uv, and uv was not found in system PATH"
   write_uv_failed: "Failed to write built-in uv to %{path}"
   requests_install_failed: "Failed to install deploy base dependency: requests"

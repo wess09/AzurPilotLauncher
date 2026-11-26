@@ -182,6 +182,7 @@ autostart:
   set_failed: "设置开机自启动失败了喵：%{error} (qwq)"
 
 errors:
+  open_mirror_chyan_failed: "打不开 Mirror 酱官网喵（%{error}）"
   uv_not_found: "启动器未内置 uv，且系统 PATH 中找不到 uv 喵(qwq)"
   write_uv_failed: "写入内置 uv 到 %{path} 失败了喵呜"
   requests_install_failed: "安装 deploy 基础依赖 requests 失败了喵呜(｡•́︿•̀｡)"

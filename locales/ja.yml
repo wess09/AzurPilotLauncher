@@ -182,6 +182,7 @@ autostart:
   set_failed: "自動起動の設定に失敗しました：%{error}"
 
 errors:
+  open_mirror_chyan_failed: "MirrorChyan の公式サイトを開けませんでした（%{error}）"
   uv_not_found: "ランチャーに内蔵 uv がなく、システム PATH からも uv が見つかりません"
   write_uv_failed: "内蔵 uv の %{path} への書き込みに失敗しました"
   requests_install_failed: "deploy の基本依存 requests のインストールに失敗しました"

@@ -182,6 +182,7 @@ autostart:
   set_failed: "設定開機自動啟動失敗：%{error}"
 
 errors:
+  open_mirror_chyan_failed: "無法開啟 Mirror 醬官網（%{error}）"
   uv_not_found: "啟動器未內建 uv，且系統 PATH 中找不到 uv"
   write_uv_failed: "寫入內建 uv 到 %{path} 失敗"
   requests_install_failed: "安裝 deploy 基礎依賴 requests 失敗"

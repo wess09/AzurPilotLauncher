@@ -582,22 +582,51 @@ pub(crate) fn settings_set(
 /// 在系统浏览器打开 Mirror 酱官网。
 #[tauri::command]
 pub(crate) fn settings_open_mirror_chyan(window: tauri::WebviewWindow) -> Result<(), String> {
-    use crate::window_util::CreateNoWindow;
-    use std::process::Command;
+    const MIRROR_CHYAN_WEBSITE: &str = "https://mirrorchyan.com/?source=azurpilot_launcher_settings";
 
     crate::launcher::authorize(&window, true)?;
     #[cfg(target_os = "windows")]
-    let program = "explorer.exe";
-    #[cfg(target_os = "macos")]
-    let program = "open";
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let program = "xdg-open";
-    Command::new(program)
-        .arg("https://mirrorchyan.com/?source=azurpilot_launcher_settings")
-        .create_no_window()
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    {
+        use std::ptr::{null, null_mut};
+        use winapi::um::{shellapi::ShellExecuteW, winuser::SW_SHOWNORMAL};
+
+        let url: Vec<u16> = MIRROR_CHYAN_WEBSITE.encode_utf16().chain([0]).collect();
+        // 将网址交给 Windows 注册的 HTTPS 协议处理程序。
+        let status = unsafe {
+            ShellExecuteW(
+                null_mut(),
+                null(),
+                url.as_ptr(),
+                null(),
+                null(),
+                SW_SHOWNORMAL,
+            )
+        } as isize;
+        if status <= 32 {
+            return Err(rust_i18n::t!("errors.open_mirror_chyan_failed", error = status.to_string())
+                .into_owned());
+        }
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        use crate::window_util::CreateNoWindow;
+        use std::process::Command;
+
+        #[cfg(target_os = "macos")]
+        let program = "open";
+        #[cfg(not(target_os = "macos"))]
+        let program = "xdg-open";
+        Command::new(program)
+            .arg(MIRROR_CHYAN_WEBSITE)
+            .create_no_window()
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| {
+                rust_i18n::t!("errors.open_mirror_chyan_failed", error = error.to_string())
+                    .into_owned()
+            })
+    }
 }
 
 /// 将 Mirror 酱配置同步到支持它的本体部署脚本。首次部署前仅保存在启动器数据库中。
