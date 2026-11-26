@@ -652,6 +652,7 @@ jobs:
     needs: [package, publish-runtime-components]
     permissions:
       contents: write
+      actions: write
     concurrency:
       group: launcher-stable-manifest
       cancel-in-progress: false
@@ -780,6 +781,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'canary' }}
         run: gh release upload "$RELEASE_TAG" launcher-updater-r2/azurpilot-* --clobber
+      - name: Trigger MirrorChyanUploading
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh workflow run --repo "$GITHUB_REPOSITORY" mirrorchyan_release.yml -f tag="$RELEASE_TAG"
+          gh workflow run --repo "$GITHUB_REPOSITORY" mirrorchyan_release_note.yml -f tag="$RELEASE_TAG"
       - name: Upload versioned payloads to R2
         env:
           RELEASE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || needs.package.outputs.canary-version }}
