@@ -276,7 +276,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ (github.ref_type == 'tag' && contains(github.ref_name, '-beta')) && fromJSON('["ubuntu-22.04", "windows-latest", "windows-11-arm"]') || fromJSON('["ubuntu-22.04", "macos-latest", "windows-latest", "windows-11-arm"]') }}
+        os: [ubuntu-22.04, macos-latest, windows-latest, windows-11-arm]
 
     steps:
       # 日志脱敏：注册 URL 掩码清单（明文见 tools/ci/log-mask.txt；base64 藏在
