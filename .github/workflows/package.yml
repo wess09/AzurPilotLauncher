@@ -908,39 +908,46 @@ jobs:
                 "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}?access_token=${GITCODE_TOKEN}")"
             fi
 
-            local pids=() file name asset_id
+            local file name asset_id attempt upload_ok
             for file in "${files[@]}"; do
               [[ -f "${file}" ]] || continue
               name="$(basename "${file}")"
               asset_id="$(jq -r --arg name "${name}" '.assets[]? | select(.name == $name and .type == "attach") | .id' <<<"${release_json}" | head -n1)"
-              (
-                if [[ -n "${asset_id}" && "${asset_id}" != "null" ]]; then
-                  echo "Deleting existing GitCode asset: ${name} (${asset_id})"
-                  curl -fsS --max-time 30 -X DELETE \
-                    "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/attach_files/${asset_id}?access_token=${GITCODE_TOKEN}" \
-                    >/dev/null || echo "WARN: could not delete old asset ${name}, continuing"
-                fi
-                echo "Uploading to GitCode: ${name}"
+              if [[ -n "${asset_id}" && "${asset_id}" != "null" ]]; then
+                echo "Deleting existing GitCode asset: ${name} (${asset_id})"
+                curl -fsS --max-time 30 -X DELETE \
+                  "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/attach_files/${asset_id}?access_token=${GITCODE_TOKEN}" \
+                  >/dev/null || echo "WARN: could not delete old asset ${name}, continuing"
+              fi
+              upload_ok=0
+              for attempt in 1 2 3; do
+                echo "Uploading to GitCode: ${name} (attempt ${attempt}/3)"
                 # 第一步：取预签名上传地址与请求头。
-                upload_json="$(curl -fsS --max-time 30 \
-                  "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/upload_url?access_token=${GITCODE_TOKEN}&file_name=${name}")"
+                upload_json="$(curl -fsS --connect-timeout 20 --max-time 30 \
+                  "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/upload_url?access_token=${GITCODE_TOKEN}&file_name=${name}")" || { sleep 3; continue; }
                 put_url="$(jq -r '.url' <<<"${upload_json}")"
                 if [[ -z "${put_url}" || "${put_url}" == "null" ]]; then
-                  echo "::error::GitCode 未返回上传地址: ${upload_json}" >&2
-                  exit 1
+                  echo "WARN: GitCode 未返回上传地址: ${upload_json}" >&2
+                  sleep 3
+                  continue
                 fi
                 # 第二步：用返回的 headers 原样 PUT 文件二进制。
-                curl -fsS --max-time 300 -X PUT "${put_url}" \
+                if curl -fsS --connect-timeout 20 --max-time 180 -X PUT "${put_url}" \
                   -H "x-obs-meta-project-id: $(jq -r '.headers["x-obs-meta-project-id"]' <<<"${upload_json}")" \
                   -H "x-obs-acl: $(jq -r '.headers["x-obs-acl"]' <<<"${upload_json}")" \
                   -H "x-obs-callback: $(jq -r '.headers["x-obs-callback"]' <<<"${upload_json}")" \
                   -H "Content-Type: $(jq -r '.headers["Content-Type"]' <<<"${upload_json}")" \
-                  --data-binary "@${file}" >/dev/null
-              ) &
-              pids+=($!)
-            done
-            for pid in "${pids[@]}"; do
-              wait "${pid}"
+                  --data-binary "@${file}" >/dev/null; then
+                  upload_ok=1
+                  break
+                fi
+                echo "WARN: GitCode upload failed for ${name}, retrying..."
+                sleep 5
+              done
+              if [[ "${upload_ok}" -ne 1 ]]; then
+                echo "::error::GitCode upload failed after 3 attempts: ${name}" >&2
+                return 1
+              fi
             done
           }
 
