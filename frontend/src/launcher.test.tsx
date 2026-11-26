@@ -146,6 +146,26 @@ describe("launcher actions", () => {
     const restored = await screen.findByRole("combobox", { name: "Node.js source" });
     expect(restored.textContent).toContain("Nanjing University");
   });
+  it("selects MirrorChyan for launcher updates independently of source updates", async () => {
+    const settings = { updateChannel: "stable", updateSource: "auto", useMirrorChyan: false, mirrorChyanCdk: "test-cdk" };
+    bridge.command.mockImplementation(async (name: string, args?: { settings: unknown }) => name === "settings_set" ? args?.settings : name === "settings_get" ? settings : undefined);
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("combobox", { name: "Update download source" }));
+    fireEvent.click(await screen.findByRole("option", { name: "MirrorChyan (stable)" }));
+    await waitFor(() => expect(bridge.command).toHaveBeenCalledWith("settings_set", { settings: { ...settings, updateSource: "mirrorchyan" } }));
+    expect(screen.getByLabelText("MirrorChyan CDK")).toHaveProperty("type", "password");
+  });
+  it("shows the launcher update fallback reason", async () => {
+    await mount();
+    const detail = "The MirrorChyan CDK is invalid. Trying another download source.";
+    await send({
+      phase: "updating",
+      operation: "update",
+      progress: { title: "Launcher update", detail, subtitle: "", progress: 8, is_error: false, terminal: false, sequence: 1 },
+    });
+    expect(await screen.findByText(detail)).toBeTruthy();
+  });
   it("pauses the background video when reduced motion is enabled", async () => {
     const settings = { launchOnStartup: false, autoStartService: false, keepWebviewOnTray: false, reducedMotion: false, preventSleep: false, audioEnabled: false, updateChannel: "stable", updateSource: "auto", language: null, downloadSource: "auto", pythonSource: "auto", pypiSource: "auto" };
     bridge.command.mockImplementation(async (name: string, args?: { settings: unknown }) => name === "settings_set" ? args?.settings : name === "settings_get" ? settings : undefined);

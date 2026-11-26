@@ -303,7 +303,7 @@ impl Client {
                     let delay = retry_delay(retries);
                     retries += 1;
                     if started.elapsed().saturating_add(delay) >= timeout {
-                        return Err(error.into());
+                        return Err(error.without_url().into());
                     }
                     tracing::debug!(
                         host = request.url().host_str(),
@@ -313,7 +313,7 @@ impl Client {
                     tokio::time::sleep(delay).await;
                     continue;
                 }
-                Err(error) => return Err(error.into()),
+                Err(error) => return Err(error.without_url().into()),
             };
             if matches!(
                 response.status(),
@@ -615,7 +615,7 @@ impl Read for Response {
                 if retryable(&error) || error.is_body() {
                     self.client.interrupted(self.inner.url());
                 }
-                io::Error::other(error)
+                io::Error::other(error.without_url())
             })?;
             match chunk {
                 Some(chunk) => self.chunk = chunk,

@@ -46,14 +46,14 @@ pub struct Settings {
     pub custom_background_video: Option<String>,
     /// 更新通道：正式版或金丝雀版（每次 main 构建）。
     pub update_channel: crate::updater::UpdateChannel,
-    /// 更新下载源：自动 / 官方源 / GitHub / Cloudflare CDN。
+    /// 启动器更新下载源。
     pub update_source: crate::updater::UpdateSource,
     #[serde(flatten)]
     pub sources: crate::sources::Preferences,
     /// 启用 Mirror 酱 Git Pack 本体源码更新。
     #[serde(default)]
     pub use_mirror_chyan: bool,
-    /// Mirror 酱 CDK（仅用于本体源码下载，不在日志输出明文）。
+    /// 启动器自更新与本体源码更新共用的 Mirror 酱 CDK。
     #[serde(default)]
     pub mirror_chyan_cdk: Option<String>,
 }
@@ -159,6 +159,7 @@ impl Store {
                     "cloudflare" => crate::updater::UpdateSource::Cloudflare,
                     "cnb" => crate::updater::UpdateSource::Cnb,
                     "gitcode" => crate::updater::UpdateSource::Gitcode,
+                    "mirrorchyan" => crate::updater::UpdateSource::MirrorChyan,
                     _ => crate::updater::UpdateSource::Auto,
                 },
                 _ => crate::updater::UpdateSource::Auto,
@@ -259,6 +260,7 @@ impl Store {
                 crate::updater::UpdateSource::Cloudflare => "cloudflare",
                 crate::updater::UpdateSource::Cnb => "cnb",
                 crate::updater::UpdateSource::Gitcode => "gitcode",
+                crate::updater::UpdateSource::MirrorChyan => "mirrorchyan",
             },
         )?;
         upsert(
@@ -369,7 +371,7 @@ mod tests {
             audio_enabled: true,
             skip_update: true,
             update_channel: crate::updater::UpdateChannel::Canary,
-            update_source: crate::updater::UpdateSource::Cloudflare,
+            update_source: crate::updater::UpdateSource::MirrorChyan,
             language: Some("zh-CN".to_string()),
             accent_color: Some("#ff5500".to_string()),
             custom_background_image: Some("image.png".to_string()),
@@ -388,7 +390,7 @@ mod tests {
         assert!(read.audio_enabled);
         assert!(read.skip_update);
         assert_eq!(read.update_channel, crate::updater::UpdateChannel::Canary);
-        assert_eq!(read.update_source, crate::updater::UpdateSource::Cloudflare);
+        assert_eq!(read.update_source, crate::updater::UpdateSource::MirrorChyan);
         assert_eq!(read.language.as_deref(), Some("zh-CN"));
         assert_eq!(read.accent_color.as_deref(), Some("#ff5500"));
         assert_eq!(read.custom_background_image.as_deref(), Some("image.png"));
@@ -575,6 +577,27 @@ pub(crate) fn settings_set(
         }
     }
     Ok(saved)
+}
+
+/// 在系统浏览器打开 Mirror 酱官网。
+#[tauri::command]
+pub(crate) fn settings_open_mirror_chyan(window: tauri::WebviewWindow) -> Result<(), String> {
+    use crate::window_util::CreateNoWindow;
+    use std::process::Command;
+
+    crate::launcher::authorize(&window, true)?;
+    #[cfg(target_os = "windows")]
+    let program = "explorer.exe";
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let program = "xdg-open";
+    Command::new(program)
+        .arg("https://mirrorchyan.com/?source=azurpilot_launcher_settings")
+        .create_no_window()
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// 将 Mirror 酱配置同步到支持它的本体部署脚本。首次部署前仅保存在启动器数据库中。

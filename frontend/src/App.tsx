@@ -446,14 +446,16 @@ export function App({ defaultAccentColor = "#4cc2ff" }: { defaultAccentColor?: s
               </Button>
             </div>
             <div className={styles.launchStack}>
-              {launching && (
+              {launching && (phase === "updating" && state?.progress?.detail ? (
+                <p className={styles.updateNotes}>{state.progress.detail}</p>
+              ) : (
                 <span className={styles.launchHint} aria-hidden="true">
                   <Info16Regular fontSize={14} />
                   <span key={tipIndex} className={styles.launchTip}>
                     {t(TIP_KEYS[tipIndex])}
                   </span>
                 </span>
-              )}
+              ))}
               <div className={styles.launchAnchor}>
               <Button
               appearance="primary"
@@ -686,10 +688,12 @@ export function App({ defaultAccentColor = "#4cc2ff" }: { defaultAccentColor?: s
             cloudflare: t("update_source_cloudflare"),
             cnb: t("update_source_cnb"),
             gitcode: t("update_source_gitcode"),
+            mirrorchyan: t("update_source_mirror_chyan"),
           }}
           useMirrorChyanLabel={t("settings_use_mirror_chyan")}
           mirrorChyanCdkLabel={t("settings_mirror_chyan_cdk")}
           mirrorChyanCdkPlaceholder={t("settings_mirror_chyan_cdk_placeholder")}
+          mirrorChyanWebsiteLabel={t("settings_mirror_chyan_website")}
           launchOnStartupLabel={t("settings_launch_on_startup")}
           autoStartServiceLabel={t("settings_auto_start_service")}
           keepWebviewOnTrayLabel={t("settings_keep_webview_tray")}

@@ -34,6 +34,8 @@ pub(crate) const LAUNCHER_UPDATE_URL: &str = env!("LAUNCHER_UPDATE_URL");
 pub(crate) const LAUNCHER_UPDATE_CN_URL: &str = env!("LAUNCHER_UPDATE_CN_URL");
 /// 构建脚本是否显式覆盖了官方入口；覆盖时保持单源，不再走国内入口优先。
 const LAUNCHER_UPDATE_URL_CUSTOM: &str = env!("AZURPILOT_LAUNCHER_UPDATE_URL_CUSTOM");
+const MIRROR_CHYAN_UPDATE_API: &str =
+    "https://mirrorchyan.com/api/resources/AzurPilotLauncherUpdater/latest";
 /// 存在该环境变量时跳过启动器更新检查（自更新重启后的新一轮启动会带上）。
 const LAUNCHER_UPDATE_SKIP_ENV: &str = "AZURPILOT_SKIP_LAUNCHER_UPDATE";
 /// 迷你版启动器的版本号：迷你版即使已是"最新"也必须升级到正式版。
@@ -122,6 +124,8 @@ pub(crate) enum UpdateSource {
     Cnb,
     /// GitCode Release 真实直链。
     Gitcode,
+    /// Mirror 酱正式版载荷，失败时按自动顺序回退。
+    MirrorChyan,
 }
 
 impl UpdateSource {
@@ -182,7 +186,7 @@ impl UpdateSource {
                 push(cloudflare);
                 push(github);
             }
-            UpdateSource::Auto => {
+            UpdateSource::Auto | UpdateSource::MirrorChyan => {
                 // 固定优先级：Cloudflare → CNB → GitCode → EdgeOne → GitHub。
                 // 4xx/5xx、timeout、连接重置等错误在单源内快速失败后即回退下一源。
                 push(cloudflare);
@@ -602,6 +606,7 @@ fn select_launcher_update(
         version: latest_version,
         notes: latest_notes,
         payload: platform.clone(),
+        channel,
     }))
 }
 
@@ -612,6 +617,7 @@ pub(crate) struct AvailableUpdate {
     pub notes: Option<String>,
     /// 清单中该平台的首选下载地址与镜像地址，下载时按顺序尝试。
     payload: LauncherUpdatePlatform,
+    channel: UpdateChannel,
 }
 
 #[cfg(test)]
@@ -692,6 +698,7 @@ mod source_tests {
         assert_eq!(order(UpdateSource::Cloudflare)[0], cloudflare);
         assert_eq!(order(UpdateSource::Cnb)[0], cnb);
         assert_eq!(order(UpdateSource::Gitcode)[0], gitcode);
+        assert_eq!(order(UpdateSource::MirrorChyan), order(UpdateSource::Auto));
     }
 
     /// 自动模式固定优先级：Cloudflare → CNB → GitCode → EdgeOne → GitHub。
@@ -893,24 +900,272 @@ mod manifest_source_tests {
     }
 }
 
+#[derive(Deserialize)]
+struct MirrorChyanResponse {
+    code: i64,
+    data: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct MirrorChyanPayload {
+    version_name: String,
+    url: Option<String>,
+    sha256: Option<String>,
+    filesize: Option<u64>,
+    update_type: Option<String>,
+}
+
+#[derive(Debug)]
+struct MirrorChyanApiError(i64);
+
+impl std::fmt::Display for MirrorChyanApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MirrorChyan API code {}", self.0)
+    }
+}
+
+impl std::error::Error for MirrorChyanApiError {}
+
+fn mirror_chyan_platform(platform: &str) -> Option<(&'static str, &'static str)> {
+    match platform {
+        "windows-x86_64" => Some(("win", "x64")),
+        "windows-aarch64" => Some(("win", "arm64")),
+        "darwin-aarch64" => Some(("macos", "arm64")),
+        "linux-x86_64" => Some(("linux", "x64")),
+        _ => None,
+    }
+}
+
+fn mirror_chyan_request_url((os, arch): (&str, &str), cdk: Option<&str>) -> Url {
+    let mut url = Url::parse(MIRROR_CHYAN_UPDATE_API).expect("valid MirrorChyan API URL");
+    let mut query = url.query_pairs_mut();
+    query.extend_pairs([
+        ("current_version", ""),
+        ("os", os),
+        ("arch", arch),
+        ("channel", "stable"),
+        ("user_agent", "AzurPilotLauncher"),
+    ]);
+    if let Some(cdk) = cdk {
+        query.append_pair("cdk", cdk);
+    }
+    drop(query);
+    url
+}
+
+fn read_mirror_chyan_json<T: serde::de::DeserializeOwned>(
+    response: crate::http_client::Response,
+    limit: u64,
+    cancel: &Arc<AtomicBool>,
+) -> Result<T> {
+    let mut bytes = Vec::new();
+    crate::cancel::body(response, cancel.clone())
+        .take(limit + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        bail!("MirrorChyan response exceeded the size limit");
+    }
+    serde_json::from_slice(&bytes).map_err(|_| anyhow!("MirrorChyan returned invalid JSON"))
+}
+
+impl MirrorChyanPayload {
+    fn url_for(&self, update: &AvailableUpdate) -> Result<Option<Url>> {
+        let version = self
+            .version_name
+            .strip_prefix('v')
+            .unwrap_or(&self.version_name);
+        let expected = update.version.strip_prefix('v').unwrap_or(&update.version);
+        if version != expected {
+            bail!("MirrorChyan version does not match the launcher update manifest");
+        }
+        let Some(url) = &self.url else {
+            return Ok(None);
+        };
+        if self
+            .update_type
+            .as_deref()
+            .is_some_and(|kind| kind != "full")
+            || !self
+                .sha256
+                .as_deref()
+                .is_some_and(|hash| hash.eq_ignore_ascii_case(&update.payload.sha256))
+        {
+            bail!("MirrorChyan payload does not match the launcher update manifest");
+        }
+        let url =
+            Url::parse(url).map_err(|_| anyhow!("MirrorChyan returned an invalid download URL"))?;
+        if url.scheme() != "https"
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            bail!("MirrorChyan returned an invalid HTTPS download URL");
+        }
+        Ok(Some(url))
+    }
+}
+
+fn mirror_chyan_fallback_detail(error: &anyhow::Error) -> String {
+    match error
+        .downcast_ref::<MirrorChyanApiError>()
+        .map(|error| error.0)
+    {
+        Some(7001) => t!("launcher_update.mirror_cdk_expired"),
+        Some(7002) => t!("launcher_update.mirror_cdk_invalid"),
+        Some(7003) => t!("launcher_update.mirror_cdk_quota"),
+        Some(7004 | 7005 | 8009) => t!("launcher_update.mirror_cdk_unavailable"),
+        Some(8001) => t!("launcher_update.mirror_no_platform"),
+        _ => t!("launcher_update.mirror_unavailable"),
+    }
+    .into_owned()
+}
+
+fn download_mirror_chyan_update(
+    update: &AvailableUpdate,
+    update_path: &Path,
+    cdk: Option<&str>,
+    cancel: &Arc<AtomicBool>,
+    status_updater: &mut impl FnMut(SplashUpdate),
+) -> Result<bool> {
+    let Some(platform) = mirror_chyan_platform(launcher_update_platform_key()) else {
+        return Err(MirrorChyanApiError(8001).into());
+    };
+    let cdk = cdk.map(str::trim).filter(|cdk| !cdk.is_empty());
+    let api = mirror_chyan_request_url(platform, cdk);
+    let client = launcher_update_http_client(None, false)?;
+    // 带 CDK 的 API 请求不跟随重定向，下载链接则可正常重定向。
+    let api_client = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .redirect_limit(0)
+        .build()?;
+    tracing::debug!(
+        os = platform.0,
+        arch = platform.1,
+        "Looking up the stable launcher payload on MirrorChyan"
+    );
+    status_updater(SplashUpdate::loading(
+        t!("launcher_update.updating"),
+        t!("launcher_update.mirror_preparing"),
+        LAUNCHER_UPDATE_DOWNLOAD_PROGRESS_START,
+    ));
+    let mut refreshed = false;
+    loop {
+        let response = crate::cancel::request(api_client.get(api.clone()), cancel)?;
+        let status = response.status();
+        let reply: MirrorChyanResponse = read_mirror_chyan_json(response, 1024 * 1024, cancel)?;
+        if reply.code != 0 {
+            return Err(MirrorChyanApiError(reply.code).into());
+        }
+        if !status.is_success() {
+            bail!("MirrorChyan API returned HTTP {status}");
+        }
+        let payload: MirrorChyanPayload = serde_json::from_value(
+            reply
+                .data
+                .context("MirrorChyan response has no update data")?,
+        )
+        .map_err(|_| anyhow!("MirrorChyan returned invalid update data"))?;
+        let Some(url) = payload.url_for(update)? else {
+            return Ok(false);
+        };
+
+        let response = crate::cancel::request(client.get(url), cancel)?;
+        let status = response.status();
+        if status == StatusCode::OK {
+            download_and_verify_launcher_update(
+                update_path,
+                &update.payload.sha256,
+                cancel,
+                status_updater,
+                |part_path, status_updater| {
+                    write_launcher_update_response(
+                        response,
+                        part_path,
+                        payload.filesize,
+                        status_updater,
+                        cancel,
+                    )
+                },
+            )?;
+            return Ok(true);
+        }
+        #[derive(Deserialize)]
+        struct ErrorCode {
+            code: i64,
+        }
+        if let Ok(reply) = read_mirror_chyan_json::<ErrorCode>(response, 16 * 1024, cancel) {
+            if matches!(reply.code, 7001..=7005 | 8001 | 8009) {
+                return Err(MirrorChyanApiError(reply.code).into());
+            }
+        }
+        crate::launcher::ensure_not_cancelled(cancel)?;
+        if refreshed
+            || !matches!(
+                status,
+                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::GONE
+            )
+        {
+            bail!("MirrorChyan download returned HTTP {status}");
+        }
+        tracing::info!("Refreshing the MirrorChyan download link after HTTP {status}");
+        refreshed = true;
+    }
+}
+
 pub(crate) fn install_update(
     update: &AvailableUpdate,
     cancel: Arc<AtomicBool>,
     mut status_updater: impl FnMut(SplashUpdate),
     before_commit: impl FnOnce() -> Result<()>,
-    source: UpdateSource,
+    settings: &crate::settings::Settings,
 ) -> Result<()> {
     let current_exe = std::env::current_exe()?;
     let update_path = launcher_update_temp_path(&current_exe);
-    download_from_sources(&update.payload, &cancel, source, |url| {
-        download_launcher_update(
-            url,
-            &update_path,
-            &update.payload.sha256,
-            cancel.clone(),
-            &mut status_updater,
-        )
-    })?;
+    let mut mirror_downloaded = false;
+    let mut fallback_detail = None;
+    if settings.update_source == UpdateSource::MirrorChyan
+        && update.channel == UpdateChannel::Stable
+        && LAUNCHER_UPDATE_URL_CUSTOM != "1"
+    {
+        let cdk = settings.mirror_chyan_cdk.as_deref();
+        match download_mirror_chyan_update(update, &update_path, cdk, &cancel, &mut status_updater)
+        {
+            Ok(true) => mirror_downloaded = true,
+            Ok(false) => fallback_detail = Some(t!("launcher_update.mirror_no_link").to_string()),
+            Err(error) => {
+                crate::launcher::ensure_not_cancelled(&cancel)?;
+                tracing::warn!("MirrorChyan launcher download failed: {error:#}");
+                fallback_detail = Some(mirror_chyan_fallback_detail(&error));
+            }
+        }
+    }
+    if !mirror_downloaded {
+        let fallback = fallback_detail
+            .as_ref()
+            .map(|reason| t!("launcher_update.mirror_fallback", reason = reason));
+        if let Some(detail) = &fallback {
+            status_updater(SplashUpdate::loading(
+                t!("launcher_update.updating"),
+                detail.as_ref(),
+                LAUNCHER_UPDATE_DOWNLOAD_PROGRESS_START,
+            ));
+        }
+        download_from_sources(&update.payload, &cancel, settings.update_source, |url| {
+            download_launcher_update(
+                url,
+                &update_path,
+                &update.payload.sha256,
+                cancel.clone(),
+                |mut progress| {
+                    if let Some(detail) = &fallback {
+                        progress.detail = format!("{detail}\n{}", progress.detail);
+                    }
+                    status_updater(progress);
+                },
+            )
+        })?;
+    }
     crate::launcher::ensure_not_cancelled(&cancel)?;
     make_executable(&update_path)?;
     before_commit()?;
@@ -971,93 +1226,98 @@ fn download_launcher_update(
     // 载荷 URL 来自公开清单；ESA 边缘节点要求载荷请求携带 mTLS 客户端证书。
     let with_mtls = Url::parse(url)?.host_str() != Some("github.com");
     let client = launcher_update_http_client(None, with_mtls)?;
-    // 预清理残留的 .part 与目标文件，保证本次下载从零开始。
+    tracing::info!("Downloading launcher update from {url}");
+    download_and_verify_launcher_update(
+        update_path,
+        expected_sha256,
+        &cancel,
+        &mut status_updater,
+        |part_path, status_updater| {
+            // 先用 bytes=0-0 探测 Range 支持并获取总字节数，再决定下载策略。
+            let range_total = launcher_update_range_total(&client, url, &cancel)?;
+            match range_total {
+                Some(total_bytes) => {
+                    let ranges = launcher_update_byte_ranges(total_bytes);
+                    // 载荷大于一个分片才值得并行，小文件单连接更快更省事。
+                    if ranges.len() > 1 {
+                        status_updater(
+                            SplashUpdate::loading(
+                                t!("launcher_update.updating"),
+                                t!(
+                                    "launcher_update.parallel_downloading_detail",
+                                    connections = ranges.len().to_string()
+                                ),
+                                LAUNCHER_UPDATE_DOWNLOAD_PROGRESS_START,
+                            )
+                            .with_subtitle(t!("launcher_update.status")),
+                        );
+                        download_launcher_update_parallel(
+                            &client,
+                            url,
+                            total_bytes,
+                            &ranges,
+                            part_path,
+                            status_updater,
+                            &cancel,
+                        )
+                    } else {
+                        tracing::info!(
+                            "Launcher update payload is too small for parallel download"
+                        );
+                        download_launcher_update_sequential(
+                            &client,
+                            url,
+                            part_path,
+                            Some(total_bytes),
+                            status_updater,
+                            &cancel,
+                        )
+                    }
+                }
+                None => {
+                    tracing::info!(
+                "Launcher update server does not support HTTP byte ranges; using one connection"
+            );
+                    download_launcher_update_sequential(
+                        &client,
+                        url,
+                        part_path,
+                        None,
+                        status_updater,
+                        &cancel,
+                    )
+                }
+            }
+        },
+    )
+}
+
+fn download_and_verify_launcher_update<F: FnMut(SplashUpdate)>(
+    update_path: &Path,
+    expected_sha256: &str,
+    cancel: &AtomicBool,
+    status_updater: &mut F,
+    download: impl FnOnce(&Path, &mut F) -> Result<u64>,
+) -> Result<()> {
     let part_path = launcher_update_part_path(update_path);
     remove_launcher_update_file_if_exists(&part_path)?;
     remove_launcher_update_file_if_exists(update_path)?;
-
-    tracing::info!("Downloading launcher update from {url}");
-    // 先用 bytes=0-0 探测 Range 支持并获取总字节数，再决定下载策略。
-    let range_total = launcher_update_range_total(&client, url, &cancel)?;
-    let download_result = match range_total {
-        Some(total_bytes) => {
-            let ranges = launcher_update_byte_ranges(total_bytes);
-            // 载荷大于一个分片才值得并行，小文件单连接更快更省事。
-            if ranges.len() > 1 {
-                status_updater(
-                    SplashUpdate::loading(
-                        t!("launcher_update.updating"),
-                        t!(
-                            "launcher_update.parallel_downloading_detail",
-                            connections = ranges.len().to_string()
-                        ),
-                        LAUNCHER_UPDATE_DOWNLOAD_PROGRESS_START,
-                    )
-                    .with_subtitle(t!("launcher_update.status")),
-                );
-                download_launcher_update_parallel(
-                    &client,
-                    url,
-                    total_bytes,
-                    &ranges,
-                    &part_path,
-                    &mut status_updater,
-                    &cancel,
-                )
-            } else {
-                tracing::info!("Launcher update payload is too small for parallel download");
-                download_launcher_update_sequential(
-                    &client,
-                    url,
-                    &part_path,
-                    Some(total_bytes),
-                    &mut status_updater,
-                    &cancel,
-                )
-            }
-        }
-        None => {
-            tracing::info!(
-                "Launcher update server does not support HTTP byte ranges; using one connection"
-            );
-            download_launcher_update_sequential(
-                &client,
-                url,
-                &part_path,
-                None,
-                &mut status_updater,
-                &cancel,
+    let result = (|| {
+        download(&part_path, status_updater)?;
+        status_updater(
+            SplashUpdate::loading(
+                t!("launcher_update.updating"),
+                t!("launcher_update.verifying_detail"),
+                92,
             )
-        }
-    };
-    // 下载失败时清理 .part 与目标文件，避免留下损坏的半成品。
-    let _downloaded = match download_result {
-        Ok(downloaded) => downloaded,
-        Err(err) => {
-            cleanup_launcher_update_download_files(&part_path, update_path);
-            return Err(err);
-        }
-    };
-
-    status_updater(
-        SplashUpdate::loading(
-            t!("launcher_update.updating"),
-            t!("launcher_update.verifying_detail"),
-            92,
-        )
-        .with_subtitle(t!("launcher_update.status")),
-    );
-
-    crate::launcher::ensure_not_cancelled(&cancel)?;
-    // 下载完成后进入 SHA-256 校验与落地阶段（.part 重命名为正式文件）。
-    let downloaded =
-        match verify_and_promote_launcher_update(&part_path, update_path, expected_sha256) {
-            Ok(downloaded) => downloaded,
-            Err(err) => {
-                cleanup_launcher_update_download_files(&part_path, update_path);
-                return Err(err);
-            }
-        };
+            .with_subtitle(t!("launcher_update.status")),
+        );
+        crate::launcher::ensure_not_cancelled(cancel)?;
+        verify_and_promote_launcher_update(&part_path, update_path, expected_sha256)
+    })();
+    let downloaded = result.inspect_err(|_| {
+        cleanup_launcher_update_download_files(&part_path, update_path);
+    })?;
 
     tracing::info!(
         "Launcher update downloaded: {} bytes -> {}",
@@ -1596,7 +1856,23 @@ fn download_launcher_update_sequential(
     cancel: &Arc<AtomicBool>,
 ) -> Result<u64> {
     let response = launcher_update_download_request_with_retry(client, url, None, cancel)?;
-    // 优先使用 Range 探测得到的总大小，其次取响应 Content-Length。
+    write_launcher_update_response(
+        response,
+        update_path,
+        expected_total_bytes,
+        &mut status_updater,
+        cancel,
+    )
+}
+
+fn write_launcher_update_response(
+    response: crate::http_client::Response,
+    update_path: &Path,
+    expected_total_bytes: Option<u64>,
+    mut status_updater: impl FnMut(SplashUpdate),
+    cancel: &Arc<AtomicBool>,
+) -> Result<u64> {
+    // 优先使用已知的载荷大小，其次取响应 Content-Length。
     let total_bytes = expected_total_bytes.or_else(|| response.content_length());
     let mut response = crate::cancel::body(response, cancel.clone());
     let mut file = fs::File::create(update_path).with_context(|| {
@@ -1613,7 +1889,7 @@ fn download_launcher_update_sequential(
     loop {
         let size = response
             .read(&mut buffer)
-            .with_context(|| t!("errors.download_update_failed", url = url))?;
+            .with_context(|| t!("errors.download_update_failed").into_owned())?;
         if size == 0 {
             break;
         }
@@ -2175,6 +2451,64 @@ mod tests {
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap()
+    }
+
+    #[test]
+    fn mirror_chyan_requests_only_the_published_full_payload_variants() {
+        for (platform, (os, arch)) in [
+            ("windows-x86_64", ("win", "x64")),
+            ("windows-aarch64", ("win", "arm64")),
+            ("darwin-aarch64", ("macos", "arm64")),
+            ("linux-x86_64", ("linux", "x64")),
+        ] {
+            let target = mirror_chyan_platform(platform).unwrap();
+            let url = mirror_chyan_request_url(target, Some("test+cdk&x=%"));
+            assert_eq!(url.path(), "/api/resources/AzurPilotLauncherUpdater/latest");
+            let pairs: HashMap<_, _> = url.query_pairs().collect();
+            assert_eq!(pairs["os"], os);
+            assert_eq!(pairs["arch"], arch);
+            assert_eq!(pairs["channel"], "stable");
+            assert_eq!(pairs["current_version"], "");
+            assert_eq!(pairs["cdk"], "test+cdk&x=%");
+            assert!(!mirror_chyan_request_url(target, None)
+                .query_pairs()
+                .any(|(key, _)| key == "cdk"));
+        }
+        assert!(mirror_chyan_platform("linux-aarch64").is_none());
+        assert!(mirror_chyan_platform("darwin-x86_64").is_none());
+    }
+
+    #[test]
+    fn mirror_chyan_download_must_match_the_manifest_version_and_sha256() {
+        let update = AvailableUpdate {
+            version: "3.2.0".into(),
+            notes: None,
+            payload: serde_json::from_value(serde_json::json!({
+                "url": "https://example.com/launcher.exe",
+                "sha256": "a".repeat(64),
+            }))
+            .unwrap(),
+            channel: UpdateChannel::Stable,
+        };
+        let mut payload: MirrorChyanPayload = serde_json::from_value(serde_json::json!({
+            "version_name": "v3.2.0",
+            "url": "https://cdn.example.com/launcher.exe?token=example",
+            "sha256": "A".repeat(64),
+            "filesize": 12345,
+            "update_type": "full",
+        }))
+        .unwrap();
+        assert!(payload.url_for(&update).unwrap().is_some());
+        payload.update_type = Some("incremental".into());
+        assert!(payload.url_for(&update).is_err());
+        payload.update_type = None;
+        payload.sha256 = Some("b".repeat(64));
+        assert!(payload.url_for(&update).is_err());
+        payload.url = None;
+        payload.sha256 = None;
+        assert!(payload.url_for(&update).unwrap().is_none());
+        payload.version_name = "3.1.2".into();
+        assert!(payload.url_for(&update).is_err());
     }
 
     #[test]

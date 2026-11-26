@@ -70,7 +70,7 @@ export interface LauncherSettings {
   audioEnabled: boolean;
   skipUpdate: boolean;
   updateChannel: "stable" | "canary";
-  updateSource: "auto" | "official" | "github" | "cloudflare" | "cnb" | "gitcode";
+  updateSource: "auto" | "official" | "github" | "cloudflare" | "cnb" | "gitcode" | "mirrorchyan";
   language: string | null;
   accentColor: string | null;
   customBackgroundImage: string | null;

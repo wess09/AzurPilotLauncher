@@ -8,7 +8,7 @@ commands.allow = [
   "launcher_start", "launcher_deploy", "launcher_stop", "launcher_repair",
   "launcher_check_update", "launcher_install_update", "launcher_open_webui",
   "launcher_cancel_and_exit", "launcher_cancel", "launcher_back", "settings_set",
-  "pick_background_file",
+  "settings_open_mirror_chyan", "pick_background_file",
 ]
 
 [[permission]]

@@ -508,6 +508,7 @@ impl Launcher {
                     .update
                     .clone()
                     .context("missing update")?;
+                let settings = controller.app.state::<Arc<crate::settings::Store>>().get();
                 updater::install_update(
                     &update,
                     cancel,
@@ -523,11 +524,7 @@ impl Launcher {
                         controller.changed.notify_all();
                         Ok(())
                     },
-                    controller
-                        .app
-                        .state::<Arc<crate::settings::Store>>()
-                        .get()
-                        .update_source,
+                    &settings,
                 )?;
                 controller.allow_exit.store(true, Ordering::SeqCst);
                 controller.changed.notify_all();
@@ -1171,6 +1168,7 @@ pub(crate) fn run() -> Result<()> {
             crate::save_as, crate::download_today_gui_log, crate::download_today_launcher_log, crate::retry_backend_connection,
             crate::download_log_archive, crate::prompt_log_archive_path,
             crate::settings::settings_get, crate::settings::settings_set,
+            crate::settings::settings_open_mirror_chyan,
             crate::settings::pick_background_file,
             crate::window_hide, crate::window_minimize, crate::window_toggle_maximize, crate::window_close, crate::window_exit_application,
             crate::window_start_dragging, crate::window_is_maximized, crate::window_fit_content,

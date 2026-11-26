@@ -14,6 +14,7 @@ const CONTROL: &[&str] = &[
     "launcher_cancel",
     "launcher_back",
     "settings_set",
+    "settings_open_mirror_chyan",
 ];
 const READ: &[&str] = &[
     "launcher_context",
