@@ -1,0 +1,47 @@
+name: mirrorchyan_release_note
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        default: ''
+        required: false
+        type: string
+  release:
+    types: [edited]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  mirrorchyan:
+    if: ${{ github.repository_owner == 'wess09' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [AzurPilotLauncher, AzurPilotLauncherUpdater]
+    steps:
+      - name: Register log masks
+        shell: bash
+        env:
+          AZURPILOT_LOG_MASK_B64: "IyBDSSDml6Xlv5fmjqnnoIHmuIXljZXvvIjmmI7mlofln7rlh4bvvInjgIIKIyDmr4/kuKogam9iIOmmluatpeaKiuWug+mAkOihjOazqOWGjOS4uiA6OmFkZC1tYXNrOjrvvIxHaXRIdWIg5Lya5oqK5pel5b+X5Lit5ZG95Lit55qE5a2Q5Liy5pu/5o2i5Li6ICoqKuOAggojIOS/ruaUueWQjuaJp+ihjDogYmFzZTY0IC13MCDmnKzmlofku7bvvIjot7Pov4fms6jph4rooYzvvInvvIzmiorovpPlh7rlkIzmraXmm7/mjaIKIyAuZ2l0aHViL3dvcmtmbG93cy9wYWNrYWdlLnltbCDkuI4gdGVzdC55bWwg5Lit5omA5pyJIEFaVVJQSUxPVF9MT0dfTUFTS19CNjQg55qE5YC844CCCiMg5rOo5oSP77ya5pys5paH5Lu25LiN5Lya5Ye6546w5Zyo5pel5b+X6YeM77yI5o6p56CB5q2l6aqk5Y+q6L6T5Ye6IGFkZC1tYXNrIOWRveS7pO+8ie+8jOaUueWKqOivt+S/neaMgeavj+ihjOS4gOS4quWujOaVtOadoeebruOAgeS4jeimgeeVmeepuuihjOOAggpodHRwLmh0dHBzOi8vZ2l0aHViLmNvbS8uZXh0cmFoZWFkZXIKaHR0cHM6Ly9sYXVuY2hlci1hcGkuYXp1cnBpbG90LmNvbS91cGRhdGEvc3RhYmxlLmpzb24KaHR0cHM6Ly9sYXVuY2hlci1hcGkuYXp1cnBpbG90LmNvbQpodHRwczovL2xhdW5jaGVyLWFwaS5jbi5henVycGlsb3QuY29tL3VwZGF0YS9zdGFibGUuanNvbgpodHRwczovL2xhdW5jaGVyLWFwaS5jbi5henVycGlsb3QuY29tCmh0dHBzOi8vbGF1bmNoZXItZG93bmxvYWQuYXp1cnBpbG90LmNvbQpodHRwczovL2FwaS5jbmIuY29vbApodHRwczovL2NuYi5jb29sCmh0dHBzOi8vZ2l0aHViLmNvbS93ZXNzMDkvQXp1clBpbG90TGF1bmNoZXIKaHR0cHM6Ly9naXRodWIuY29tL3dlc3MwOS9BenVyUGlsb3QKaHR0cHM6Ly9hcGkuZ2l0aHViLmNvbQpodHRwczovL3VwbG9hZHMuZ2l0aHViLmNvbQpodHRwczovL29iamVjdHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tCmh0dHBzOi8vZG9jcy5naXRodWIuY29tCmh0dHBzOi8vZ2l0aHViLmNvbS9hc3RyYWwtc2gvc2V0dXAtdXYKaHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJhbC1zaC9zZXR1cC11dgpodHRwczovL2dpdGh1Yi5jb20vYXN0cmFsLXNoL3V2Cmh0dHBzOi8vYXN0cmFsLnNoCmh0dHBzOi8vZ2l0aHViLmNvbS9hY3Rpb25zL3B5dGhvbi12ZXJzaW9ucwpodHRwczovL2dpdGh1Yi5jb20vYWN0aW9ucy9zZXR1cC1weXRob24KaHR0cHM6Ly9naXRodWIuY29tL2FjdGlvbnMvbm9kZS12ZXJzaW9ucwpodHRwczovL3N0YXRpYy5ydXN0LWxhbmcub3JnCmh0dHBzOi8vc2gucnVzdHVwLnJzCmh0dHBzOi8vY3JhdGVzLmlvCmh0dHBzOi8vaW5kZXguY3JhdGVzLmlvCmh0dHBzOi8vc3RhdGljLmNyYXRlcy5pbwpodHRwczovL2RvYy5ydXN0LWxhbmcub3JnCmh0dHBzOi8vZ2l0aHViLmNvbS9ydXN0LWxhbmcKaHR0cHM6Ly92Mi50YXVyaS5hcHAKaHR0cHM6Ly90YXVyaS5hcHAKaHR0cHM6Ly93d3cuaW5ub3NldHVwLmNvbQpodHRwczovL3JvbGx1cGpzLm9yZwpodHRwczovL3ZpdGUuZGV2Cmh0dHBzOi8vcmVnaXN0cnkubnBtanMub3JnCmh0dHBzOi8vZG9jcy5ucG1qcy5jb20KaHR0cHM6Ly9jbGkuZ2l0aHViLmNvbQpodHRwczovL3B5cGkub3JnCmh0dHBzOi8vZmlsZXMucHl0aG9uaG9zdGVkLm9yZwpodHRwczovL2RsLmdvb2dsZS5jb20KaHR0cHM6Ly9wYWNrYWdlcy5taWNyb3NvZnQuY29tCmh0dHBzOi8vY2hvY29sYXRleS5vcmcKaHR0cHM6Ly9jb21tdW5pdHkuY2hvY29sYXRleS5vcmcKaHR0cHM6Ly9ha2EubXMKaHR0cHM6Ly9naXRodWIuY29tL2Nsb3VkZmxhcmUvd29ya2Vycy1zZGsKaHR0cHM6Ly9leGFtcGxlLmNvbQpsYXVuY2hlci1hcGkuYXp1cnBpbG90LmNvbS91cGRhdGEvKgpsYXVuY2hlci1hcGkuYXp1cnBpbG90LmNvbQpsYXVuY2hlci1hcGkuY24uYXp1cnBpbG90LmNvbS91cGRhdGEvKgpsYXVuY2hlci1hcGkuY24uYXp1cnBpbG90LmNvbQpsYXVuY2hlci1kb3dubG9hZC5henVycGlsb3QuY29tCmF6dXJwaWxvdC5jb20KYXBpLmNuYi5jb29sCmNuYi5jb29sCmxhdW5jaGVyLWNsb3VkZmxhcmUtY2RuLWRvd25sb2FkLmF6dXJwaWxvdC5jb20K"
+          MIRRORCHYAN_LOG_MASK_B64: "aHR0cHM6Ly9naXRodWIuY29tCmh0dHBzOi8vYXBpLmdpdGh1Yi5jb20KaHR0cHM6Ly91cGxvYWRzLmdpdGh1Yi5jb20KaHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tCmh0dHBzOi8vb2JqZWN0cy5naXRodWJ1c2VyY29udGVudC5jb20KaHR0cHM6Ly9yZWxlYXNlLWFzc2V0cy5naXRodWJ1c2VyY29udGVudC5jb20KaHR0cHM6Ly9taXJyb3JjaHlhbi5jb20KaHR0cHM6Ly9kZXYubWlycm9yY2h5YW4uY29tCmh0dHBzOi8vcHlwaS5vcmcKaHR0cHM6Ly9maWxlcy5weXRob25ob3N0ZWQub3JnCg=="
+        run: |
+          for masks in "$AZURPILOT_LOG_MASK_B64" "$MIRRORCHYAN_LOG_MASK_B64"; do
+            printf '%s' "$masks" | openssl base64 -d -A | while IFS= read -r value; do
+              if [ -n "$value" ]; then echo "::add-mask::$value"; fi
+            done
+          done
+          echo "::add-mask::$GITHUB_REPOSITORY"
+      - id: uploading
+        uses: MirrorChyan/release-note-action@v1
+        with:
+          mirrorchyan_rid: ${{ matrix.rid }}
+          version_name: ${{ inputs.tag || github.event.release.tag_name }}
+
+          owner: wess09
+          repo: AzurPilotLauncher
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          upload_token: ${{ secrets.MirrorChyanUploadToken }}
