@@ -672,11 +672,6 @@ jobs:
       CNB_REPO: AzurPilot/AzurPilotLauncher
       CNB_RELEASE_TAG: "1.0.0"
       CNB_CLI_VERSION: "1.2.3"
-      # GitCode Release 固定使用 1.0.0；与 CNB 一样按同名资产滚动覆盖。
-      # cnb_url / gitcode_url 写真实直链（不经 launcher-download 302）。
-      GITCODE_API: https://api.gitcode.com/api/v5
-      GITCODE_REPO: ddl2/assets
-      GITCODE_RELEASE_TAG: "1.0.0"
       # 固定 Wrangler 版本，避免 CI 行为随 latest 漂移。
       WRANGLER_VERSION: "4.151.1"
     steps:
@@ -708,7 +703,6 @@ jobs:
           # CDN 域绑定 R2 桶根，载荷键为 updata/{version}/{name}（R2_PREFIX）。
           CLOUDFLARE_CDN_BASE_URL: https://launcher-cloudflare-cdn-download.azurpilot.com
           CNB_BASE_URL: https://cnb.cool/AzurPilot/AzurPilotLauncher/-/releases/download/1.0.0
-          GITCODE_BASE_URL: https://gitcode.com/ddl2/assets/releases/download/1.0.0
         run: |
           python - <<'PY'
           import hashlib
@@ -762,9 +756,8 @@ jobs:
                   "url": f"{base_url}/{os.environ['R2_PREFIX'].strip('/')}/{version}/{dest_name}",
                   "github_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{release_tag}/{dest_name}",
                   "cloudflare_url": f"{os.environ['CLOUDFLARE_CDN_BASE_URL'].rstrip('/')}/{os.environ['R2_PREFIX'].strip('/')}/{version}/{dest_name}",
-                  # CNB / GitCode 真实直链（不走 launcher-download 302）。
+                  # CNB 真实直链（不走 launcher-download 302）。
                   "cnb_url": f"{os.environ['CNB_BASE_URL'].rstrip('/')}/{dest_name}",
-                  "gitcode_url": f"{os.environ['GITCODE_BASE_URL'].rstrip('/')}/{dest_name}",
                   "sha256": digest,
               }
 
@@ -803,12 +796,10 @@ jobs:
               --cache-control "public, max-age=31536000, immutable" \
               --only-show-errors
           done
-      # CNB 与 GitCode 两个源并行上传；每个源内部多个平台产物也并行。
-      # 任一上传失败都会被 wait 收集，最终让本 step 失败，不会静默发布半套产物。
-      - name: Upload launcher payloads to CNB and GitCode releases
+      # 上传到 CNB Release（多个平台产物并行）。
+      - name: Upload launcher payloads to CNB release
         env:
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -880,85 +871,7 @@ jobs:
             fi
           }
 
-          upload_gitcode() {
-            if [[ -z "${GITCODE_TOKEN:-}" ]]; then
-              echo "::error::缺少 GITCODE_TOKEN，无法上传构建产物到 GitCode" >&2
-              return 1
-            fi
-            # GITCODE_TOKEN 必须是纯 token 值：配置时用 gh secret set --body，
-            # 不要用 PowerShell 管道写入，否则尾部换行会让 GitCode 返回 401。
-            local tag="${GITCODE_RELEASE_TAG}"
-            local release_resp release_code release_json
-            release_resp="$(curl -sS --max-time 30 -w $'\n%{http_code}' \
-              "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}?access_token=${GITCODE_TOKEN}")"
-            release_code="$(tail -n1 <<<"${release_resp}")"
-            release_json="$(sed '$d' <<<"${release_resp}")"
-            if [[ "${release_code}" == "401" || "${release_code}" == "403" ]]; then
-              echo "::error::GitCode token 鉴权失败 (HTTP ${release_code})，请检查 GITCODE_TOKEN" >&2
-              return 1
-            fi
-            if [[ "${release_code}" == "404" || -z "$(jq -r '.tag_name // empty' <<<"${release_json}")" ]]; then
-              echo "GitCode release ${tag} not found, creating it"
-              curl -fsS --max-time 30 -X POST \
-                "${GITCODE_API}/repos/${GITCODE_REPO}/releases?access_token=${GITCODE_TOKEN}" \
-                -H 'Content-Type: application/json' \
-                --data-raw "{\"tag_name\":\"${tag}\",\"name\":\"${tag}\",\"body\":\"Launcher payloads (rolling)\",\"target_commitish\":\"main\",\"release_status\":\"latest\"}" \
-                >/dev/null
-              release_json="$(curl -fsS --max-time 30 \
-                "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}?access_token=${GITCODE_TOKEN}")"
-            fi
-
-            local file name asset_id attempt upload_ok
-            for file in "${files[@]}"; do
-              [[ -f "${file}" ]] || continue
-              name="$(basename "${file}")"
-              asset_id="$(jq -r --arg name "${name}" '.assets[]? | select(.name == $name and .type == "attach") | .id' <<<"${release_json}" | head -n1)"
-              if [[ -n "${asset_id}" && "${asset_id}" != "null" ]]; then
-                echo "Deleting existing GitCode asset: ${name} (${asset_id})"
-                curl -fsS --max-time 30 -X DELETE \
-                  "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/attach_files/${asset_id}?access_token=${GITCODE_TOKEN}" \
-                  >/dev/null || echo "WARN: could not delete old asset ${name}, continuing"
-              fi
-              upload_ok=0
-              for attempt in 1 2; do
-                echo "Uploading to GitCode: ${name} (attempt ${attempt}/2)"
-                # 第一步：取预签名上传地址与请求头。
-                upload_json="$(curl -4 -fsS --connect-timeout 15 --max-time 30 \
-                  "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/upload_url?access_token=${GITCODE_TOKEN}&file_name=${name}")" || { sleep 3; continue; }
-                put_url="$(jq -r '.url' <<<"${upload_json}")"
-                if [[ -z "${put_url}" || "${put_url}" == "null" ]]; then
-                  echo "WARN: GitCode 未返回上传地址: ${upload_json}" >&2
-                  sleep 3
-                  continue
-                fi
-                # 第二步：用返回的 headers 原样 PUT 文件二进制（强制 IPv4 + HTTP/1.1 避免 OBS 握手卡死）。
-                if curl -4 --http1.1 -fsS --connect-timeout 20 --max-time 90 -X PUT "${put_url}" \
-                  -H "x-obs-meta-project-id: $(jq -r '.headers["x-obs-meta-project-id"]' <<<"${upload_json}")" \
-                  -H "x-obs-acl: $(jq -r '.headers["x-obs-acl"]' <<<"${upload_json}")" \
-                  -H "x-obs-callback: $(jq -r '.headers["x-obs-callback"]' <<<"${upload_json}")" \
-                  -H "Content-Type: $(jq -r '.headers["Content-Type"]' <<<"${upload_json}")" \
-                  --data-binary "@${file}" >/dev/null; then
-                  upload_ok=1
-                  break
-                fi
-                echo "WARN: GitCode upload failed for ${name}, retrying..."
-                sleep 3
-              done
-              if [[ "${upload_ok}" -ne 1 ]]; then
-                echo "::error::GitCode upload failed after 2 attempts: ${name}" >&2
-                return 1
-              fi
-            done
-          }
-
-          upload_cnb &
-          cnb_pid=$!
-          upload_gitcode &
-          gitcode_pid=$!
-          rc=0
-          wait "${cnb_pid}" || rc=1
-          wait "${gitcode_pid}" || rc=1
-          exit "${rc}"
+          upload_cnb
       # stable.json 以静态资源整体发布到 Worker（cf-worker/ 中没有 main 脚本），
       # 命中资源的请求不执行 Worker，不消耗 Workers 请求配额。
       - name: Publish stable.json to Cloudflare Worker
