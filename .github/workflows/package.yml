@@ -920,10 +920,10 @@ jobs:
                   >/dev/null || echo "WARN: could not delete old asset ${name}, continuing"
               fi
               upload_ok=0
-              for attempt in 1 2 3; do
-                echo "Uploading to GitCode: ${name} (attempt ${attempt}/3)"
+              for attempt in 1 2; do
+                echo "Uploading to GitCode: ${name} (attempt ${attempt}/2)"
                 # 第一步：取预签名上传地址与请求头。
-                upload_json="$(curl -fsS --connect-timeout 20 --max-time 30 \
+                upload_json="$(curl -4 -fsS --connect-timeout 15 --max-time 30 \
                   "${GITCODE_API}/repos/${GITCODE_REPO}/releases/${tag}/upload_url?access_token=${GITCODE_TOKEN}&file_name=${name}")" || { sleep 3; continue; }
                 put_url="$(jq -r '.url' <<<"${upload_json}")"
                 if [[ -z "${put_url}" || "${put_url}" == "null" ]]; then
@@ -931,8 +931,8 @@ jobs:
                   sleep 3
                   continue
                 fi
-                # 第二步：用返回的 headers 原样 PUT 文件二进制。
-                if curl -fsS --connect-timeout 20 --max-time 180 -X PUT "${put_url}" \
+                # 第二步：用返回的 headers 原样 PUT 文件二进制（强制 IPv4 + HTTP/1.1 避免 OBS 握手卡死）。
+                if curl -4 --http1.1 -fsS --connect-timeout 20 --max-time 90 -X PUT "${put_url}" \
                   -H "x-obs-meta-project-id: $(jq -r '.headers["x-obs-meta-project-id"]' <<<"${upload_json}")" \
                   -H "x-obs-acl: $(jq -r '.headers["x-obs-acl"]' <<<"${upload_json}")" \
                   -H "x-obs-callback: $(jq -r '.headers["x-obs-callback"]' <<<"${upload_json}")" \
@@ -942,10 +942,10 @@ jobs:
                   break
                 fi
                 echo "WARN: GitCode upload failed for ${name}, retrying..."
-                sleep 5
+                sleep 3
               done
               if [[ "${upload_ok}" -ne 1 ]]; then
-                echo "::error::GitCode upload failed after 3 attempts: ${name}" >&2
+                echo "::error::GitCode upload failed after 2 attempts: ${name}" >&2
                 return 1
               fi
             done
